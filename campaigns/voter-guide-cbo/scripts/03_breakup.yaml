@@ -1,0 +1,16 @@
+key: cbo_breakup
+stage: contacted
+subject: "Closing the loop — {{org_name}}"
+body: |
+  Hi {{contact_first}},
+
+  I know timing isn't always right for new partnerships. If a digital voter
+  guide isn't something {{org_name}} is prioritizing right now, totally
+  understand — just reply and let me know, and I'll close your file.
+
+  If it is something you want to explore, I'm happy to pick this up whenever
+  the timing works. The demo link stays live: {{demo_link}}
+
+  Either way, appreciate the work you're doing in {{city}}.
+
+  {{your_name}}

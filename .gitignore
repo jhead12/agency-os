@@ -1,0 +1,11 @@
+db.sqlite
+db.sqlite-wal
+db.sqlite-shm
+*.pyc
+__pycache__/
+.env
+config.local.yaml
+data/prospects/*.csv
+data/exports/*.csv
+!data/prospects/.gitkeep
+!data/exports/.gitkeep

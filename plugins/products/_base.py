@@ -1,0 +1,1 @@
+"""Base protocol for products — see core/protocols.py."""

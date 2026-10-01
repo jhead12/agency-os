@@ -1,0 +1,33 @@
+# agency-os global configuration
+# Copy this file to config.local.yaml and fill in your API keys.
+# config.local.yaml is gitignored and overrides these values.
+
+# Database
+db_path: db.sqlite
+
+# Plugin defaults
+plugins_dir: plugins
+campaigns_dir: campaigns
+
+# API keys (set via environment variables or here if you prefer)
+# DO NOT commit real keys to git. Use environment variables.
+api_keys:
+  smartlead: "${SMARTLEAD_API_KEY}"
+  apollo: "${APOLLO_API_KEY}"
+  hunter: "${HUNTER_API_KEY}"
+
+# SMTP (for email_smtp channel)
+smtp:
+  host: "${SMTP_HOST}"
+  port: 587
+  user: "${SMTP_USER}"
+  pass: "${SMTP_PASS}"
+  from: "${SMTP_FROM}"
+
+# Cron schedule (for Hermes or crontab reference)
+schedule:
+  sync: "0 3 1 * *"        # monthly on the 1st at 3am
+  enrich: "0 8 * * *"      # daily at 8am
+  enqueue: "0 9 * * *"     # daily at 9am
+  stale: "30 9 * * *"      # daily at 9:30am
+  digest: "0 8 * * 1"      # weekly Monday at 8am

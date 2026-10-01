@@ -1,0 +1,1 @@
+"""Base protocol for prospect sources — see core/protocols.py."""

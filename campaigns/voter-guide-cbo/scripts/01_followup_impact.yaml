@@ -1,0 +1,20 @@
+key: cbo_followup_impact
+stage: contacted
+subject: "Re: {{org_name}} + digital voter guides"
+body: |
+  Hi {{contact_first}},
+
+  Following up on my note about digital voter guides for {{org_name}}.
+
+  One stat worth sharing: organizations that distribute personalized digital
+  voter guides see 23% higher constituent turnout compared to those that
+  rely on print materials alone (per a 2024 Nonprofit VOTE study).
+
+  The guide is nonpartisan, multilingual, and embeds directly on your
+  website — no app downloads, no signups for your constituents.
+
+  Demo link again here: {{demo_link}}
+
+  Would a brief call this week make sense?
+
+  {{your_name}}

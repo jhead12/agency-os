@@ -1,0 +1,66 @@
+name: "Voter Guide — CBO Outreach (Los Angeles)"
+
+# What we're selling
+product: u9itus_voter_guide
+
+# Where prospects come from
+prospect_sources:
+  - irs_bmf
+  - sos_partners
+  - oia_grantees
+  - miv_partners
+
+# Contact enrichment (run in order, first hit wins)
+enrichers:
+  - apollo
+  - hunter
+
+# Delivery channels (first configured one wins per send)
+channels:
+  - email_smartlead
+  - email_smtp
+  - manual
+
+# Prospect filters
+filters:
+  state: CA
+  county: "Los Angeles"
+  ntee_codes: [R, W, P, S]
+  min_revenue: 100000
+
+# Pipeline stages
+stages:
+  - cold
+  - contacted
+  - engaged
+  - demo_scheduled
+  - proposal_sent
+  - closed_won
+  - closed_lost
+  - nurture
+
+# Follow-up sequence cadence
+cadence:
+  - touch: 0
+    delay_days: 0
+    script: 00_cold_outreach
+    next_stage: contacted
+  - touch: 1
+    delay_days: 3
+    script: 01_followup_impact
+    next_stage: contacted
+  - touch: 2
+    delay_days: 4
+    script: 02_followup_cobrand
+    next_stage: contacted
+  - touch: 3
+    delay_days: 5
+    script: 03_breakup
+    next_stage: nurture
+
+# Move to nurture if no contact in 14 days
+stale_threshold_days: 14
+
+# Sender info (used in email templates)
+sender_name: "Jeldon"
+sender_email: "jeldon@u9itus.com"

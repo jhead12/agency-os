@@ -1,0 +1,1 @@
+"""Base protocol for channels — see core/protocols.py."""

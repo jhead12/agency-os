@@ -1,0 +1,1 @@
+"""Base protocol for enrichers — see core/protocols.py."""
