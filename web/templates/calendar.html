@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}Calendar — agency-os{% endblock %}
+{% block content %}
+<div class="active" style="display:none"></div>
+
+<div class="page-header">
+    <div class="page-header-row">
+        <div>
+            <h1>Calendar</h1>
+            <p class="subtitle">{{ stats.total }} upcoming events in the next {{ days }} days</p>
+        </div>
+        <div class="page-header-actions">
+            <a href="/calendar.ics?days={{ days }}" class="btn btn-sm btn-print" target="_blank">📅 Download .ics</a>
+        </div>
+    </div>
+</div>
+
+{# ── Subscribe box ─────────────────────────────────────── #}
+<div class="subscribe-box">
+    <div class="subscribe-left">
+        <strong>📅 Subscribe in your calendar app</strong>
+        <p>Copy this URL and add it as a subscribed calendar in Google Calendar, Apple Calendar, or Outlook.
+        It auto-refreshes as new follow-ups and call next-steps are scheduled.</p>
+    </div>
+    <div class="subscribe-right">
+        <input type="text" value="{{ feed_url }}" readonly class="ics-url-input" id="ics-url" onclick="this.select()">
+        <button class="btn btn-sm" onclick="navigator.clipboard.writeText('{{ feed_url }}'); this.textContent='Copied!'; setTimeout(() => this.textContent='Copy', 2000)">Copy</button>
+    </div>
+</div>
+
+{# ── Stats ─────────────────────────────────────────────── #}
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-label">Total Upcoming</div>
+        <div class="stat-value">{{ stats.total }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Email Follow-ups</div>
+        <div class="stat-value">{{ stats.followups }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Call Next-Steps</div>
+        <div class="stat-value">{{ stats.calls }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Today</div>
+        <div class="stat-value" style="color: var(--orange);">{{ stats.today }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">This Week</div>
+        <div class="stat-value" style="color: var(--accent);">{{ stats.this_week }}</div>
+    </div>
+</div>
+
+{# ── Day range selector ────────────────────────────────── #}
+<div class="filters">
+    <form method="get" action="/calendar">
+        <label class="filter-label">Show next:</label>
+        <select name="days" class="filter-select" onchange="this.form.submit()">
+            <option value="7" {% if days == 7 %}selected{% endif %}>7 days</option>
+            <option value="14" {% if days == 14 %}selected{% endif %}>14 days</option>
+            <option value="30" {% if days == 30 %}selected{% endif %}>30 days</option>
+            <option value="60" {% if days == 60 %}selected{% endif %}>60 days</option>
+            <option value="90" {% if days == 90 %}selected{% endif %}>90 days</option>
+        </select>
+    </form>
+</div>
+
+{# ── Events grouped by date ────────────────────────────── #}
+{% if sorted_dates %}
+<div class="calendar-list">
+    {% for date_key in sorted_dates %}
+    <div class="cal-date-group">
+        <div class="cal-date-header">
+            <span class="cal-date-day">{{ date_key | slice(8, 2) }}</span>
+            <span class="cal-date-month">{{ by_date[date_key][0].date.strftime('%b %Y') }}</span>
+            <span class="cal-date-weekday">{{ by_date[date_key][0].date.strftime('%A') }}</span>
+            <span class="cal-date-count">{{ by_date[date_key]|length }} event{{ 's' if by_date[date_key]|length > 1 else '' }}</span>
+        </div>
+        <div class="cal-events">
+            {% for e in by_date[date_key] %}
+            <div class="cal-event cal-event-{{ e.type }}">
+                <div class="cal-event-time">{{ e.date.strftime('%I:%M %p') }}</div>
+                <div class="cal-event-body">
+                    <div class="cal-event-title">{{ e.title }}</div>
+                    <div class="cal-event-meta">
+                        {% if e.location %}<span>📍 {{ e.location }}</span>{% endif %}
+                        <a href="/prospects/{{ e.prospect_id }}" class="cal-event-link">View prospect →</a>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<p class="empty-state">
+    No upcoming events scheduled. Events appear here when:
+    <ul style="text-align: left; max-width: 500px; margin: 16px auto; list-style: none;">
+        <li>📧 You send outreach emails — follow-up dates auto-schedule</li>
+        <li>📞 You log a call with a next-step date — it shows on the calendar</li>
+        <li>📝 You manually set a next follow-up date on a prospect</li>
+    </ul>
+</p>
+{% endif %}
+
+{% endblock %}

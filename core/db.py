@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -418,6 +418,108 @@ class Database:
                     (result.raw["website"], prospect_id),
                 )
                 c.commit()
+
+    def get_upcoming_events(self, days: int = 90) -> list[dict]:
+        """Get all upcoming follow-ups and call next-steps as calendar events."""
+        c = self.conn
+        cutoff = (datetime.now() + timedelta(days=days)).isoformat()
+        now = datetime.now().isoformat()
+
+        events = []
+
+        # 1. Email follow-ups (next_follow_up_at from outreach)
+        rows = c.execute(
+            """SELECT o.id, o.next_follow_up_at, o.stage, o.touch_count,
+                      o.contact_name, p.id as prospect_id, p.name as prospect_name,
+                      p.city, p.state, c.name as campaign_name
+               FROM outreach o
+               JOIN prospects p ON o.prospect_id = p.id
+               JOIN campaigns c ON o.campaign_id = c.id
+               WHERE o.next_follow_up_at IS NOT NULL
+                 AND o.next_follow_up_at > ?
+                 AND o.next_follow_up_at < ?
+                 AND o.stage NOT IN ('closed_won', 'closed_lost', 'nurture')
+               ORDER BY o.next_follow_up_at ASC""",
+            (now, cutoff),
+        ).fetchall()
+
+        for r in rows:
+            try:
+                start = datetime.fromisoformat(r["next_follow_up_at"])
+            except (ValueError, TypeError):
+                continue
+
+            touch_label = f" (touch {r['touch_count']})" if r["touch_count"] else ""
+            events.append({
+                "uid": f"followup-{r['id']}",
+                "title": f"📧 Follow-up: {r['prospect_name']}{touch_label}",
+                "description": (
+                    f"Prospect: {r['prospect_name']}\n"
+                    f"Stage: {r['stage']}\n"
+                    f"Touch #: {r['touch_count']}\n"
+                    f"Contact: {r['contact_name'] or 'N/A'}\n"
+                    f"Campaign: {r['campaign_name']}\n"
+                    f"Link: http://localhost:8000/prospects/{r['prospect_id']}"
+                ),
+                "start": start,
+                "end": start + timedelta(minutes=15),
+                "location": f"{r['city'] or ''}, {r['state'] or ''}".strip(", "),
+                "type": "followup",
+                "prospect_id": r["prospect_id"],
+                "prospect_name": r["prospect_name"],
+                "date": start,
+            })
+
+        # 2. Call next-step dates from call_log
+        call_rows = c.execute(
+            """SELECT cl.id, cl.next_step_date, cl.next_step, cl.outcome,
+                      cl.interest_level, cl.script_title, cl.called_by,
+                      p.id as prospect_id, p.name as prospect_name,
+                      p.city, p.state
+               FROM call_log cl
+               JOIN prospects p ON cl.prospect_id = p.id
+               WHERE cl.next_step_date IS NOT NULL
+                 AND cl.next_step_date > ?
+                 AND cl.next_step_date < ?
+               ORDER BY cl.next_step_date ASC""",
+            (now, cutoff),
+        ).fetchall()
+
+        for r in call_rows:
+            try:
+                start = datetime.fromisoformat(r["next_step_date"])
+            except (ValueError, TypeError):
+                continue
+
+            events.append({
+                "uid": f"call-{r['id']}",
+                "title": f"📞 {r['next_step'] or 'Call follow-up'}: {r['prospect_name']}",
+                "description": (
+                    f"Prospect: {r['prospect_name']}\n"
+                    f"Next step: {r['next_step']}\n"
+                    f"Previous call outcome: {r['outcome']}\n"
+                    f"Interest: {r['interest_level'] or 'N/A'}\n"
+                    f"Script used: {r['script_title'] or 'N/A'}\n"
+                    f"Called by: {r['called_by'] or 'N/A'}\n"
+                    f"Link: http://localhost:8000/prospects/{r['prospect_id']}"
+                ),
+                "start": start,
+                "end": start + timedelta(minutes=30),
+                "location": f"{r['city'] or ''}, {r['state'] or ''}".strip(", "),
+                "type": "call",
+                "prospect_id": r["prospect_id"],
+                "prospect_name": r["prospect_name"],
+                "date": start,
+            })
+
+        # Sort all events by date
+        events.sort(key=lambda e: e["date"])
+        return events
+
+    def get_upcoming_events_for_prospect(self, prospect_id: int, days: int = 90) -> list[dict]:
+        """Get upcoming events for a specific prospect."""
+        all_events = self.get_upcoming_events(days)
+        return [e for e in all_events if e.get("prospect_id") == prospect_id]
 
     # ── Call Log ───────────────────────────────────────────────────────
 

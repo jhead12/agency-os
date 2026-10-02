@@ -310,6 +310,70 @@ async def prospect_list(
     })
 
 
+@app.get("/calendar", response_class=HTMLResponse)
+async def calendar_page(
+    request: Request,
+    days: int = Query(default=30, ge=1, le=365),
+):
+    """Calendar view — all upcoming follow-ups and call next-steps."""
+    db = get_db()
+    events = db.get_upcoming_events(days=days)
+
+    # Group events by date
+    from collections import defaultdict
+    from datetime import datetime as _dt, timedelta
+
+    by_date = defaultdict(list)
+    for e in events:
+        date_key = e["date"].strftime("%Y-%m-%d")
+        by_date[date_key].append(e)
+
+    # Sort dates
+    sorted_dates = sorted(by_date.keys())
+
+    # Stats
+    stats = {
+        "total": len(events),
+        "followups": sum(1 for e in events if e["type"] == "followup"),
+        "calls": sum(1 for e in events if e["type"] == "call"),
+        "today": sum(1 for e in events if e["date"].date() == _dt.now().date()),
+        "this_week": sum(1 for e in events if e["date"].date() <= (_dt.now() + timedelta(days=7)).date()),
+    }
+
+    # Calendar feed URL for subscription
+    feed_url = f"http://localhost:8000/calendar.ics?days={days}"
+
+    return templates.TemplateResponse("calendar.html", {
+        "request": request,
+        "events": events,
+        "by_date": by_date,
+        "sorted_dates": sorted_dates,
+        "stats": stats,
+        "days": days,
+        "feed_url": feed_url,
+    })
+
+
+@app.get("/calendar.ics")
+async def calendar_ics(days: int = Query(default=90, ge=1, le=365)):
+    """ICS calendar feed — subscribe in any calendar app."""
+    from fastapi.responses import PlainTextResponse
+    from core.ics import generate_ics
+
+    db = get_db()
+    events = db.get_upcoming_events(days=days)
+    ics_content = generate_ics(events, calendar_name="agency-os Sales Pipeline")
+
+    return PlainTextResponse(
+        content=ics_content,
+        media_type="text/calendar; charset=utf-8",
+        headers={
+            "Content-Disposition": "attachment; filename=agency-os.ics",
+            "Cache-Control": "max-age=300",
+        },
+    )
+
+
 @app.get("/call-log", response_class=HTMLResponse)
 async def call_log_page(
     request: Request,
