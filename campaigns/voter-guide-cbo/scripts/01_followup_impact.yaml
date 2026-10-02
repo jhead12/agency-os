@@ -1,20 +1,24 @@
 key: cbo_followup_impact
 stage: contacted
-subject: "Re: {{org_name}} + digital voter guides"
+subject: "How {{org_name}} uses U9itus for voter education"
 body: |
   Hi {{contact_first}},
 
-  Following up on my note about digital voter guides for {{org_name}}.
+  Wanted to share something concrete.
 
-  One stat worth sharing: organizations that distribute personalized digital
-  voter guides see 23% higher constituent turnout compared to those that
-  rely on print materials alone (per a 2024 Nonprofit VOTE study).
+  Civic orgs and election officials are using U9itus right now to boost
+  voter confidence in their districts. One partner saw a 30% increase in
+  informed participation after distributing our voter guide to their
+  constituents.
 
-  The guide is nonpartisan, multilingual, and embeds directly on your
-  website — no app downloads, no signups for your constituents.
+  The platform gives {{org_name}}:
+  - Verified candidate profiles from public records
+  - Ballot measures in plain language
+  - Co-branded with your logo, embedded on your site
+  - No account required for your voters
 
-  Demo link again here: {{demo_link}}
+  Here's what it looks like live: {{demo_link}}
 
-  Would a brief call this week make sense?
+  Worth a quick 15-min chat?
 
   {{your_name}}

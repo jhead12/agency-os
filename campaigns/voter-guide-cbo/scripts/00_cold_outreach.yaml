@@ -1,14 +1,17 @@
 key: cbo_cold_outreach
 stage: cold
-subject: "{{org_name}} + digital voter guides — quick question"
+subject: "Voters in {{city}} deserve better candidate info"
 body: |
   Hi {{contact_first}},
-  Noticed {{org_name}}'s work on {{focus_area}} in {{city}} — particularly
-  your voter engagement efforts. Impressive reach in the community.
-  We built {{value_prop}}. Organizations co-brand it with their logo, embed
-  it on their own site, and distribute it to their constituents ahead of
-  every election.
-  Here's a live demo: {{demo_link}}
-  Worth a 20-minute call to see if there's alignment for the next election
-  cycle?
+
+  68% of voters say they lack confidence in their candidate research.
+  That's not a voter problem — it's an information problem.
+
+  We built U9itus: one platform, verified public records, no account needed.
+  {{org_name}} can distribute a personalized, nonpartisan voter guide to your
+  constituents — candidates side-by-side, ballot measures in plain language,
+  co-branded with your logo, embeddable on your site.
+
+  Interested in learning how this works for your district?
+
   {{your_name}}

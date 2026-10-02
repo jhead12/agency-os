@@ -1,20 +1,22 @@
 key: cbo_followup_cobrand
 stage: contacted
-subject: "{{org_name}} — co-branded voter guide for your community"
+subject: "Let's show your voters what they're missing"
 body: |
   Hi {{contact_first}},
 
-  Wanted to highlight one thing that makes this different from other voter
-  education tools: your logo, your branding, your website.
+  Election season is here, and voter registration deadlines are approaching.
+  Your constituents need clear, nonpartisan candidate information — and they
+  need it now, not after the last debate.
 
-  {{org_name}} gets a fully co-branded voter guide that lives at your URL.
-  Your constituents see your organization — not us. Candidates side-by-side,
-  ballot measures in plain language, printable, available in Spanish, Korean,
-  Chinese, and Tagalog.
+  U9itus gives {{org_name}} a tailored voter guide for your specific district:
+  - Your candidates, your ballot measures, your branding
+  - Verified public records — no opinions, just facts
+  - Available in English, Spanish, Korean, Chinese, and Tagalog
+  - Embeds on your website in 5 minutes
 
-  The embed takes 5 minutes to drop into your site. We handle all the data
-  updates — candidate profiles, ballot measures, election dates — automatically.
+  I can set up a demo with {{city}}'s actual candidates and ballot measures
+  so you see exactly what your voters would see.
 
-  20 minutes to see if it's a fit? {{demo_link}}
+  Reply with your best time this week and I'll send a calendar invite.
 
   {{your_name}}
