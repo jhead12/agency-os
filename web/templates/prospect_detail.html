@@ -96,7 +96,7 @@
     <h3>Email History</h3>
     <table class="data-table compact">
         <thead>
-            <tr><th>Date</th><th>Template</th><th>Subject</th><th>Status</th><th>Campaign</th></tr>
+            <tr><th>Date</th><th>Template</th><th>Subject</th><th>Status</th><th>Campaign</th><th></th></tr>
         </thead>
         <tbody>
             {% for e in email_logs %}
@@ -106,11 +106,39 @@
                 <td>{{ e.subject[:80] }}</td>
                 <td><span class="status-badge status-{{ e.status }}">{{ e.status }}</span></td>
                 <td>{{ e.campaign_name }}</td>
+                <td><button class="btn btn-sm email-view-btn" onclick="toggleEmail({{ e.id }})">View</button></td>
+            </tr>
+            <tr class="email-body-row" id="email-body-{{ e.id }}" style="display: none;">
+                <td colspan="6" class="email-body-cell">
+                    <div class="email-viewer">
+                        <div class="email-viewer-header">
+                            <div class="email-viewer-subject">{{ e.subject }}</div>
+                            <div class="email-viewer-meta">
+                                <span>Date: {{ e.sent_at|fmt_date }}</span>
+                                <span>Status: {{ e.status }}</span>
+                            </div>
+                        </div>
+                        <div class="email-viewer-body">{{ e.body }}</div>
+                    </div>
+                </td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
 </div>
+<script>
+function toggleEmail(id) {
+    const row = document.getElementById('email-body-' + id);
+    const btn = event.target;
+    if (row.style.display === 'none') {
+        row.style.display = 'table-row';
+        btn.textContent = 'Hide';
+    } else {
+        row.style.display = 'none';
+        btn.textContent = 'View';
+    }
+}
+</script>
 {% endif %}
 
 {# ── Call Log Form ───────────────────────────────────── #}

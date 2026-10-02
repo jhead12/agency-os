@@ -28,7 +28,7 @@
 </div>
 
 {% if emails %}
-<table class="data-table">
+<table class="data-table email-table">
     <thead>
         <tr>
             <th>Date</th>
@@ -37,17 +37,36 @@
             <th>Subject</th>
             <th>Status</th>
             <th>Campaign</th>
+            <th></th>
         </tr>
     </thead>
     <tbody>
         {% for e in emails %}
-        <tr>
+        <tr class="email-row">
             <td>{{ e.sent_at|fmt_date }}</td>
             <td>{{ e.prospect_name or '—' }}</td>
             <td><code>{{ e.template_key }}</code></td>
-            <td>{{ e.subject[:80] }}</td>
+            <td class="email-subject-cell">{{ e.subject[:80] }}</td>
             <td><span class="status-badge status-{{ e.status }}">{{ e.status }}</span></td>
             <td>{{ e.campaign_name }}</td>
+            <td>
+                <button class="btn btn-sm email-view-btn" onclick="toggleEmail({{ e.id }})">View</button>
+            </td>
+        </tr>
+        <tr class="email-body-row" id="email-body-{{ e.id }}" style="display: none;">
+            <td colspan="7" class="email-body-cell">
+                <div class="email-viewer">
+                    <div class="email-viewer-header">
+                        <div class="email-viewer-subject">{{ e.subject }}</div>
+                        <div class="email-viewer-meta">
+                            <span>To: {{ e.prospect_name or '—' }}</span>
+                            <span>Date: {{ e.sent_at|fmt_date }}</span>
+                            <span>Status: {{ e.status }}</span>
+                        </div>
+                    </div>
+                    <div class="email-viewer-body">{{ e.body }}</div>
+                </div>
+            </td>
         </tr>
         {% endfor %}
     </tbody>
@@ -63,5 +82,19 @@
 {% else %}
 <p class="empty-state">No emails sent yet. Run <code>python3 agency_os.py enqueue --campaign voter-guide--cbo-outreach-los-angeles</code> to start.</p>
 {% endif %}
+
+<script>
+function toggleEmail(id) {
+    const row = document.getElementById('email-body-' + id);
+    const btn = event.target;
+    if (row.style.display === 'none') {
+        row.style.display = 'table-row';
+        btn.textContent = 'Hide';
+    } else {
+        row.style.display = 'none';
+        btn.textContent = 'View';
+    }
+}
+</script>
 
 {% endblock %}
