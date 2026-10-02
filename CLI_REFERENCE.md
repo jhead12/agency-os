@@ -36,6 +36,7 @@ Options:
 python3 agency_os.py users list
 ```
 
+
 ### Invite a new team member (sends welcome email)
 
 ```bash
@@ -70,6 +71,45 @@ python3 agency_os.py users grant-owner --email jane@u9itus.com
 ```bash
 python3 agency_os.py users set-password --email jane@u9itus.com --password "new-password"
 ```
+
+---
+
+## Roles & Permissions
+
+### Built-in Roles
+
+| Role | Description | Permissions |
+|---|---|---|
+| **Owner** | Full access. Bypasses all permission checks. Only role that can manage users, roles, and audit log. | All permissions (automatic) |
+| **Caller** | Works the phones: views prospects and scripts, logs calls, moves stages | `dashboard.view`, `prospects.view`, `pipeline.edit`, `calls.view`, `calls.log`, `calendar.view` |
+| **Sales Rep** | Caller access plus editing prospects and reading sent email | `dashboard.view`, `prospects.view`, `prospects.export`, `prospects.edit`, `pipeline.edit`, `calls.view`, `calls.log`, `calendar.view`, `campaigns.view`, `emails.view`, `templates.view` |
+| **Template Editor** | Writes and edits outreach email templates | `dashboard.view`, `campaigns.view`, `templates.view`, `templates.edit` |
+| **Viewer** | Read-only access to everything except sent email bodies | `dashboard.view`, `prospects.view`, `calls.view`, `calendar.view`, `campaigns.view`, `templates.view` |
+
+### Permission Catalog
+
+| Permission | Description |
+|---|---|
+| `dashboard.view` | View the dashboard and pipeline stats |
+| `prospects.view` | View the prospect list and prospect detail pages |
+| `prospects.export` | Print the full (unpaginated) prospect list |
+| `prospects.edit` | Edit organization and contact info |
+| `pipeline.edit` | Move prospects between pipeline stages |
+| `calls.view` | View the call log and call scripts |
+| `calls.log` | Record calls |
+| `calendar.view` | View the follow-up calendar and .ics feed |
+| `campaigns.view` | View campaign configuration |
+| `emails.view` | View sent emails, including full bodies |
+| `templates.view` | View and preview email templates |
+| `templates.edit` | Edit email templates |
+
+### Notes
+
+- **Owner** is a protected role — it bypasses all permission checks and is the only role that can manage users, roles, and the audit log.
+- New users get **no access** until an owner assigns them a role.
+- Owners can create custom roles by picking from the permission catalog via the dashboard's Team → Roles page.
+- Starter roles are created once on first run. Owners may edit or delete them afterwards.
+- A user can hold multiple roles — their effective permissions are the union of all roles' permissions.
 
 ---
 

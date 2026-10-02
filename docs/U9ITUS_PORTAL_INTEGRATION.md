@@ -7,7 +7,15 @@ Python/SQLite/FastAPI) to the **u9itus white-label portal builder** (`/Volumes/P
 Laravel). Written for a coding agent implementing it: diagrams are Mermaid, the
 contract is YAML, and tasks have file paths and acceptance checks.
 
-Status: **proposal, not built.** Owner decisions recorded 2026-10-02 (section 8).
+Status (2026-10-02):
+- **u9itus side built** (U1–U10, tests in `tests/Feature/Portal/AgencyApiTest.php`),
+  on branch `feature/white-label-portal-builder`. **Not deployed yet**: production
+  returns 404 for `/api/v1/agency/*` until the branch is merged.
+- **agency-os A1–A5, A8, A9 built** (agency-os commit `5c3905a`); A6, A10 and job
+  scheduling on Railway are still open (section 9).
+- **End-to-end tested locally** against the real agency-os code (section 9).
+
+Owner decisions are in section 8. Deployment and setup are in section 9.
 
 ## Goal
 
@@ -21,7 +29,7 @@ anyone updating it by hand.
 
 | Fact | Consequence |
 |---|---|
-| agency-os runs on a laptop (`localhost:8000`, `db.sqlite`), not a public server | u9itus **cannot push webhooks** to it. agency-os **pulls** an event feed on a schedule. |
+| agency-os started on a laptop and now also runs on Railway (`agency-os-production-759a.up.railway.app`, SQLite on a volume, behind a login) | agency-os **pulls** an event feed on a schedule. That works from both places and needs no public webhook endpoint or webhook signing on the agency-os side. |
 | `Pipeline._build_variables()` calls `product.generate_demo_link()` *before* the `dry_run` check in `enqueue_outreach()` (`core/pipeline.py`) | Provisioning must **not** happen inside `generate_demo_link()`. It needs its own step, and dry runs must never call the API. |
 | u9itus `organizations` already has `claim_email`, `claim_token`, `claim_requested_at`; politicians have a working claim flow (`ProfileClaimController`) | Org claiming reuses that pattern. Don't invent a new one. |
 | Portal traffic is counted per `?src=` tag with no cookies or stored IPs (`PortalTrafficService`) | Demo views reuse it. Add the source `outreach`, and don't add per-person tracking pixels. |
@@ -157,7 +165,7 @@ endpoints:
       state:        { type: string, required: true, pattern: "^[A-Z]{2}$" }
       district:     { type: string, required: false }
       website_url:  { type: url, required: false, scheme: https }
-      ein:          { type: string, required: false, pattern: "^\\d{2}-?\\d{7}$" }
+      ein:          { type: string, required: false, pattern: "^\\d{2}-?\\d{7}$", note: "validated, not stored yet" }
       contact_email: { type: email, required: false, note: "pre-fills claim form; never shown on the portal" }
       refresh:      { type: bool, default: false, note: "rebuild starter layout if still unclaimed" }
     response_201_or_200:
@@ -166,7 +174,8 @@ endpoints:
       claim_url: "https://…/portal/{slug}/claim?t={preview_token}"
       status: { enum: [demo, claimed, published, expired] }
       expires_at: iso8601
-    errors: { 401: bad token, 409: external_ref belongs to a claimed org and refresh=true, 422: validation }
+    errors: { 401: bad token, 503: AGENCY_OS_TOKEN_HASH not set, 422: validation }
+    claimed_portals: returned as-is (status claimed/published, demo_url null); refresh never touches them
 
   - id: get_demo_portal
     method: GET
@@ -193,10 +202,11 @@ event_types:
 
 ## 5. What a demo portal looks like (u9itus side)
 
-- It's created like `portal:create` with the starter layout (Hero, ballot measures,
-  candidates, CTA) for `state`/`district`, but with **no endorsements and no
-  positions**. The Hero banner reads "Your 2026 voter guide", not a claim made in
-  their voice.
+- It's created like `portal:create` from the shared starter layout
+  (`PortalStarterLayout`: Hero, candidates, ballot measures) for
+  `state`/`district`, but with **no endorsements block and no positions**. The Hero
+  banner reads "Your voter guide: who and what is on your ballot, in plain
+  language.", not a claim made in their voice.
 - There is **no logo**. Don't scrape or copy the prospect's logo, because that would
   impersonate them. The header uses their name plus a neutral color.
 - A fixed, non-removable bar reads: "Sample preview prepared by u9itus for {name}.
@@ -206,25 +216,42 @@ event_types:
   404 without the token, `X-Robots-Tag: noindex, nofollow`, and excluded from the
   sitemap. Only a claim plus publish makes it public at the plain URL.
 - It expires **60 days** after it is created (`demo_expires_at`; owner decision;
-  config `services.agency_os.demo_days`, default 60). Expired unclaimed demos are
-  soft-deleted by a scheduled command. Calling `create_demo_portal` again for an
-  expired, unclaimed demo restores it with a new 60-day window and a new preview token.
-- Claiming: the claimant enters an email and gets a verification link (copy
-  `ProfileClaimController`). On verification, **what the account may do depends on
-  its user type** (owner decision). The rules are below. Verifying sets
-  `user_id`, clears `claim_token` and `preview_token`, and appends
-  `portal.claimed`.
+  config `services.agency_os.demo_days`, default 60). `portal:expire-demos` runs
+  daily at 03:30 and clears the preview token, so the link stops working. The row
+  is kept. Calling `create_demo_portal` again for an expired, unclaimed demo
+  restores it with a new 60-day window and a new preview token.
+- The demo's slug is always the name plus a 5-character suffix
+  (`eastside-families-united-x7k2q`). `portal:create` looks organizations up by
+  slug, so staff provisioning the real org later must not land on the demo.
+- The demo page sends `Referrer-Policy: no-referrer`, so the preview token
+  doesn't leak to sites linked from it.
+- Claiming (`OrganizationClaimController`) takes four steps, because the
+  claimant may not have an account yet:
+  1. `GET /portal/{slug}/claim?t=…`: the form. It needs the live preview token, so
+     only the email recipient can reach it. The email field is pre-filled with
+     agency-os's `contact_email`.
+  2. `POST`: emails a one-time link. Only the token's SHA-256 is stored, and the
+     link expires in 48 hours.
+  3. `GET …/claim/verify?token=…`: sets `claim_verified_at` and sends the claimant
+     to sign in (login returns them through the intended URL) or register.
+  4. `GET …/claim/complete` (signed in): `OrganizationPolicy::claim` decides by
+     user type (below). On success it sets `user_id`, clears the preview token,
+     appends `portal.claimed`, and opens the builder. The signed-in email must
+     match the verified one, within 7 days.
 
 ### Claim permissions by user type
 
 The owner's rule is that the claiming email's permissions follow its user type.
-The table maps that onto the existing `users.user_type` values (`User::ROLES`).
-**The per-row details are a proposal; confirm them before building U7.**
+This is how it's implemented in `OrganizationPolicy::claim` (**the per-row
+details are still to be confirmed by the owner**):
 
 ```yaml
 claim_permissions:            # keyed by users.user_type of the verified email's account
   no_account:                 # email has no user yet
-    action: create a standalone account (user_type: citizen), then apply the citizen row
+    action: >
+      register through the normal flow, then open the complete link (shown after
+      verifying, valid 7 days). Not auto-created: "citizen" registration is the
+      advertiser sign-up (phone, address, business), so it's the wrong default.
   citizen:
     can_claim: true
     becomes: owner (organizations.user_id)
@@ -235,7 +262,7 @@ claim_permissions:            # keyed by users.user_type of the verified email's
     can: [edit_layout, upload_logo, publish, share_and_traffic, endorse]
   politician:
     can_claim: false          # a candidate shouldn't run an org's voter guide that covers their own race
-    on_attempt: queue for staff review; no ownership granted
+    on_attempt: staff emailed (mail.admin_address, at most daily per portal); staff can assign an owner with portal:create --owner
   admin:                      # platform staff (AdminAccess::isStaff)
     can_claim: true
     becomes: staff override, not owner. Can assign the portal to another user.
@@ -250,12 +277,12 @@ controller alone.
 
 ## 6. Tasks
 
-### u9itus (the u9itus.dev repo)
+### u9itus (the u9itus.dev repo) — done 2026-10-02
 
 | # | Task | Files | Done when |
 |---|---|---|---|
 | U1 | Migration: `organizations` + `source` (string, default `manual`), `external_ref` (unique nullable, 64), `preview_token` (char 64 nullable), `demo_expires_at`; new `agency_events` table (`id`, `organization_id` FK cascade, `type`, `data` json, `occurred_at`, index on id) | `database/migrations/` | migrates up/down cleanly |
-| U2 | `AgencyToken` middleware + `services.agency_os.token_hash` config | `app/Http/Middleware/`, `config/services.php`, `bootstrap/app.php` alias | 401 without/with wrong token; constant-time compare |
+| U2 | `AgencyApiAuth` middleware (alias `agency.token`), `agency:token` command + `services.agency_os.token_hash` config | `app/Http/Middleware/`, `config/services.php`, `bootstrap/app.php` alias | 401 without/with wrong token; constant-time compare |
 | U3 | `AgencyApiController` (create, show, events) + FormRequest | `app/Http/Controllers/Api/`, `routes/api.php` under `v1` | idempotent on `external_ref`; contract shapes exactly |
 | U4 | `DemoPortalService::provision()` sharing the starter layout with `CreatePortal` (extract it; don't duplicate) | `app/Services/`, `app/Console/Commands/CreatePortal.php` | `portal:create` tests still pass |
 | U5 | Preview-token gate, noindex header, sample bar in `show.blade.php` | `PortalController@show`, view | unclaimed demo 404s without `t`; bar present; claimed page has no bar |
@@ -275,13 +302,13 @@ controller alone.
 | A4 | CLI `pull-events [--all] [--dry-run]`: page through events, map them to stage changes (section 3), append to `activity_log` with `ref = "u9itus:{event id}"`, save `sync_cursors(product_key, cursor)`. Same shape as `sync_bookings()` | `core/cli.py`, `core/pipeline.py`, `core/db.py` | idempotent: same events twice → one change |
 | A5 | New tables `product_events` (raw event, unique on product_key+event_id) and `sync_cursors` | `core/db.py` schema | created on startup like existing tables |
 | A6 | Dashboard: prospect detail shows portal status, views, claim link, a "Provision demo" button, and a "ready to close" badge | `web/app.py`, `web/templates/` | — |
-| A7 | Schedule: `provision` 08:30, `pull-events` hourly 8–20 | `config.yaml` `schedule` | — |
+| A7 | Run `provision` daily and `pull-events` hourly **inside the Railway web service** (see section 9; a separate cron service can't reach the SQLite volume) | `web/app.py` or a protected run endpoint | jobs run on Railway without anyone's laptop |
 | A8 | `.env.example`: `U9ITUS_BASE_URL`, `U9ITUS_AGENCY_TOKEN` | `.env.example` | — |
 | A9 | Cold cadence only runs for `cold`/`contacted`; a send never moves the stage backward (keep a stage order list; take the later of current and `next_stage`) | `core/db.py` `get_due_outreach`, `core/pipeline.py` `enqueue_outreach` | an `engaged` prospect gets no cold touch and keeps its stage |
-| A10 | `sync_bookings()`: a cancellation doesn't move a prospect back to `engaged` if `activity_log` has `portal_claimed` | `core/pipeline.py` | test: claimed + canceled stays `demo_scheduled` |
+| A10 | `sync_bookings()`: a cancellation doesn't move a prospect back to `engaged` if `activity_log` has an entry of type `portal.claimed` (the type A4 writes) | `core/pipeline.py` | test: claimed + canceled stays `demo_scheduled` |
 
-Build order: U1→U3 and U6 first (A1–A3 can be tested against a local u9itus),
-then U5/U7, then A9 before A4 (otherwise events get overwritten), then A4, A10, A5, A6.
+agency-os status (2026-10-02): A1, A2, A3, A4, A5, A8, A9 **done**; A6, A7, A10 **open**.
+Remaining order: A7 (jobs on Railway) → A10 → A6.
 
 ## 7. Guardrails
 
@@ -289,9 +316,16 @@ then U5/U7, then A9 before A4 (otherwise events get overwritten), then A4, A10, 
   in u9itus env. Never put it in campaign YAML, logs, or the dashboard.
 - **No fabricated speech:** demo portals never contain endorsements, positions,
   quotes, or a "Paid for by" line in the prospect's name.
-- **Email copy:** `campaigns/voter-guide-cbo/scripts/01_followup_impact.yaml`
-  claims "One partner saw a 30% increase in informed participation". Before
-  sending at scale, back it with a real, citable result or remove it.
+- **Email copy:** the unsupported "30% increase" claim was removed from
+  `01_followup_impact.yaml` (2026-10-02). Keep statistics out of the scripts
+  unless there's a real, citable result behind them.
+- **Link scanners can fake a view.** Corporate mail security (Microsoft Safe Links,
+  Proofpoint, Mimecast) often opens links before a person does, and some of these
+  scanners look like a normal browser. A `portal.viewed` that arrives within a minute or
+  two of sending may be a scanner. agency-os should treat `engaged` from a single
+  early view as soft (for example, ignore a view under 2 minutes after the send).
+  A future u9itus option is to count a demo view only from a script beacon after
+  the page has rendered.
 - **Privacy:** the event feed carries no visitor or claimant personal data, and the
   traffic rules (no cookies or IPs, bots and owners excluded) stay as they are.
 - **Stop the cold sequence once they engage.** Two current behaviors break this
@@ -304,7 +338,86 @@ then U5/U7, then A9 before A4 (otherwise events get overwritten), then A4, A10, 
 
 1. `portal.claimed` → **`demo_scheduled`**.
 2. Unclaimed demos last **60 days**.
-3. Claim permissions **follow the user type** of the verified email. The
-   per-type table in section 5 is a proposal to confirm.
+3. Claim permissions **follow the user type** of the verified email. Built as
+   the table in section 5; the per-type details still need the owner's confirmation.
 4. Coalition tier (umbrella org with partner portals): **later**. Don't add
    `parent_organization_id` now.
+
+## 9. Deployment and setup
+
+### Environments
+
+| | u9itus | agency-os |
+|---|---|---|
+| Production | `https://www.u9itus.com` (Railway: web, queue, scheduler services) | `https://agency-os-production-759a.up.railway.app` (Railway, one web service, SQLite on a volume) |
+| Health check | `/up.php` | `/healthz` → `{"ok":true}` |
+| Agency API | `/api/v1/agency/*`, live once this branch is merged and deployed | client in `plugins/products/u9itus_client.py` |
+
+### Create the token
+
+Run this once, from the u9itus repo (it needs no database and stores nothing):
+
+```bash
+php artisan agency:token
+```
+
+It prints two lines. Each goes in a different place:
+
+| Value | Where it goes | Notes |
+|---|---|---|
+| `AGENCY_OS_TOKEN_HASH=…` | u9itus **web** service variables on Railway | Only a hash; safe to keep in Railway variables |
+| `U9ITUS_AGENCY_TOKEN=…` | agency-os service variables on Railway (and a local `.env` for CLI runs) | The secret. Shown once. Share it through a password manager, never chat or email |
+
+Also set `U9ITUS_BASE_URL=https://www.u9itus.com` on agency-os. To rotate the token, run
+the command again and replace both values; the old token stops working immediately.
+Until the hash is set, the API answers `503 service_not_configured`.
+
+### Running the jobs on Railway (A7, open)
+
+The deployed agency-os runs only `uvicorn web.app:app`. Nothing on Railway runs
+`provision`, `pull-events` (or `sync`, `enqueue`, `bookings`) yet. Its SQLite file
+sits on a volume attached to the web service, and a Railway volume can only be
+attached to one service, so a separate Railway cron service can't use the same
+database. Two workable options:
+
+1. **A background loop in the web app** (FastAPI lifespan task): `pull-events`
+   hourly and `provision` daily, each wrapped so one failure doesn't stop the loop.
+2. **A protected run endpoint** (for example `POST /internal/jobs/pull-events`,
+   checked against a secret header) called by a small Railway cron service with `curl`.
+
+Either way, the CLI's `--db` defaults to `./db.sqlite`, not the volume. When
+running the CLI on the Railway service (`railway run` or a shell), set
+`AGENCY_OS_DB=$RAILWAY_VOLUME_MOUNT_PATH/db.sqlite`, or it will create an empty
+database instead of using the real one.
+
+### End-to-end test (2026-10-02)
+
+The real agency-os code was run against a local u9itus from this branch, using a
+throwaway token and a scratch agency-os database:
+
+| Step | Result |
+|---|---|
+| API with no token / with token | 401 / 200 |
+| `provision --dry-run` | listed 1 prospect, no API calls |
+| `provision` | demo created; `demo_link` and `metadata.u9itus` stored |
+| `provision` again | 0 to provision (idempotent) |
+| Visitor opens `demo_link` | 200, one `portal.viewed` event |
+| `pull-events` | `contacted → engaged`, cursor saved |
+| Claim + publish events, `pull-events` | `engaged → demo_scheduled`, `ready_to_close` flag added |
+| `pull-events` again | nothing changes (idempotent) |
+| A lone `portal.published` in a later pull | **crashed** (`UnboundLocalError: json`); fixed in agency-os `core/pipeline.py` |
+
+Fixes made to agency-os during the test (uncommitted in that repo):
+- `core/pipeline.py`: `json` is imported at module level. It had been imported
+  inside a branch, so a publish event arriving without a stage change crashed
+  every later pull.
+- `core/pipeline.py`: `portal.published` now only adds the `ready_to_close` flag.
+  Before, it also moved an `engaged` prospect to `demo_scheduled`.
+- `tests/test_u9itus_events.py`: 6 tests covering the stage mapping, the crash,
+  idempotency and unknown prospects. They fail on the old code and pass on the fix.
+  All 45 agency-os tests pass.
+
+Production check (read-only): agency-os `/healthz` is ok, pages redirect to
+`/login`, and `/api/stats` returns 401 without a session. u9itus production returns
+404 for the agency API, as expected before this branch is deployed.
+
