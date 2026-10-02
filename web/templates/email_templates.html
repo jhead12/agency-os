@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}Email Templates — agency-os{% endblock %}
+{% block content %}
+<div class="active" style="display:none"></div>
+
+<div class="page-header">
+    <div class="page-header-row">
+        <div>
+            <h1>Email Templates</h1>
+            <p class="subtitle">{{ scripts|length }} templates · Edit subject and body, then save</p>
+        </div>
+    </div>
+</div>
+
+{% if request.query_params.get('saved') %}
+<div class="save-notice">
+    ✅ Template saved successfully. New emails will use the updated content.
+</div>
+{% endif %}
+
+{# ── Variables reference ────────────────────────────────── #}
+<div class="detail-card full-width" style="margin-bottom: 16px;">
+    <h3>📖 Available Variables</h3>
+    <p style="color: var(--text-muted); font-size: 12px; margin-bottom: 8px;">
+        Use these in subject and body fields. They get replaced with prospect-specific data when emails are sent.
+    </p>
+    <div class="var-grid">
+        <code>{{org_name}}</code> <span>Organization name</span>
+        <code>{{contact_first}}</code> <span>Contact first name</span>
+        <code>{{focus_area}}</code> <span>Focus area (e.g. civic engagement)</span>
+        <code>{{city}}</code> <span>City</span>
+        <code>{{state}}</code> <span>State</span>
+        <code>{{your_name}}</code> <span>Sender name (from campaign config)</span>
+        <code>{{your_email}}</code> <span>Sender email</span>
+        <code>{{demo_link}}</code> <span>Live demo URL (product-specific)</span>
+        <code>{{value_prop}}</code> <span>Personalized value proposition</span>
+    </div>
+</div>
+
+{# ── Preview selector ───────────────────────────────────── #}
+<div class="filters">
+    <form method="get" action="/email-templates" id="preview-form">
+        <label class="filter-label">Preview as:</label>
+        <select name="preview_prospect" class="filter-select" onchange="this.form.submit()">
+            <option value="0">— Select prospect —</option>
+            {% for p in prospect_options %}
+            <option value="{{ p.id }}" {% if preview_prospect == p.id %}selected{% endif %}>{{ p.name }} ({{ p.city or '—' }})</option>
+            {% endfor %}
+        </select>
+    </form>
+</div>
+
+{# ── Template editors ──────────────────────────────────── #}
+{% for script in scripts %}
+<div class="template-editor-card" id="template-{{ loop.index0 }}">
+    <div class="template-header">
+        <div>
+            <h3>{{ script.key or script.file_name }}</h3>
+            <div class="template-meta">
+                <span class="badge-stage">{{ script.stage or '—' }}</span>
+                <span class="muted">{{ script.campaign_name }}</span>
+                <span class="muted">{{ script.file_name }}.yaml</span>
+            </div>
+        </div>
+        <button class="btn btn-sm template-toggle-btn" onclick="toggleTemplate({{ loop.index0 }})">
+            {{ 'Collapse' if loop.index0 == 0 else 'Expand' }}
+        </button>
+    </div>
+
+    <div class="template-body" id="template-body-{{ loop.index0 }}" style="{{ 'display: none;' if loop.index0 > 0 else '' }}">
+        <form method="post" action="/email-templates/save" class="template-form">
+            <input type="hidden" name="file_path" value="{{ script.file_path }}">
+
+            <div class="form-row" style="margin-bottom: 12px;">
+                <label>Subject Line</label>
+                <input type="text" name="subject" value="{{ script.subject }}" class="filter-input"
+                       style="width: 100%; font-family: inherit;" id="subject-{{ loop.index0 }}">
+            </div>
+
+            <div class="form-row" style="margin-bottom: 12px;">
+                <label>Email Body</label>
+                <textarea name="body" rows="12" class="template-textarea" id="body-{{ loop.index0 }}">{{ script.body }}</textarea>
+            </div>
+
+            <div class="template-actions">
+                <button type="submit" class="btn">💾 Save Template</button>
+                {% if preview_p %}
+                <button type="button" class="btn btn-sm btn-secondary"
+                        onclick="loadPreview({{ loop.index0 }}, {{ preview_p.id }})">👁 Preview for {{ preview_p.name[:20] }}</button>
+                {% endif %}
+            </div>
+        </form>
+
+        {# Preview area #}
+        <div class="template-preview" id="preview-{{ loop.index0 }}" style="display: none;">
+            <div class="preview-header">Preview</div>
+            <div class="preview-subject" id="preview-subject-{{ loop.index0 }}"></div>
+            <div class="preview-body" id="preview-body-{{ loop.index0 }}"></div>
+        </div>
+    </div>
+</div>
+{% endfor %}
+
+<script>
+function toggleTemplate(idx) {
+    const body = document.getElementById('template-body-' + idx);
+    const btn = event.target;
+    if (body.style.display === 'none') {
+        body.style.display = 'block';
+        btn.textContent = 'Collapse';
+    } else {
+        body.style.display = 'none';
+        btn.textContent = 'Expand';
+    }
+}
+
+function loadPreview(idx, prospectId) {
+    const previewDiv = document.getElementById('preview-' + idx);
+    const subjectDiv = document.getElementById('preview-subject-' + idx);
+    const bodyDiv = document.getElementById('preview-body-' + idx);
+    previewDiv.style.display = 'block';
+    subjectDiv.textContent = 'Loading...';
+    bodyDiv.textContent = '';
+
+    fetch('/email-templates/preview/' + idx + '?prospect_id=' + prospectId)
+        .then(r => r.json())
+        .then(data => {
+            subjectDiv.textContent = data.subject || '(no subject)';
+            bodyDiv.textContent = data.body || '(no body)';
+        })
+        .catch(err => {
+            subjectDiv.textContent = 'Error loading preview';
+            bodyDiv.textContent = err.toString();
+        });
+}
+</script>
+
+{% endblock %}

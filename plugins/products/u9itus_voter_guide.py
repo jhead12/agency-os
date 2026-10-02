@@ -18,7 +18,7 @@ class U9itusVoterGuideProduct:
     """The u9itus digital voter guide platform."""
 
     key = "u9itus_voter_guide"
-    BASE_URL = "https://u9itus-production.up.railway.app"
+    BASE_URL = "https://www.u9itus.com"
 
     def describe_value(self, prospect: Prospect) -> str:
         """One-line value prop personalized to this prospect."""

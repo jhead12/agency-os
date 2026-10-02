@@ -426,6 +426,192 @@ async def calendar_ics(days: int = Query(default=90, ge=1, le=365)):
     )
 
 
+@app.get("/email-templates", response_class=HTMLResponse)
+async def email_templates_page(
+    request: Request,
+    campaign: str = Query(default=""),
+    preview_prospect: int = Query(default=0),
+):
+    """Email template editor — view, edit, and preview all email scripts."""
+    import yaml
+    from pathlib import Path
+
+    campaigns = get_campaigns()
+
+    # Load all email scripts (non-phone) from all campaigns
+    all_scripts = []
+    for c in campaigns:
+        scripts_dir = c.config_dir / "scripts"
+        if not scripts_dir.exists():
+            continue
+        for script_file in sorted(scripts_dir.glob("*.yaml")):
+            if script_file.name.startswith("phone_"):
+                continue
+            try:
+                script = yaml.safe_load(script_file.read_text())
+                script["file_name"] = script_file.stem
+                script["file_path"] = str(script_file)
+                script["campaign_name"] = c.name
+                script["campaign_dir"] = str(c.config_dir)
+                all_scripts.append(script)
+            except Exception:
+                continue
+
+    # Get prospect for preview
+    db = get_db()
+    preview_p = None
+    preview_subject = ""
+    preview_body = ""
+    if preview_prospect:
+        preview_p = db.get_prospect(preview_prospect)
+        if preview_p:
+            # Build variables for preview
+            outreach_rows = db.conn.execute(
+                """SELECT o.* FROM outreach o WHERE o.prospect_id = ? LIMIT 1""",
+                (preview_prospect,),
+            ).fetchall()
+
+            for c in campaigns:
+                if c.config_dir == Path(all_scripts[0]["campaign_dir"] if all_scripts else "."):
+                    variables = {
+                        "org_name": preview_p.name,
+                        "contact_first": (outreach_rows[0]["contact_name"] or "").split()[0] if outreach_rows and outreach_rows[0]["contact_name"] else "there",
+                        "focus_area": (preview_p.focus_area or "civic engagement").replace("_", " "),
+                        "city": preview_p.city or "Los Angeles",
+                        "state": preview_p.state or "CA",
+                        "your_name": c.sender_name,
+                        "your_email": c.sender_email,
+                    }
+                    registry = PluginRegistry()
+                    registry.discover("plugins")
+                    product = registry.get_product(c.product)
+                    if product:
+                        variables["demo_link"] = product.generate_demo_link(preview_p) or ""
+                        variables["value_prop"] = product.describe_value(preview_p) or ""
+                    break
+
+            import re
+            def render(text):
+                def replace(match):
+                    key = match.group(1).strip()
+                    return str(variables.get(key, "{{" + key + "}}"))
+                return re.sub(r"\{\{(\w+)\}\}", replace, text)
+
+            if all_scripts:
+                preview_subject = render(all_scripts[0].get("subject", ""))
+                preview_body = render(all_scripts[0].get("body", ""))
+
+    # Get prospects for preview dropdown
+    prospect_options = db.conn.execute(
+        """SELECT p.id, p.name, p.city FROM prospects p
+           ORDER BY p.name LIMIT 50"""
+    ).fetchall()
+
+    return templates.TemplateResponse("email_templates.html", {
+        "request": request,
+        "scripts": all_scripts,
+        "prospect_options": prospect_options,
+        "preview_prospect": preview_prospect,
+        "preview_p": preview_p,
+        "preview_subject": preview_subject,
+        "preview_body": preview_body,
+    })
+
+
+@app.post("/email-templates/save")
+async def save_email_template(
+    file_path: str = Form(...),
+    subject: str = Form(default=""),
+    body: str = Form(default=""),
+):
+    """Save an edited email template back to its YAML file."""
+    from pathlib import Path
+    import yaml
+
+    path = Path(file_path)
+    if not path.exists() or not path.name.endswith(".yaml"):
+        raise HTTPException(status_code=400, detail="Invalid file path")
+
+    # Load existing to preserve other keys
+    existing = yaml.safe_load(path.read_text()) or {}
+    existing["subject"] = subject
+    existing["body"] = body
+
+    # Write back
+    path.write_text(yaml.dump(existing, default_flow_style=False, sort_keys=False, allow_unicode=True))
+    return RedirectResponse(url="/email-templates?saved=1", status_code=303)
+
+
+@app.get("/email-templates/preview/{script_idx}")
+async def preview_template(
+    script_idx: int,
+    prospect_id: int = Query(default=0),
+):
+    """Return a JSON preview of a template rendered for a prospect."""
+    import yaml, re, json as _json
+    from pathlib import Path
+
+    campaigns = get_campaigns()
+    all_scripts = []
+    for c in campaigns:
+        scripts_dir = c.config_dir / "scripts"
+        if not scripts_dir.exists():
+            continue
+        for script_file in sorted(scripts_dir.glob("*.yaml")):
+            if script_file.name.startswith("phone_"):
+                continue
+            try:
+                script = yaml.safe_load(script_file.read_text())
+                script["file_name"] = script_file.stem
+                script["file_path"] = str(script_file)
+                script["campaign_dir"] = str(c.config_dir)
+                all_scripts.append(script)
+            except Exception:
+                continue
+
+    if script_idx >= len(all_scripts):
+        return JSONResponse({"error": "Script not found"})
+
+    script = all_scripts[script_idx]
+    db = get_db()
+
+    prospect = None
+    if prospect_id:
+        prospect = db.get_prospect(prospect_id)
+
+    variables = {}
+    if prospect:
+        for c in campaigns:
+            if str(c.config_dir) == script["campaign_dir"]:
+                variables = {
+                    "org_name": prospect.name,
+                    "contact_first": "there",
+                    "focus_area": (prospect.focus_area or "civic engagement").replace("_", " "),
+                    "city": prospect.city or "Los Angeles",
+                    "state": prospect.state or "CA",
+                    "your_name": c.sender_name,
+                    "your_email": c.sender_email,
+                }
+                registry = PluginRegistry()
+                registry.discover("plugins")
+                product = registry.get_product(c.product)
+                if product:
+                    variables["demo_link"] = product.generate_demo_link(prospect) or ""
+                    variables["value_prop"] = product.describe_value(prospect) or ""
+                break
+
+    def render(text):
+        def replace(match):
+            key = match.group(1).strip()
+            return str(variables.get(key, "{{" + key + "}}"))
+        return re.sub(r"\{\{(\w+)\}\}", replace, text)
+
+    return JSONResponse({
+        "subject": render(script.get("subject", "")),
+        "body": render(script.get("body", "")),
+    })
+
+
 @app.get("/call-log", response_class=HTMLResponse)
 async def call_log_page(
     request: Request,

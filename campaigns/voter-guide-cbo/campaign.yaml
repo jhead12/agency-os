@@ -63,5 +63,5 @@ cadence:
 stale_threshold_days: 14
 
 # Sender info (used in email templates)
-sender_name: "Jeldon"
-sender_email: "jeldon@u9itus.com"
+sender_name: "Joshua"
+sender_email: "joshua@u9itus.com"
