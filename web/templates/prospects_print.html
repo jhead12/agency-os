@@ -158,6 +158,7 @@
             <th>City</th>
             <th>Source</th>
             <th>Focus</th>
+            <th>Voter</th>
             <th>Revenue</th>
             <th>Stage</th>
             <th>Contact Name</th>
@@ -170,13 +171,11 @@
         {% for p in prospects %}
         <tr>
             <td>{{ loop.index }}</td>
-            <td>
-                {{ p.name }}
-                {% if p.voter_engagement %}<span class="tag-voter">voter</span>{% endif %}
-            </td>
+            <td>{{ p.name }}</td>
             <td>{{ p.city or '—' }}</td>
             <td>{{ p.source }}</td>
             <td>{{ (p.focus_area or '—')|replace('_', ' ') }}</td>
+            <td>{% if p.voter_engagement %}Yes{% else %}—{% endif %}</td>
             <td>{{ p.annual_revenue|currency }}</td>
             <td><span class="badge badge-{{ p.stage or 'cold' }}">{{ p.stage or 'cold' }}</span></td>
             <td>{{ p.contact_name or '—' }}</td>

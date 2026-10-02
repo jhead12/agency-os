@@ -179,6 +179,7 @@ async def prospect_list(
         "stage": "o.stage",
         "touch": "o.touch_count",
         "contact": "o.contact_email",
+        "voter": "p.voter_engagement",
         "followup": "o.next_follow_up_at",
     }
     sort_col = sort_map.get(sort, "p.name")

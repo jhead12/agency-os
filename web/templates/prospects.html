@@ -74,6 +74,7 @@
             <th>{{ sort_header('city', 'City', sort, sort_dir, qs) }}</th>
             <th>{{ sort_header('source', 'Source', sort, sort_dir, qs) }}</th>
             <th>{{ sort_header('focus', 'Focus', sort, sort_dir, qs) }}</th>
+            <th>{{ sort_header('voter', 'Voter', sort, sort_dir, qs) }}</th>
             <th>{{ sort_header('revenue', 'Revenue', sort, sort_dir, qs) }}</th>
             <th>{{ sort_header('stage', 'Stage', sort, sort_dir, qs) }}</th>
             <th>{{ sort_header('touch', 'Touch', sort, sort_dir, qs) }}</th>
@@ -86,11 +87,17 @@
         <tr>
             <td>
                 <a href="/prospects/{{ p.id }}">{{ p.name }}</a>
-                {% if p.voter_engagement %}<span class="tag tag-voter">voter</span>{% endif %}
             </td>
             <td>{{ p.city or '—' }}</td>
             <td><span class="source-badge source-{{ p.source }}">{{ p.source }}</span></td>
             <td>{{ (p.focus_area or '—')|replace('_', ' ') }}</td>
+            <td>
+                {% if p.voter_engagement %}
+                <span class="tag tag-voter">Yes</span>
+                {% else %}
+                <span class="muted">—</span>
+                {% endif %}
+            </td>
             <td>{{ p.annual_revenue|currency }}</td>
             <td><span class="stage-badge stage-{{ p.stage or 'cold' }}">{{ p.stage or 'cold' }}</span></td>
             <td>{{ p.touch_count or 0 }}</td>
