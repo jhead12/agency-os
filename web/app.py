@@ -310,6 +310,105 @@ async def prospect_list(
     })
 
 
+@app.get("/call-log", response_class=HTMLResponse)
+async def call_log_page(
+    request: Request,
+    outcome: str = Query(default=""),
+    interest: str = Query(default=""),
+    page: int = Query(default=1, ge=1),
+    per_page: int = Query(default=50, ge=10, le=200),
+):
+    """Call log viewer — all calls across all campaigns."""
+    db = get_db()
+    offset = (page - 1) * per_page
+    calls = db.get_all_calls(limit=per_page, offset=offset, outcome=outcome, interest=interest)
+
+    # Count total
+    where_parts = []
+    params = []
+    if outcome:
+        where_parts.append("cl.outcome = ?")
+        params.append(outcome)
+    if interest:
+        where_parts.append("cl.interest_level = ?")
+        params.append(interest)
+    where_clause = " AND ".join(where_parts) if where_parts else "1=1"
+    total = db.conn.execute(
+        f"""SELECT COUNT(*) FROM call_log cl
+           JOIN campaigns c ON cl.campaign_id = c.id WHERE {where_clause}""",
+        params,
+    ).fetchone()[0]
+
+    stats = db.get_call_stats()
+    total_pages = max(1, (total + per_page - 1) // per_page)
+
+    return templates.TemplateResponse("call_log.html", {
+        "request": request,
+        "calls": calls,
+        "stats": stats,
+        "outcome_filter": outcome,
+        "interest_filter": interest,
+        "page": page,
+        "total": total,
+        "total_pages": total_pages,
+        "has_prev": page > 1,
+        "has_next": page < total_pages,
+    })
+
+
+@app.post("/call-log/record")
+async def record_call(
+    prospect_id: int = Form(...),
+    outreach_id: int = Form(...),
+    campaign_id: int = Form(...),
+    script_key: str = Form(default=""),
+    script_title: str = Form(default=""),
+    stage_at_call: str = Form(default=""),
+    outcome: str = Form(default="completed"),
+    duration_minutes: int = Form(default=0),
+    interest_level: str = Form(default=""),
+    decision_maker_name: str = Form(default=""),
+    decision_maker_role: str = Form(default=""),
+    next_step: str = Form(default=""),
+    next_step_date: str = Form(default=""),
+    voicemail_left: str = Form(default=""),
+    notes: str = Form(default=""),
+    called_by: str = Form(default=""),
+):
+    """Record a completed phone call."""
+    from core.models import CallLog
+    db = get_db()
+
+    from datetime import datetime as _dt
+    nsd = None
+    if next_step_date:
+        try:
+            nsd = _dt.fromisoformat(next_step_date)
+        except ValueError:
+            nsd = None
+
+    call = CallLog(
+        outreach_id=outreach_id,
+        campaign_id=campaign_id,
+        prospect_id=prospect_id,
+        script_key=script_key or None,
+        script_title=script_title or None,
+        stage_at_call=stage_at_call or None,
+        outcome=outcome,
+        duration_minutes=duration_minutes or None,
+        interest_level=interest_level or None,
+        decision_maker_name=decision_maker_name or None,
+        decision_maker_role=decision_maker_role or None,
+        next_step=next_step or None,
+        next_step_date=nsd,
+        voicemail_left=bool(voicemail_left),
+        notes=notes or None,
+        called_by=called_by or None,
+    )
+    db.log_call(call)
+    return RedirectResponse(url=f"/prospects/{prospect_id}", status_code=303)
+
+
 @app.get("/call-scripts", response_class=HTMLResponse)
 async def call_scripts(
     request: Request,
@@ -465,11 +564,15 @@ async def prospect_detail(request: Request, prospect_id: int):
         activity = json.loads(o["activity_log"] or "[]")
         # We can't modify Row, so we'll pass separately
 
+    # Get call history for this prospect
+    call_history = db.get_calls_for_prospect(prospect_id)
+
     return templates.TemplateResponse("prospect_detail.html", {
         "request": request,
         "prospect": prospect,
         "outreach_rows": outreach_rows,
         "email_logs": email_logs,
+        "call_history": call_history,
         "activity_logs": {r["id"]: json.loads(r["activity_log"] or "[]") for r in outreach_rows},
     })
 

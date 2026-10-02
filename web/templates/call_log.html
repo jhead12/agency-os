@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block title %}Call Log — agency-os{% endblock %}
+{% block content %}
+<div class="active" style="display:none"></div>
+
+<div class="page-header">
+    <h1>Call Log</h1>
+    <p class="subtitle">{{ total }} calls logged · {{ stats.total_minutes }} total minutes</p>
+</div>
+
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-label">Total Calls</div>
+        <div class="stat-value">{{ stats.total_calls }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Talk Time</div>
+        <div class="stat-value">{{ stats.total_minutes }}m</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Completed</div>
+        <div class="stat-value">{{ stats.by_outcome.get('completed', 0) }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Voicemails</div>
+        <div class="stat-value">{{ stats.by_outcome.get('voicemail', 0) }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">No Answer</div>
+        <div class="stat-value">{{ stats.by_outcome.get('no_answer', 0) }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">High Interest</div>
+        <div class="stat-value" style="color: var(--green);">{{ stats.by_interest.get('high', 0) }}</div>
+    </div>
+</div>
+
+<div class="filters">
+    <form method="get" action="/call-log">
+        <select name="outcome" class="filter-select">
+            <option value="">All outcomes</option>
+            {% set outcomes = ['completed', 'no_answer', 'voicemail', 'gatekeeper', 'wrong_number', 'scheduled'] %}
+            {% for o in outcomes %}
+            <option value="{{ o }}" {% if outcome_filter == o %}selected{% endif %}>{{ o }}</option>
+            {% endfor %}
+        </select>
+        <select name="interest" class="filter-select">
+            <option value="">All interest levels</option>
+            {% set levels = ['high', 'medium', 'low', 'not_interested'] %}
+            {% for l in levels %}
+            <option value="{{ l }}" {% if interest_filter == l %}selected{% endif %}>{{ l }}</option>
+            {% endfor %}
+        </select>
+        <button type="submit" class="btn btn-sm">Filter</button>
+        <a href="/call-log" class="btn btn-sm btn-secondary">Clear</a>
+    </form>
+</div>
+
+{% if calls %}
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>Date</th>
+            <th>Prospect</th>
+            <th>City</th>
+            <th>Outcome</th>
+            <th>Interest</th>
+            <th>Duration</th>
+            <th>Script</th>
+            <th>Next Step</th>
+            <th>Called By</th>
+            <th>Notes</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for c in calls %}
+        <tr>
+            <td>{{ c.called_at|fmt_date }}</td>
+            <td><a href="/prospects/{{ c.prospect_id }}">{{ c.prospect_name }}</a></td>
+            <td>{{ c.prospect_city or '—' }}</td>
+            <td><span class="status-badge status-{{ c.outcome }}">{{ c.outcome }}</span></td>
+            <td>
+                {% if c.interest_level %}
+                <span class="stage-badge stage-{{ 'closed_won' if c.interest_level == 'high' else ('contacted' if c.interest_level == 'medium' else ('closed_lost' if c.interest_level == 'not_interested' else 'nurture')) }}">{{ c.interest_level }}</span>
+                {% else %}<span class="muted">—</span>{% endif %}
+            </td>
+            <td>{{ c.duration_minutes or '—' }}m</td>
+            <td>{{ c.script_title or '—' }}</td>
+            <td>{{ c.next_step or '—' }}</td>
+            <td>{{ c.called_by or '—' }}</td>
+            <td>{{ c.notes[:60] if c.notes else '—' }}{% if c.notes and c.notes|length > 60 %}...{% endif %}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<div class="pagination">
+    <div class="pagination-info">Page {{ page }} of {{ total_pages }} · {{ total }} total</div>
+    <div class="pagination-buttons">
+        {% if has_prev %}
+        <a href="/call-log?outcome={{ outcome_filter }}&interest={{ interest_filter }}&page={{ page - 1 }}" class="btn btn-sm">← Prev</a>
+        {% endif %}
+        {% if has_next %}
+        <a href="/call-log?outcome={{ outcome_filter }}&interest={{ interest_filter }}&page={{ page + 1 }}" class="btn btn-sm">Next →</a>
+        {% endif %}
+    </div>
+</div>
+
+{% else %}
+<p class="empty-state">No calls logged yet. Go to a prospect's page and use the "Log Call" form after making a call.</p>
+{% endif %}
+
+{% endblock %}

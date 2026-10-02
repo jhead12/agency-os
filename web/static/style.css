@@ -380,6 +380,37 @@ body {
 }
 .contact-form input:focus { border-color: var(--accent); }
 
+/* Call log form */
+.call-form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+}
+.call-log-form .form-row {
+    display: flex;
+    flex-direction: column;
+}
+.call-log-form label {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-bottom: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+.call-log-form textarea {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px;
+    border-radius: 4px;
+    font-size: 13px;
+    outline: none;
+    font-family: inherit;
+}
+.call-log-form textarea:focus {
+    border-color: var(--accent);
+}
+
 /* Call script styles */
 .prospect-info-bar {
     display: flex;

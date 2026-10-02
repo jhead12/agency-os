@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from core.models import Prospect, Outreach, EmailLog, SendResult, EnrichmentResult
+from core.models import Prospect, Outreach, EmailLog, SendResult, EnrichmentResult, CallLog
 
 
 SCHEMA = """
@@ -89,6 +89,33 @@ CREATE INDEX IF NOT EXISTS idx_outreach_next_follow_up ON outreach(next_follow_u
 CREATE INDEX IF NOT EXISTS idx_outreach_campaign ON outreach(campaign_id);
 CREATE INDEX IF NOT EXISTS idx_prospects_ein ON prospects(ein);
 CREATE INDEX IF NOT EXISTS idx_prospects_county ON prospects(county);
+
+CREATE TABLE IF NOT EXISTS call_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    outreach_id INTEGER NOT NULL REFERENCES outreach(id) ON DELETE CASCADE,
+    campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+    prospect_id INTEGER NOT NULL REFERENCES prospects(id) ON DELETE CASCADE,
+    script_key TEXT,
+    script_title TEXT,
+    stage_at_call TEXT,
+    outcome TEXT DEFAULT 'completed',
+    duration_minutes INTEGER,
+    interest_level TEXT,
+    decision_maker_name TEXT,
+    decision_maker_role TEXT,
+    contact_method TEXT DEFAULT 'phone',
+    next_step TEXT,
+    next_step_date TIMESTAMP,
+    voicemail_left INTEGER DEFAULT 0,
+    notes TEXT,
+    called_by TEXT,
+    called_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_call_log_outreach ON call_log(outreach_id);
+CREATE INDEX IF NOT EXISTS idx_call_log_prospect ON call_log(prospect_id);
+CREATE INDEX IF NOT EXISTS idx_call_log_campaign ON call_log(campaign_id);
+CREATE INDEX IF NOT EXISTS idx_call_log_called_at ON call_log(called_at);
 """
 
 
@@ -391,3 +418,142 @@ class Database:
                     (result.raw["website"], prospect_id),
                 )
                 c.commit()
+
+    # ── Call Log ───────────────────────────────────────────────────────
+
+    def log_call(self, call: CallLog) -> int:
+        """Insert a call log record and update the outreach row."""
+        c = self.conn
+        cur = c.execute(
+            """INSERT INTO call_log
+               (outreach_id, campaign_id, prospect_id, script_key, script_title,
+                stage_at_call, outcome, duration_minutes, interest_level,
+                decision_maker_name, decision_maker_role, contact_method,
+                next_step, next_step_date, voicemail_left, notes, called_by)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                call.outreach_id, call.campaign_id, call.prospect_id,
+                call.script_key, call.script_title, call.stage_at_call,
+                call.outcome, call.duration_minutes, call.interest_level,
+                call.decision_maker_name, call.decision_maker_role,
+                call.contact_method, call.next_step,
+                call.next_step_date.isoformat() if call.next_step_date else None,
+                int(call.voicemail_left), call.notes, call.called_by,
+            ),
+        )
+        c.commit()
+
+        # Update outreach row based on call outcome
+        updates = {"last_contacted_at": datetime.now().isoformat()}
+        if call.outcome == "completed" and call.interest_level:
+            if call.interest_level == "high":
+                updates["stage"] = "engaged"
+            elif call.interest_level in ("medium", "low"):
+                updates["stage"] = "contacted"
+            elif call.interest_level == "not_interested":
+                updates["stage"] = "closed_lost"
+                updates["closed_at"] = datetime.now().isoformat()
+                if call.notes:
+                    updates["close_reason"] = call.notes
+        elif call.outcome == "voicemail" or call.outcome == "no_answer":
+            updates["stage"] = "contacted"
+        elif call.outcome == "scheduled":
+            updates["stage"] = "demo_scheduled"
+
+        if call.next_step_date:
+            updates["next_follow_up_at"] = call.next_step_date.isoformat()
+
+        if call.decision_maker_name and not call.decision_maker_name.startswith("("):
+            updates["contact_name"] = call.decision_maker_name
+
+        self.update_outreach(call.outreach_id, updates)
+
+        return cur.lastrowid
+
+    def get_calls_for_prospect(self, prospect_id: int) -> list:
+        """Get all call logs for a prospect, newest first."""
+        rows = self.conn.execute(
+            """SELECT cl.*, p.name as prospect_name, c.name as campaign_name
+               FROM call_log cl
+               JOIN prospects p ON cl.prospect_id = p.id
+               JOIN campaigns c ON cl.campaign_id = c.id
+               WHERE cl.prospect_id = ?
+               ORDER BY cl.called_at DESC""",
+            (prospect_id,),
+        ).fetchall()
+        return rows
+
+    def get_all_calls(self, limit: int = 100, offset: int = 0,
+                      outcome: str = "", interest: str = "") -> list:
+        """Get all call logs, newest first, with optional filters."""
+        where_parts = []
+        params = []
+        if outcome:
+            where_parts.append("cl.outcome = ?")
+            params.append(outcome)
+        if interest:
+            where_parts.append("cl.interest_level = ?")
+            params.append(interest)
+        where_clause = " AND ".join(where_parts) if where_parts else "1=1"
+
+        rows = self.conn.execute(
+            f"""SELECT cl.*, p.name as prospect_name, p.city as prospect_city,
+               c.name as campaign_name
+               FROM call_log cl
+               JOIN prospects p ON cl.prospect_id = p.id
+               JOIN campaigns c ON cl.campaign_id = c.id
+               WHERE {where_clause}
+               ORDER BY cl.called_at DESC
+               LIMIT ? OFFSET ?""",
+            params + [limit, offset],
+        ).fetchall()
+        return rows
+
+    def get_call_stats(self, campaign_name: str = "") -> dict:
+        """Aggregate call statistics."""
+        c = self.conn
+        where = ""
+        params = []
+        if campaign_name:
+            where = "WHERE c.name = ?"
+            params = [campaign_name]
+
+        total = c.execute(
+            f"""SELECT COUNT(*) FROM call_log cl
+               JOIN campaigns c ON cl.campaign_id = c.id {where}""",
+            params,
+        ).fetchone()[0]
+
+        by_outcome = {}
+        rows = c.execute(
+            f"""SELECT cl.outcome, COUNT(*) as cnt FROM call_log cl
+               JOIN campaigns c ON cl.campaign_id = c.id {where}
+               GROUP BY cl.outcome""",
+            params,
+        ).fetchall()
+        for r in rows:
+            by_outcome[r["outcome"]] = r["cnt"]
+
+        by_interest = {}
+        rows = c.execute(
+            f"""SELECT cl.interest_level, COUNT(*) as cnt FROM call_log cl
+               JOIN campaigns c ON cl.campaign_id = c.id {where}
+               AND cl.interest_level IS NOT NULL
+               GROUP BY cl.interest_level""",
+            params,
+        ).fetchall()
+        for r in rows:
+            by_interest[r["interest_level"]] = r["cnt"]
+
+        total_minutes = c.execute(
+            f"""SELECT COALESCE(SUM(cl.duration_minutes), 0) FROM call_log cl
+               JOIN campaigns c ON cl.campaign_id = c.id {where}""",
+            params,
+        ).fetchone()[0]
+
+        return {
+            "total_calls": total,
+            "by_outcome": by_outcome,
+            "by_interest": by_interest,
+            "total_minutes": total_minutes,
+        }

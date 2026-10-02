@@ -107,3 +107,28 @@ class EmailLog:
     provider_message_id: Optional[str] = None
     sent_at: Optional[datetime] = None
     id: Optional[int] = None
+
+
+@dataclass
+class CallLog:
+    """A record of one phone call made to a prospect."""
+
+    outreach_id: int
+    campaign_id: int
+    prospect_id: int
+    script_key: Optional[str] = None
+    script_title: Optional[str] = None
+    stage_at_call: Optional[str] = None
+    outcome: str = "completed"  # completed | no_answer | voicemail | gatekeeper | wrong_number | scheduled
+    duration_minutes: Optional[int] = None
+    interest_level: Optional[str] = None  # high | medium | low | not_interested
+    decision_maker_name: Optional[str] = None
+    decision_maker_role: Optional[str] = None
+    contact_method: str = "phone"  # phone | in_person | video
+    next_step: Optional[str] = None
+    next_step_date: Optional[datetime] = None
+    voicemail_left: bool = False
+    notes: Optional[str] = None
+    called_by: Optional[str] = None
+    called_at: Optional[datetime] = None
+    id: Optional[int] = None

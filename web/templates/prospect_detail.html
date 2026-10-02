@@ -113,4 +113,128 @@
 </div>
 {% endif %}
 
+{# ── Call Log Form ───────────────────────────────────── #}
+<div class="detail-card full-width">
+    <h3>📞 Log a Call</h3>
+    {% for o in outreach_rows %}
+    <form method="post" action="/call-log/record" class="call-log-form">
+        <input type="hidden" name="prospect_id" value="{{ prospect.id }}">
+        <input type="hidden" name="outreach_id" value="{{ o.id }}">
+        <input type="hidden" name="campaign_id" value="{{ o.campaign_id }}">
+        <input type="hidden" name="stage_at_call" value="{{ o.stage }}">
+
+        <div class="call-form-grid">
+            <div class="form-row">
+                <label>Script Used</label>
+                <select name="script_key" class="filter-select">
+                    <option value="">— None / Freestyle —</option>
+                    <option value="phone_cold_call">Cold Call</option>
+                    <option value="phone_followup_after_email">Follow-Up Call</option>
+                    <option value="phone_demo_call">Demo Call</option>
+                    <option value="phone_proposal_followup">Proposal Follow-Up</option>
+                </select>
+            </div>
+            <div class="form-row">
+                <label>Outcome</label>
+                <select name="outcome" class="filter-select" required>
+                    <option value="completed">Completed — spoke to someone</option>
+                    <option value="no_answer">No answer</option>
+                    <option value="voicemail">Left voicemail</option>
+                    <option value="gatekeeper">Gatekeeper — left message</option>
+                    <option value="wrong_number">Wrong number</option>
+                    <option value="scheduled">Call scheduled for later</option>
+                </select>
+            </div>
+            <div class="form-row">
+                <label>Interest Level</label>
+                <select name="interest_level" class="filter-select">
+                    <option value="">— N/A —</option>
+                    <option value="high">High — wants to move forward</option>
+                    <option value="medium">Medium — interested, needs time</option>
+                    <option value="low">Low — lukewarm</option>
+                    <option value="not_interested">Not interested</option>
+                </select>
+            </div>
+            <div class="form-row">
+                <label>Duration (minutes)</label>
+                <input type="number" name="duration_minutes" min="0" max="120" placeholder="5" class="filter-input">
+            </div>
+            <div class="form-row">
+                <label>Decision Maker Name</label>
+                <input type="text" name="decision_maker_name" placeholder="Jane Doe" class="filter-input"
+                       value="{{ o.contact_name or '' }}">
+            </div>
+            <div class="form-row">
+                <label>Decision Maker Role</label>
+                <input type="text" name="decision_maker_role" placeholder="Executive Director" class="filter-input"
+                       value="{{ o.contact_title or '' }}">
+            </div>
+            <div class="form-row">
+                <label>Next Step</label>
+                <input type="text" name="next_step" placeholder="Send proposal, call back next week, etc." class="filter-input">
+            </div>
+            <div class="form-row">
+                <label>Next Step Date</label>
+                <input type="date" name="next_step_date" class="filter-input">
+            </div>
+        </div>
+
+        <div class="form-row" style="margin-top: 12px;">
+            <label>Notes — what was said, objections, questions, details</label>
+            <textarea name="notes" rows="4" placeholder="They mentioned their board meets next month. Interested in the multilingual feature. Wants pricing for Coalition tier. Send proposal by Friday." class="filter-input" style="width: 100%; resize: vertical;"></textarea>
+        </div>
+
+        <div class="form-row" style="display: flex; gap: 16px; align-items: center; margin-top: 12px;">
+            <label style="display: flex; gap: 6px; align-items: center; font-size: 13px;">
+                <input type="checkbox" name="voicemail_left" value="1"> Voicemail left
+            </label>
+            <div class="form-row" style="flex: 1; max-width: 200px;">
+                <label>Called By</label>
+                <input type="text" name="called_by" placeholder="Your name" class="filter-input">
+            </div>
+            <button type="submit" class="btn">Record Call</button>
+        </div>
+    </form>
+    {% endfor %}
+</div>
+
+{# ── Call History for this Prospect ───────────────────── #}
+{% if call_history %}
+<div class="detail-card full-width">
+    <h3>📞 Call History ({{ call_history|length }})</h3>
+    <table class="data-table compact">
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Outcome</th>
+                <th>Interest</th>
+                <th>Duration</th>
+                <th>Script</th>
+                <th>Next Step</th>
+                <th>Called By</th>
+                <th>Notes</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for c in call_history %}
+            <tr>
+                <td>{{ c.called_at|fmt_date }}</td>
+                <td><span class="status-badge status-{{ c.outcome }}">{{ c.outcome }}</span></td>
+                <td>
+                    {% if c.interest_level %}
+                    <span class="stage-badge stage-{{ 'closed_won' if c.interest_level == 'high' else ('contacted' if c.interest_level == 'medium' else ('closed_lost' if c.interest_level == 'not_interested' else 'nurture')) }}">{{ c.interest_level }}</span>
+                    {% else %}—{% endif %}
+                </td>
+                <td>{{ c.duration_minutes or '—' }}m</td>
+                <td>{{ c.script_title or '—' }}</td>
+                <td>{{ c.next_step or '—' }}</td>
+                <td>{{ c.called_by or '—' }}</td>
+                <td>{{ c.notes[:80] if c.notes else '—' }}{% if c.notes and c.notes|length > 80 %}...{% endif %}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
 {% endblock %}
