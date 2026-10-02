@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Welcome — agency-os{% endblock %}
+{% block content %}
+<div class="auth-card detail-card">
+    {% if invitee %}
+    <h1>Welcome, {{ invitee.name }}</h1>
+    <p class="muted">Choose a password for <strong>{{ invitee.email }}</strong>. You'll be signed in right after.</p>
+    {% if error %}<div class="form-error">{{ error }}</div>{% endif %}
+    <form method="post" class="stack-form">
+        <input type="email" name="email" value="{{ invitee.email }}" autocomplete="username" hidden>
+        <label>New password
+            <input type="password" name="new_password" required minlength="10" autofocus autocomplete="new-password" class="filter-input">
+        </label>
+        <label>Confirm password
+            <input type="password" name="confirm_password" required minlength="10" autocomplete="new-password" class="filter-input">
+        </label>
+        <button type="submit" class="btn">Set password &amp; sign in</button>
+    </form>
+    {% else %}
+    <h1>Link expired</h1>
+    {% if error %}<div class="form-error">{{ error }}</div>{% endif %}
+    <p class="muted">This setup link has expired or was already used. Ask an owner to send you a new one,
+        or <a href="/login">sign in</a> if you've already set your password.</p>
+    {% endif %}
+</div>
+{% endblock %}

@@ -187,6 +187,15 @@ CREATE TABLE IF NOT EXISTS audit_log (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- One-time "set your password" links sent in welcome emails
+CREATE TABLE IF NOT EXISTS invites (
+    token_hash TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMP NOT NULL,
+    used_at TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
 """
@@ -1092,3 +1101,57 @@ class Database:
     def delete_session(self, token_hash: str) -> None:
         self.conn.execute("DELETE FROM sessions WHERE token_hash = ?", (token_hash,))
         self.conn.commit()
+
+    # Invites (welcome-email "set your password" links)
+
+    def create_invite(self, user_id: int, token_hash: str, ttl_days: int,
+                      actor: Optional[CurrentUser]) -> datetime:
+        """Issue a one-time password-setup link. Earlier unused links stop working."""
+        expires_at = datetime.now() + timedelta(days=ttl_days)
+        with self.transaction() as c:
+            row = c.execute("SELECT email, is_active FROM users WHERE id = ?", (user_id,)).fetchone()
+            if not row:
+                raise AccessError("User not found.")
+            if not row["is_active"]:
+                raise AccessError(f"{row['email']} is deactivated; reactivate them first.")
+            c.execute("DELETE FROM invites WHERE user_id = ? AND used_at IS NULL", (user_id,))
+            c.execute(
+                "INSERT INTO invites (token_hash, user_id, expires_at) VALUES (?, ?, ?)",
+                (token_hash, user_id, expires_at.isoformat()),
+            )
+            self._audit(c, actor, "user.invite", "user", user_id,
+                        {"email": row["email"], "expires_at": expires_at.isoformat()})
+        return expires_at
+
+    def invite_user_id(self, token_hash: str) -> Optional[int]:
+        """The invited user's id if the link is unused, unexpired, and they're active."""
+        row = self.conn.execute(
+            """SELECT i.user_id FROM invites i JOIN users u ON u.id = i.user_id
+               WHERE i.token_hash = ? AND i.used_at IS NULL AND i.expires_at > ?
+                 AND u.is_active = 1""",
+            (token_hash, datetime.now().isoformat()),
+        ).fetchone()
+        return row["user_id"] if row else None
+
+    def accept_invite(self, token_hash: str, password: str) -> int:
+        """Set the invited user's password, burn the link, and end old sessions."""
+        problem = access.password_problem(password)
+        if problem:
+            raise AccessError(problem)
+        with self.transaction() as c:
+            row = c.execute(
+                """SELECT i.user_id FROM invites i JOIN users u ON u.id = i.user_id
+                   WHERE i.token_hash = ? AND i.used_at IS NULL AND i.expires_at > ?
+                     AND u.is_active = 1""",
+                (token_hash, datetime.now().isoformat()),
+            ).fetchone()
+            if not row:
+                raise AccessError("This link has expired or was already used.")
+            user_id = row["user_id"]
+            c.execute("UPDATE users SET password_hash = ? WHERE id = ?",
+                      (access.hash_password(password), user_id))
+            c.execute("UPDATE invites SET used_at = CURRENT_TIMESTAMP WHERE token_hash = ?",
+                      (token_hash,))
+            c.execute("DELETE FROM invites WHERE user_id = ? AND used_at IS NULL", (user_id,))
+            c.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+        return user_id

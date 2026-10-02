@@ -1221,12 +1221,15 @@ async def login(
         return fail("Incorrect email or password.")
 
     _login_failures.pop(key, None)
-    token = access.new_session_token()
-    db.create_session(row["id"], access.hash_token(token), SESSION_TTL_DAYS)
     user = db.load_current_user(row["id"])
     db.audit(user, "auth.login", "user", user.id)
+    return _start_session(request, user, _safe_next(next) or user.landing_page())
 
-    response = RedirectResponse(url=_safe_next(next) or user.landing_page(), status_code=303)
+
+def _start_session(request: Request, user: CurrentUser, target: str) -> RedirectResponse:
+    token = access.new_session_token()
+    get_db().create_session(user.id, access.hash_token(token), SESSION_TTL_DAYS)
+    response = RedirectResponse(url=target, status_code=303)
     response.set_cookie(
         SESSION_COOKIE, token,
         max_age=SESSION_TTL_DAYS * 86400,
@@ -1235,6 +1238,39 @@ async def login(
         secure=request.url.scheme == "https",
     )
     return response
+
+
+@app.get("/welcome/{token}", response_class=HTMLResponse)
+async def welcome_page(request: Request, token: str, error: str = Query(default="")):
+    """Landing page for the one-time link in a welcome email (core/welcome.py)."""
+    db = get_db()
+    user_id = db.invite_user_id(access.hash_token(token))
+    invitee = db.load_current_user(user_id) if user_id else None
+    return templates.TemplateResponse(request, "welcome.html", {
+        "invitee": invitee,
+        "error": error,
+    }, status_code=200 if invitee else 410)
+
+
+@app.post("/welcome/{token}")
+async def accept_welcome(
+    request: Request,
+    token: str,
+    new_password: str = Form(...),
+    confirm_password: str = Form(...),
+):
+    if new_password != confirm_password:
+        return RedirectResponse(
+            url=f"/welcome/{quote(token)}?error=Passwords+don%27t+match.", status_code=303
+        )
+    db = get_db()
+    try:
+        user_id = db.accept_invite(access.hash_token(token), new_password)
+    except AccessError as e:
+        return RedirectResponse(url=f"/welcome/{quote(token)}?error={quote(str(e))}", status_code=303)
+    user = db.load_current_user(user_id)
+    db.audit(user, "auth.invite_accepted", "user", user.id)
+    return _start_session(request, user, user.landing_page())
 
 
 @app.post("/logout")

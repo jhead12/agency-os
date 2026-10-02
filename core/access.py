@@ -83,6 +83,8 @@ ROUTE_RULES: dict[str, str] = {
     "POST /logout": ANY_USER,
     "GET /account": ANY_USER,
     "POST /account/password": ANY_USER,
+    "GET /welcome/{token}": PUBLIC,   # one-time link; the token is the credential
+    "POST /welcome/{token}": PUBLIC,
 
     "GET /": "dashboard.view",
     "GET /api/stats": "dashboard.view",

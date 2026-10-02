@@ -200,6 +200,23 @@ campaigns and prospects); roles control what each person can see and do.
 - Sign-ins, team changes, and prospect/template edits are recorded in
   **Team → Audit log**. Logged calls are attributed to the signed-in user.
 
+### Adding a rep
+
+Send them a welcome email with a one-time link to set their own password
+(no password ever goes over email). The command creates the user if needed:
+
+```bash
+python agency_os.py users invite --email rep@example.com --name "Jane Rep" --role "Sales Rep"
+python agency_os.py users invite --email rep@example.com            # resend: new link, old one dies
+python agency_os.py users invite --email rep@example.com --no-send  # print the email instead
+```
+
+The link expires after 7 days and works once. It points at
+`AGENCY_OS_BASE_URL` (or Railway's public domain; override with `--base-url`)
+and is sent over SMTP (`SMTP_HOST`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`).
+Repeat `--role` to give several roles. Re-inviting an existing user leaves
+their roles alone, so it doubles as a password reset link.
+
 Recovery from the server shell (on Railway, use `railway ssh` and pass
 `--db /data/db.sqlite`):
 

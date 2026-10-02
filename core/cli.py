@@ -15,6 +15,7 @@ Usage:
     agency-os users create-owner --email you@example.com
     agency-os users grant-owner --email someone@example.com
     agency-os users set-password --email someone@example.com
+    agency-os users invite --email rep@example.com --name "Jane Rep" --role "Sales Rep"
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from pathlib import Path
 
 import click
 
+from core import access
 from core.access import AccessError, OWNER_ROLE
 from core.campaign import discover_campaigns
 from core.db import Database
@@ -389,6 +391,71 @@ def users_set_password(ctx, email, password):
     except AccessError as e:
         _fail(e)
     click.echo(f"Password updated for {row['email']}")
+
+
+@users.command("invite")
+@click.option("--email", required=True)
+@click.option("--name", default="", help="Display name (new users; defaults to the email's local part)")
+@click.option("--role", "role_names", multiple=True,
+              help="Role for a new user; repeat for several (e.g. --role Caller)")
+@click.option("--base-url", default="",
+              help="Dashboard URL for the link (default: $AGENCY_OS_BASE_URL or Railway's domain)")
+@click.option("--no-send", is_flag=True, help="Print the email instead of sending it")
+@click.pass_context
+def users_invite(ctx, email, name, role_names, base_url, no_send):
+    """Send a welcome email with a one-time set-password link.
+
+    Creates the user if they don't exist yet. For an existing user it sends a
+    fresh link (their roles are left alone; change those in Team → Users).
+    Any earlier unused link for the user stops working.
+    """
+    from core import welcome
+
+    site_url = (base_url or welcome.base_url()).rstrip("/")
+    if not site_url:
+        _fail(AccessError("No dashboard URL. Pass --base-url https://... or set AGENCY_OS_BASE_URL."))
+    if not no_send and not welcome.smtp_configured():
+        _fail(AccessError("SMTP isn't configured (SMTP_HOST, SMTP_USER, SMTP_PASS). "
+                          "Set it up, or use --no-send to print the email and send it yourself."))
+
+    db = _access_db(ctx)
+    row = db.get_user_by_email(email)
+    if row:
+        if role_names:
+            click.echo(f"{row['email']} already exists; ignoring --role (edit roles in Team → Users).")
+        user_id = row["id"]
+    else:
+        roles_by_name = {r["name"].lower(): r["id"] for r in db.list_roles()}
+        unknown = [r for r in role_names if r.lower() not in roles_by_name]
+        if unknown:
+            _fail(AccessError(f"Unknown role(s): {', '.join(unknown)}. "
+                              f"Choose from: {', '.join(r['name'] for r in db.list_roles())}"))
+        # Random throwaway password: nobody can sign in until the link is used.
+        try:
+            user_id = db.create_user(
+                email, name or email.split("@")[0], access.new_session_token(),
+                [roles_by_name[r.lower()] for r in role_names], actor=None,
+            )
+        except AccessError as e:
+            _fail(e)
+        click.echo(f"Created {email.strip().lower()}"
+                   + ("" if role_names else " with no roles (they'll see only their account page)"))
+
+    try:
+        link, expires_at = welcome.issue_invite(db, user_id, site_url)
+    except AccessError as e:
+        _fail(e)
+    user = db.load_current_user(user_id)
+    subject, body = welcome.compose(user, link, expires_at, site_url)
+
+    if no_send:
+        click.echo(f"\nTo: {user.email}\nSubject: {subject}\n\n{body}")
+        return
+    result = welcome.send(user.email, subject, body)
+    if result.status != "sent":
+        click.echo(f"Email not sent ({result.error}). Share this link with them instead:\n  {link}", err=True)
+        sys.exit(1)
+    click.echo(f"Welcome email sent to {user.email} (link expires {expires_at:%b %d, %Y})")
 
 
 if __name__ == "__main__":

@@ -267,3 +267,76 @@ def test_calls_are_attributed_to_signed_in_user(db):
     assert r.status_code == 303
     row = c.execute("SELECT called_by FROM call_log").fetchone()
     assert row["called_by"] == "caller"
+
+
+# ── Welcome emails ─────────────────────────────────────────────────────
+
+
+def invite(db: Database, user_id: int) -> str:
+    from core import welcome
+
+    link, _ = welcome.issue_invite(db, user_id, "https://dash.example")
+    return link.removeprefix("https://dash.example")
+
+
+def test_welcome_link_sets_password_and_signs_in(db):
+    rep_id = make_user(db, "rep@x.com", "Sales Rep")
+    path = invite(db, rep_id)
+    c = client_for()
+    assert "rep@x.com" in c.get(path).text
+    r = c.post(path, data={"new_password": "brand-new-pass", "confirm_password": "brand-new-pass"})
+    assert r.status_code == 303 and r.headers["location"] == "/"
+    assert c.get("/emails").status_code == 200
+    # Link is single-use; the new password works
+    assert c.get(path).status_code == 410
+    r = client_for().post("/login", data={"email": "rep@x.com", "password": "brand-new-pass"})
+    assert r.status_code == 303 and webapp.SESSION_COOKIE in r.cookies
+    assert "auth.invite_accepted" in [a["action"] for a in db.list_audit()]
+
+
+def test_welcome_link_rejects_mismatch_short_and_superseded(db):
+    rep_id = make_user(db, "rep@x.com", "Caller")
+    old = invite(db, rep_id)
+    new = invite(db, rep_id)
+    c = client_for()
+    assert c.get(old).status_code == 410
+    r = c.post(new, data={"new_password": "brand-new-pass", "confirm_password": "different-pass"})
+    assert "error=" in r.headers["location"]
+    r = c.post(new, data={"new_password": "short", "confirm_password": "short"})
+    assert "error=" in r.headers["location"]
+    assert c.get(new).status_code == 200
+
+
+def test_welcome_link_dead_for_deactivated_or_expired_user(db):
+    make_user(db, "owner@x.com", access.OWNER_ROLE)
+    rep_id = make_user(db, "rep@x.com", "Caller")
+    path = invite(db, rep_id)
+    db.conn.execute("UPDATE invites SET expires_at = '2000-01-01'")
+    db.conn.commit()
+    assert client_for().get(path).status_code == 410
+
+    path = invite(db, rep_id)
+    db.update_user(rep_id, name="rep", is_active=False, role_ids=[], actor=None)
+    r = client_for().post(path, data={"new_password": "brand-new-pass", "confirm_password": "brand-new-pass"})
+    assert "error=" in r.headers["location"]
+
+
+def test_cli_invite_creates_user_and_prints_email(db):
+    from click.testing import CliRunner
+    from core.cli import cli
+
+    r = CliRunner().invoke(cli, [
+        "--db", webapp.DB_PATH, "users", "invite", "--email", "New.Rep@x.com",
+        "--name", "Jane Rep", "--role", "sales rep", "--base-url", "https://dash.example/",
+        "--no-send",
+    ])
+    assert r.exit_code == 0, r.output
+    assert "Hi Jane," in r.output and "Edit organization and contact info" in r.output
+    link = next(w for w in r.output.split() if w.startswith("https://dash.example/welcome/"))
+    user = db.load_current_user(db.get_user_by_email("new.rep@x.com")["id"])
+    assert user.roles == ("Sales Rep",)
+    assert client_for().get(link.removeprefix("https://dash.example")).status_code == 200
+
+    r = CliRunner().invoke(cli, ["--db", webapp.DB_PATH, "users", "invite",
+                                 "--email", "x@x.com", "--role", "Nope", "--base-url", "https://d", "--no-send"])
+    assert r.exit_code == 1 and "Unknown role" in r.output
