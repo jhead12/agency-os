@@ -120,6 +120,25 @@ CREATE INDEX IF NOT EXISTS idx_call_log_prospect ON call_log(prospect_id);
 CREATE INDEX IF NOT EXISTS idx_call_log_campaign ON call_log(campaign_id);
 CREATE INDEX IF NOT EXISTS idx_call_log_called_at ON call_log(called_at);
 
+CREATE TABLE IF NOT EXISTS product_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    product_key TEXT NOT NULL,
+    event_id INTEGER NOT NULL,
+    event_type TEXT,
+    external_ref TEXT,
+    data TEXT DEFAULT '{}',
+    processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(product_key, event_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_product_events_key ON product_events(product_key);
+
+CREATE TABLE IF NOT EXISTS sync_cursors (
+    product_key TEXT PRIMARY KEY,
+    cursor_value INTEGER DEFAULT 0,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     email TEXT UNIQUE NOT NULL COLLATE NOCASE,
@@ -304,20 +323,41 @@ class Database:
         row = self.conn.execute("SELECT * FROM outreach WHERE id = ?", (outreach_id,)).fetchone()
         return self._row_to_outreach(row) if row else None
 
-    def get_due_outreach(self, campaign_name: str, limit: int = 50) -> list[Outreach]:
-        """Get outreach rows that are due for a follow-up touch."""
+    def get_due_outreach(self, campaign_name: str, limit: int = 50,
+                         stages: Optional[list[str]] = None) -> list[Outreach]:
+        """Get outreach rows that are due for a follow-up touch.
+
+        If `stages` is given, only rows in those stages are returned (so e.g.
+        prospects who booked a demo drop out of the automated sequence).
+        """
         c = self.conn
+        stage_sql, stage_params = "", []
+        if stages:
+            stage_sql = f"AND o.stage IN ({','.join('?' * len(stages))})"
+            stage_params = list(stages)
         rows = c.execute(
-            """SELECT o.* FROM outreach o
+            f"""SELECT o.* FROM outreach o
                JOIN campaigns c ON o.campaign_id = c.id
                WHERE c.name = ?
                  AND o.stage NOT IN ('closed_won', 'closed_lost', 'nurture')
+                 {stage_sql}
                  AND (o.next_follow_up_at IS NULL OR o.next_follow_up_at <= CURRENT_TIMESTAMP)
                ORDER BY COALESCE(o.next_follow_up_at, '1970-01-01') ASC
                LIMIT ?""",
-            (campaign_name, limit),
+            (campaign_name, *stage_params, limit),
         ).fetchall()
         return [self._row_to_outreach(r) for r in rows]
+
+    def find_outreach_by_email(self, campaign_name: str, email: str) -> Optional[Outreach]:
+        """Find a campaign's outreach row by contact email (case-insensitive)."""
+        row = self.conn.execute(
+            """SELECT o.* FROM outreach o
+               JOIN campaigns c ON o.campaign_id = c.id
+               WHERE c.name = ? AND LOWER(o.contact_email) = LOWER(?)
+               ORDER BY o.updated_at DESC LIMIT 1""",
+            (campaign_name, email),
+        ).fetchone()
+        return self._row_to_outreach(row) if row else None
 
     def update_outreach(self, outreach_id: int, updates: dict) -> None:
         c = self.conn

@@ -8,9 +8,10 @@ and methods satisfies the protocol.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Iterator, Protocol, Optional, runtime_checkable
 
-from core.models import Prospect, SendResult, EnrichmentResult
+from core.models import Booking, Outreach, Prospect, SendResult, EnrichmentResult
 
 
 @runtime_checkable
@@ -80,4 +81,23 @@ class Enricher(Protocol):
 
     def enrich(self, prospect: Prospect) -> EnrichmentResult:
         """Return contact info or an empty result. Never raise."""
+        ...
+
+
+@runtime_checkable
+class Scheduler(Protocol):
+    """A meeting-booking service (Calendly, etc.)."""
+
+    key: str
+
+    def is_configured(self) -> bool:
+        """Whether this scheduler has the credentials it needs."""
+        ...
+
+    def booking_link(self, prospect: Prospect, outreach: Outreach) -> Optional[str]:
+        """A personalized link the prospect can use to book a meeting."""
+        ...
+
+    def fetch_bookings(self, since: datetime) -> Iterator[Booking]:
+        """Yield bookings with a start time at or after `since`. Never raise."""
         ...

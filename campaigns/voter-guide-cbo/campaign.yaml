@@ -16,7 +16,11 @@ enrichers:
   - apollo
   - hunter
 
-# Delivery channels (first configured one wins per send)
+# Meeting booking — enables {{booking_link}} and `agency_os.py bookings`
+# scheduler: calendly
+
+# Delivery channels (first configured one that can reach the contact wins;
+# add sms_twilio to text contacts that have a phone number)
 channels:
   - email_smartlead
   - email_smtp

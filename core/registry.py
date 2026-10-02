@@ -25,6 +25,7 @@ class PluginRegistry:
         self.products: dict[str, Any] = {}
         self.channels: dict[str, Any] = {}
         self.enrichers: dict[str, Any] = {}
+        self.schedulers: dict[str, Any] = {}
 
     def discover(self, base_dir: str = "plugins") -> None:
         """Scan all plugin categories and register found plugins."""
@@ -33,6 +34,7 @@ class PluginRegistry:
             ("products", self.products),
             ("channels", self.channels),
             ("enrichers", self.enrichers),
+            ("schedulers", self.schedulers),
         ]
 
         for category, registry in categories:
@@ -77,10 +79,14 @@ class PluginRegistry:
     def get_enricher(self, key: str):
         return self.enrichers.get(key)
 
+    def get_scheduler(self, key: str):
+        return self.schedulers.get(key)
+
     def list_plugins(self) -> dict[str, list[str]]:
         return {
             "prospect_sources": list(self.sources.keys()),
             "products": list(self.products.keys()),
             "channels": list(self.channels.keys()),
             "enrichers": list(self.enrichers.keys()),
+            "schedulers": list(self.schedulers.keys()),
         }

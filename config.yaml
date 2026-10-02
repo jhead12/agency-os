@@ -15,6 +15,9 @@ api_keys:
   smartlead: "${SMARTLEAD_API_KEY}"
   apollo: "${APOLLO_API_KEY}"
   hunter: "${HUNTER_API_KEY}"
+  twilio_account_sid: "${TWILIO_ACCOUNT_SID}"
+  twilio_auth_token: "${TWILIO_AUTH_TOKEN}"
+  calendly: "${CALENDLY_API_TOKEN}"
 
 # SMTP (for email_smtp channel)
 smtp:
@@ -30,4 +33,5 @@ schedule:
   enrich: "0 8 * * *"      # daily at 8am
   enqueue: "0 9 * * *"     # daily at 9am
   stale: "30 9 * * *"      # daily at 9:30am
+  bookings: "0 * * * *"    # hourly
   digest: "0 8 * * 1"      # weekly Monday at 8am

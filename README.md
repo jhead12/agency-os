@@ -57,8 +57,9 @@ agency-os/
 ├── plugins/
 │   ├── prospect_sources/   # WHO to sell to (IRS, SOS, OIA, MIV scrapers)
 │   ├── products/           # WHAT you're selling (u9itus voter guide, etc.)
-│   ├── channels/           # HOW you reach them (Smartlead, SMTP, manual)
-│   └── enrichers/          # Contact enrichment (Apollo, Hunter)
+│   ├── channels/           # HOW you reach them (Smartlead, SMTP, Twilio SMS, manual)
+│   ├── enrichers/          # Contact enrichment (Apollo, Hunter)
+│   └── schedulers/         # Meeting booking (Calendly)
 ├── campaigns/      # One folder per sales effort — campaign.yaml + scripts/
 ├── data/           # Scraped prospect data, exports
 ├── config.yaml     # Global config (API keys, DB path, schedule)
@@ -70,8 +71,9 @@ agency-os/
 1. **Sync** — Prospect source plugins scrape/discover organizations and upsert them into the database
 2. **Enrich** — Enricher plugins find contact names/emails for each prospect
 3. **Enqueue** — The pipeline finds due follow-ups, loads the right email script, personalizes it, and sends via a channel plugin
-4. **Stale check** — Prospects with no contact in N days move to "nurture" stage
-5. **Digest** — Weekly pipeline summary (sent, opened, replied, stage breakdown)
+4. **Bookings** — Scheduler plugins pull booked meetings and move those prospects to `demo_scheduled` (out of the automated sequence)
+5. **Stale check** — Prospects with no contact in N days move to "nurture" stage
+6. **Digest** — Weekly pipeline summary (sent, opened, replied, stage breakdown)
 
 ## Adding a new product (e.g., consulting services)
 
@@ -92,6 +94,47 @@ No core code changes. The plugin auto-discovers.
 
 1. Create `plugins/channels/my_channel.py` with `key`, `is_configured()`, and `send(recipient, subject, body, metadata) -> SendResult`
 2. Reference it in a campaign's `channels` list
+
+Channels are tried in order; one that can't reach a contact (e.g. SMS with no
+phone number) returns `skipped` and the next channel is tried. A cadence step
+can override the campaign's channels:
+
+```yaml
+cadence:
+  - touch: 2
+    delay_days: 4
+    script: 02_sms_nudge        # SMS scripts only need a `body`
+    next_stage: contacted
+    channels: [sms_twilio, email_smtp]
+```
+
+## SMS (Twilio)
+
+Set `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_FROM_NUMBER` (or
+`TWILIO_MESSAGING_SERVICE_SID`), then add `sms_twilio` to a campaign's (or a
+step's) `channels`. Texts go to the outreach row's `contact_phone`; US numbers
+are normalized to E.164. Only the script `body` is sent (max 1,600 chars).
+US business texting requires A2P 10DLC registration in Twilio; Twilio handles
+STOP/HELP opt-outs.
+
+## Booking meetings (Calendly)
+
+Add `scheduler: calendly` to `campaign.yaml` and set `CALENDLY_SCHEDULING_URL`.
+Templates can then use `{{booking_link}}` — a per-prospect link that prefills
+their name/email and is tagged with the outreach ID.
+
+With `CALENDLY_API_TOKEN` set, sync bookings into the pipeline:
+
+```bash
+python agency_os.py bookings --campaign voter-guide-cbo [--days 30] [--dry-run]
+python agency_os.py bookings --all
+```
+
+Bookings match by the link's outreach tag, then by email. A booking moves the
+prospect to `demo_scheduled` (never back from `proposal_sent` or closed) with
+the meeting as its next follow-up; a cancellation moves it back to `engaged`.
+Only prospects in `cold` or a cadence `next_stage` get automated touches, so
+booked prospects stop receiving the sequence.
 
 ## Web Dashboard
 
@@ -182,6 +225,11 @@ export SMTP_PORT=587
 export SMTP_USER=...
 export SMTP_PASS=...
 export SMTP_FROM=...
+export TWILIO_ACCOUNT_SID=...
+export TWILIO_AUTH_TOKEN=...
+export TWILIO_FROM_NUMBER=+1...
+export CALENDLY_SCHEDULING_URL=https://calendly.com/you/demo
+export CALENDLY_API_TOKEN=...
 ```
 
 ## Current plugins
@@ -195,10 +243,12 @@ export SMTP_FROM=...
 | product | `u9itus_voter_guide` | u9itus digital voter guide platform |
 | channel | `email_smartlead` | Smartlead API cold email |
 | channel | `email_smtp` | Direct SMTP email |
+| channel | `sms_twilio` | Twilio SMS |
 | channel | `manual` | Log a manual touch (phone, in-person) |
 | enricher | `local_scraper` | Local web scraper — finds websites, phones, emails (no API key needed) |
 | enricher | `apollo` | Apollo.io contact enrichment |
 | enricher | `hunter` | Hunter.io email finder + verifier |
+| scheduler | `calendly` | Calendly booking links + booking sync |
 
 ## License
 

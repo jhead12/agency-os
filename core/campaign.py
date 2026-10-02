@@ -22,6 +22,7 @@ class CadenceStep:
     delay_days: int
     script: str       # script file stem (e.g. "00_cold_outreach")
     next_stage: str   # stage to move to after this touch
+    channels: list[str] = field(default_factory=list)  # overrides campaign channels for this touch
 
 
 @dataclass
@@ -31,6 +32,7 @@ class CampaignConfig:
     prospect_sources: list[str]
     channels: list[str]
     enrichers: list[str] = field(default_factory=list)
+    scheduler: str = ""  # scheduler plugin for {{booking_link}} + booking sync
     filters: dict = field(default_factory=dict)
     stages: list[str] = field(default_factory=list)
     cadence: list[CadenceStep] = field(default_factory=list)
@@ -50,6 +52,7 @@ class CampaignConfig:
                 delay_days=step["delay_days"],
                 script=step["script"],
                 next_stage=step["next_stage"],
+                channels=step.get("channels", []),
             )
             for step in raw.get("cadence", [])
         ]
@@ -60,6 +63,7 @@ class CampaignConfig:
             prospect_sources=raw["prospect_sources"],
             channels=raw["channels"],
             enrichers=raw.get("enrichers", []),
+            scheduler=raw.get("scheduler", ""),
             filters=raw.get("filters", {}),
             stages=raw.get("stages", []),
             cadence=cadence,
@@ -75,6 +79,15 @@ class CampaignConfig:
         if not script_path.exists():
             raise FileNotFoundError(f"Script not found: {script_path}")
         return yaml.safe_load(script_path.read_text())
+
+    @property
+    def sequence_stages(self) -> list[str]:
+        """Stages that still receive automated cadence touches."""
+        stages = ["cold"]
+        for step in self.cadence:
+            if step.next_stage not in stages:
+                stages.append(step.next_stage)
+        return stages
 
     @property
     def db_name(self) -> str:

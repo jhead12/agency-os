@@ -95,6 +95,22 @@ class EnrichmentResult:
 
 
 @dataclass
+class Booking:
+    """A meeting a prospect booked through a scheduler (e.g. Calendly)."""
+
+    external_id: str
+    invitee_email: str
+    invitee_name: str = ""
+    event_name: str = ""
+    start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
+    status: str = "active"  # active | canceled
+    join_url: Optional[str] = None
+    outreach_id: Optional[int] = None  # set when the booking link carried one
+    raw: dict = field(default_factory=dict)
+
+
+@dataclass
 class EmailLog:
     """A record of one email sent (or attempted)."""
 

@@ -36,6 +36,8 @@ class EmailSmtpChannel:
         """Send one email via SMTP. Never raises."""
         if not self.is_configured():
             return SendResult(status="skipped", error="SMTP not configured")
+        if not recipient.get("email"):
+            return SendResult(status="skipped", error="No email address")
 
         try:
             msg = EmailMessage()

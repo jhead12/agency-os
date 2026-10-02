@@ -2,8 +2,13 @@
 u9itus voter guide — product plugin.
 
 Knows how to describe the value of the u9itus voter guide to a prospect,
-generate demo links to the live comparison/voter-guide page, and provide
-pricing tiers for proposals.
+generate demo links, provision personal demo portals via the u9itus API,
+pull events back, and provide pricing tiers for proposals.
+
+generate_demo_link() makes NO HTTP calls — it returns the demo_link
+stored on the outreach row, or falls back to a generic /compare URL.
+Provisioning happens in provision_demo(), called by the CLI's
+`provision` command, never during enqueue/dry-run.
 """
 
 from __future__ import annotations
@@ -12,6 +17,7 @@ from typing import Optional
 from urllib.parse import urlencode
 
 from core.models import Prospect
+from plugins.products.u9itus_client import U9itusClient
 
 
 class U9itusVoterGuideProduct:
@@ -19,6 +25,16 @@ class U9itusVoterGuideProduct:
 
     key = "u9itus_voter_guide"
     BASE_URL = "https://www.u9itus.com"
+
+    def __init__(self):
+        self._client: Optional[U9itusClient] = None
+
+    @property
+    def client(self) -> U9itusClient:
+        """Lazily create the API client."""
+        if self._client is None:
+            self._client = U9itusClient()
+        return self._client
 
     def describe_value(self, prospect: Prospect) -> str:
         """One-line value prop personalized to this prospect."""
@@ -30,14 +46,75 @@ class U9itusVoterGuideProduct:
         )
 
     def generate_demo_link(self, prospect: Prospect, **kwargs) -> Optional[str]:
-        """Generate a link to the u9itus comparison page for a demo."""
+        """Return a demo link. Makes NO HTTP call.
+
+        If the outreach row has a demo_link (provisioned portal), use it.
+        Otherwise fall back to the generic /compare URL.
+
+        This is called by Pipeline._build_variables() during enqueue,
+        including dry runs, so it must never provision or hit the network.
+        """
+        # If a provisioned demo_link is passed via kwargs, use it
+        demo_link = kwargs.get("demo_link")
+        if demo_link:
+            return demo_link
+
+        # Fallback: generic comparison page (no API call)
         state = (prospect.state or "CA").lower()
         params = {"state": state}
         if kwargs.get("district"):
             params["district"] = kwargs["district"]
-        if kwargs.get("candidate"):
-            params["candidate"] = kwargs["candidate"]
         return f"{self.BASE_URL}/compare?" + urlencode(params)
+
+    # ── Demo portal provisioning (A2) ─────────────────────────────────
+
+    def provision_demo(
+        self,
+        prospect: Prospect,
+        contact_email: str = "",
+        demo_link: str = "",
+    ) -> dict:
+        """Provision a personal demo portal on u9itus for this prospect.
+
+        Calls POST /api/v1/agency/demo-portals. Idempotent on external_ref.
+        Returns dict with: slug, demo_url, claim_url, status, expires_at.
+        Or {error: True, ...} on failure.
+        """
+        if not self.client.is_configured():
+            return {"error": True, "detail": "U9ITUS_BASE_URL and U9ITUS_AGENCY_TOKEN not set"}
+
+        external_ref = f"agency-os:prospect:{prospect.id}"
+
+        return self.client.provision_demo(
+            external_ref=external_ref,
+            name=prospect.name,
+            state=prospect.state or "CA",
+            org_type="cbo",
+            website_url=prospect.website_url or "",
+            ein=prospect.ein or "",
+            contact_email=contact_email,
+        )
+
+    def get_portal_status(self, prospect: Prospect) -> dict:
+        """Check the status of a prospect's demo portal."""
+        if not self.client.is_configured():
+            return {"error": True, "detail": "U9itus API not configured"}
+
+        external_ref = f"agency-os:prospect:{prospect.id}"
+        return self.client.get_portal(external_ref)
+
+    # ── Event pull (A2) ───────────────────────────────────────────────
+
+    def pull_events(self, after: int = 0, limit: int = 100) -> dict:
+        """Pull events from the u9itus event feed.
+
+        Returns: {events: [...], next_cursor: int}
+        Or {error: True, ...} on failure.
+        """
+        if not self.client.is_configured():
+            return {"error": True, "detail": "U9itus API not configured"}
+
+        return self.client.pull_events(after=after, limit=limit)
 
     def pricing_tiers(self) -> list[dict]:
         """Available pricing tiers for the voter guide product."""

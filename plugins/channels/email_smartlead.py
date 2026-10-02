@@ -35,6 +35,8 @@ class EmailSmartleadChannel:
         For now, logs the send and returns a simulated result."""
         if not self.is_configured():
             return SendResult(status="skipped", error="SMARTLEAD_API_KEY not set")
+        if not recipient.get("email"):
+            return SendResult(status="skipped", error="No email address")
 
         try:
             # In production: create a lead in a Smartlead sequence

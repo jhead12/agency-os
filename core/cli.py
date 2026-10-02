@@ -7,6 +7,7 @@ Usage:
     agency-os enqueue --campaign voter-guide-cbo --limit 50
     agency-os enrich --campaign voter-guide-cbo
     agency-os stale --all
+    agency-os bookings --campaign voter-guide-cbo
     agency-os digest --campaign voter-guide-cbo
     agency-os campaigns
     agency-os plugins
@@ -146,6 +147,62 @@ def enqueue(ctx, campaign_name, all_campaigns, limit, dry_run):
 
 @cli.command()
 @click.option("--campaign", "campaign_name", help="Specific campaign")
+@click.option("--all", "all_campaigns", is_flag=True, help="Provision for all campaigns")
+@click.option("--limit", default=50, help="Max prospects to provision")
+@click.option("--dry-run", is_flag=True, help="Show what would be provisioned without calling the API")
+@click.pass_context
+def provision(ctx, campaign_name, all_campaigns, limit, dry_run):
+    """Provision personal demo portals on u9itus for prospects with contact emails."""
+    if not campaign_name and not all_campaigns:
+        click.echo("Error: specify --campaign <name> or --all")
+        sys.exit(1)
+
+    registry, db, campaigns = _setup(db_path=ctx.obj["db_path"])
+    pipeline = Pipeline(db, registry)
+
+    targets = campaigns if all_campaigns else [c for c in campaigns if c.db_name == campaign_name]
+    for campaign in targets:
+        click.echo(f"\n{'='*60}")
+        click.echo(f"Provisioning: {campaign.name}")
+        click.echo(f"{'='*60}")
+        stats = pipeline.provision_demos(campaign, limit=limit, dry_run=dry_run)
+        click.echo(f"  Provisioned: {stats['provisioned']}")
+        click.echo(f"  Skipped:     {stats['skipped']}")
+        click.echo(f"  Failed:      {stats['failed']}")
+        click.echo(f"  No contact:  {stats['no_contact']}")
+        if stats.get("api_not_configured"):
+            click.echo(f"\n  ⚠ U9itus API not configured. Set U9ITUS_BASE_URL and U9ITUS_AGENCY_TOKEN in .env")
+
+
+@cli.command()
+@click.option("--campaign", "campaign_name", help="Specific campaign")
+@click.option("--all", "all_campaigns", is_flag=True, help="Pull events for all campaigns")
+@click.option("--dry-run", is_flag=True, help="Show events without updating the pipeline")
+@click.pass_context
+def pull_events(ctx, campaign_name, all_campaigns, dry_run):
+    """Pull portal events from u9itus and auto-advance pipeline stages."""
+    if not campaign_name and not all_campaigns:
+        click.echo("Error: specify --campaign <name> or --all")
+        sys.exit(1)
+
+    registry, db, campaigns = _setup(db_path=ctx.obj["db_path"])
+    pipeline = Pipeline(db, registry)
+
+    targets = campaigns if all_campaigns else [c for c in campaigns if c.db_name == campaign_name]
+    for campaign in targets:
+        click.echo(f"\n{'='*60}")
+        click.echo(f"Pulling events: {campaign.name}")
+        click.echo(f"{'='*60}")
+        stats = pipeline.pull_product_events(campaign, dry_run=dry_run)
+        click.echo(f"  Events pulled:    {stats['events_pulled']}")
+        click.echo(f"  Stage changes:    {stats['stage_changes']}")
+        click.echo(f"  Already processed:{stats['already_processed']}")
+        if stats.get("api_not_configured"):
+            click.echo(f"\n  ⚠ U9itus API not configured. Set U9ITUS_BASE_URL and U9ITUS_AGENCY_TOKEN in .env")
+
+
+@cli.command()
+@click.option("--campaign", "campaign_name", help="Specific campaign")
 @click.option("--all", "all_campaigns", is_flag=True, help="Check all campaigns")
 @click.pass_context
 def stale(ctx, campaign_name, all_campaigns):
@@ -162,6 +219,38 @@ def stale(ctx, campaign_name, all_campaigns):
         click.echo(f"\nStale check: {campaign.name}")
         stats = pipeline.check_stale(campaign)
         click.echo(f"  Moved to nurture: {stats['moved_to_nurture']}")
+
+
+@cli.command()
+@click.option("--campaign", "campaign_name", help="Specific campaign")
+@click.option("--all", "all_campaigns", is_flag=True, help="Sync all campaigns with a scheduler")
+@click.option("--days", default=30, help="Look back this many days for bookings")
+@click.option("--dry-run", is_flag=True, help="Show matches without updating the pipeline")
+@click.pass_context
+def bookings(ctx, campaign_name, all_campaigns, days, dry_run):
+    """Sync booked meetings (e.g. Calendly) into the pipeline."""
+    if not campaign_name and not all_campaigns:
+        click.echo("Error: specify --campaign <name> or --all")
+        sys.exit(1)
+
+    registry, db, campaigns = _setup(db_path=ctx.obj["db_path"])
+    pipeline = Pipeline(db, registry)
+
+    targets = campaigns if all_campaigns else [c for c in campaigns if c.db_name == campaign_name]
+    for campaign in targets:
+        if not campaign.scheduler:
+            if not all_campaigns:
+                click.echo(f"\n{campaign.name}: no scheduler set in campaign.yaml")
+            continue
+        click.echo(f"\nBooking sync: {campaign.name} (via {campaign.scheduler})")
+        stats = pipeline.sync_bookings(campaign, days_back=days, dry_run=dry_run)
+        if stats.get("error"):
+            click.echo(f"  ! {stats['error']}")
+            continue
+        click.echo(f"  Booked:    {stats['booked']}")
+        click.echo(f"  Canceled:  {stats['canceled']}")
+        click.echo(f"  Unmatched: {stats['unmatched']}")
+        click.echo(f"  Unchanged: {stats['unchanged']}")
 
 
 @cli.command()
@@ -205,7 +294,7 @@ def campaigns(ctx):
 
 
 @cli.command()
-@click.option("--type", "plugin_type", type=click.Choice(["prospect_sources", "products", "channels", "enrichers", "all"]), default="all")
+@click.option("--type", "plugin_type", type=click.Choice(["prospect_sources", "products", "channels", "enrichers", "schedulers", "all"]), default="all")
 @click.pass_context
 def plugins(ctx, plugin_type):
     """List all discovered plugins."""
