@@ -366,7 +366,7 @@ class Database:
 
     # ── Enrichment ─────────────────────────────────────────────────────
 
-    def apply_enrichment(self, outreach_id: int, result: EnrichmentResult) -> None:
+    def apply_enrichment(self, outreach_id: int, result: EnrichmentResult, prospect_id: int = None) -> None:
         c = self.conn
         updates = {}
         if result.contact_name:
@@ -379,3 +379,15 @@ class Database:
             updates["contact_title"] = result.contact_title
         if updates:
             self.update_outreach(outreach_id, updates)
+
+        # If the enricher discovered a website, save it back to the prospect
+        if prospect_id and result.raw.get("website"):
+            existing = c.execute(
+                "SELECT website_url FROM prospects WHERE id = ?", (prospect_id,)
+            ).fetchone()
+            if existing and not existing["website_url"]:
+                c.execute(
+                    "UPDATE prospects SET website_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (result.raw["website"], prospect_id),
+                )
+                c.commit()

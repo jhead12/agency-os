@@ -12,6 +12,7 @@ prospect_sources:
 
 # Contact enrichment (run in order, first hit wins)
 enrichers:
+  - local_scraper
   - apollo
   - hunter
 

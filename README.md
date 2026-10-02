@@ -123,6 +123,7 @@ export SMTP_FROM=...
 | channel | `email_smartlead` | Smartlead API cold email |
 | channel | `email_smtp` | Direct SMTP email |
 | channel | `manual` | Log a manual touch (phone, in-person) |
+| enricher | `local_scraper` | Local web scraper — finds websites, phones, emails (no API key needed) |
 | enricher | `apollo` | Apollo.io contact enrichment |
 | enricher | `hunter` | Hunter.io email finder + verifier |
 

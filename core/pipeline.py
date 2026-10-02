@@ -86,8 +86,8 @@ class Pipeline:
                     continue
                 try:
                     result = enricher.enrich(prospect)
-                    if result.contact_email or result.contact_name:
-                        self.db.apply_enrichment(row["id"], result)
+                    if result.contact_email or result.contact_name or result.contact_phone or result.raw.get("website"):
+                        self.db.apply_enrichment(row["id"], result, prospect_id=prospect.id)
                         enriched += 1
                         break  # first hit wins
                 except Exception as exc:
