@@ -119,12 +119,14 @@ async def prospect_list(
     q: str = Query(default="", description="Search name, city, EIN, zip, focus area, website"),
     source: str = Query(default="", description="Filter by source"),
     stage: str = Query(default="", description="Filter by stage"),
+    cities: str = Query(default="", description="Comma-separated city filter"),
     sort: str = Query(default="name", description="Sort column"),
     dir: str = Query(default="asc", description="Sort direction: asc or desc"),
     page: int = Query(default=1, ge=1),
-    per_page: int = Query(default=50, ge=10, le=200),
+    per_page: int = Query(default=50, ge=10, le=500),
+    print: int = Query(default=0, description="Print view: 1 = all rows, no pagination"),
 ):
-    """Prospect list with search, filters, sortable columns, pagination."""
+    """Prospect list with search, filters, sortable columns, pagination, print view."""
     db = get_db()
     campaigns = get_campaigns()
     campaign_map = {c.db_name: c for c in campaigns}
@@ -148,6 +150,14 @@ async def prospect_list(
     if stage:
         where_parts.append("o.stage = ?")
         params.append(stage)
+
+    # City filter — supports multiple cities (comma-separated)
+    if cities:
+        city_list = [c.strip() for c in cities.split(",") if c.strip()]
+        if city_list:
+            placeholders = ",".join("?" * len(city_list))
+            where_parts.append(f"p.city IN ({placeholders})")
+            params.extend(city_list)
 
     where_clause = " AND ".join(where_parts) if where_parts else "1=1"
 
@@ -173,21 +183,57 @@ async def prospect_list(
     }
     sort_col = sort_map.get(sort, "p.name")
     sort_dir = "DESC" if dir.lower() == "desc" else "ASC"
-    # For revenue, default to DESC (high to low makes more sense)
     if sort == "revenue" and dir == "asc" and sort not in request.query_params:
         sort_dir = "DESC"
     order = f"{sort_col} {sort_dir}"
 
-    # Nulls last for DESC, nulls first for ASC (SQLite: use CASE)
+    # Nulls last for DESC, nulls first for ASC
     if sort_dir == "DESC":
         order = f"CASE WHEN {sort_col} IS NULL THEN 1 ELSE 0 END, {sort_col} DESC"
     else:
         order = f"CASE WHEN {sort_col} IS NULL THEN 1 ELSE 0 END, {sort_col} ASC"
 
+    # Print mode: show all rows (up to 1000), no pagination
+    if print:
+        data_sql = f"""
+            SELECT p.*, o.stage, o.touch_count, o.last_contacted_at,
+                   o.next_follow_up_at, o.contact_name, o.contact_email,
+                   o.contact_phone, o.contact_title,
+                   o.id as outreach_id, o.campaign_id
+            FROM prospects p
+            LEFT JOIN outreach o ON p.id = o.prospect_id
+            WHERE {where_clause}
+            ORDER BY {order}
+            LIMIT 1000
+        """
+        rows = db.conn.execute(data_sql, params).fetchall()
+
+        # Get distinct cities for reference
+        all_cities = [r["city"] for r in db.conn.execute(
+            "SELECT DISTINCT city FROM prospects WHERE city IS NOT NULL AND city != '' ORDER BY city"
+        ).fetchall()]
+
+        from datetime import datetime as _dt
+
+        return templates.TemplateResponse("prospects_print.html", {
+            "request": request,
+            "prospects": rows,
+            "total": len(rows),
+            "q": q,
+            "source_filter": source,
+            "stage_filter": stage,
+            "cities_filter": cities,
+            "sort": sort,
+            "sort_dir": sort_dir.lower(),
+            "all_cities": all_cities,
+            "now": _dt.now().strftime("%B %d, %Y at %I:%M %p"),
+        })
+
     offset = (page - 1) * per_page
     data_sql = f"""
         SELECT p.*, o.stage, o.touch_count, o.last_contacted_at,
                o.next_follow_up_at, o.contact_name, o.contact_email,
+               o.contact_phone, o.contact_title,
                o.id as outreach_id, o.campaign_id
         FROM prospects p
         LEFT JOIN outreach o ON p.id = o.prospect_id
@@ -201,6 +247,14 @@ async def prospect_list(
     sources = [r["source"] for r in db.conn.execute(
         "SELECT DISTINCT source FROM prospects WHERE source IS NOT NULL ORDER BY source"
     ).fetchall()]
+
+    # Get distinct cities for filter dropdown (top 30 by prospect count)
+    city_rows = db.conn.execute("""
+        SELECT city, COUNT(*) as cnt FROM prospects
+        WHERE city IS NOT NULL AND city != ''
+        GROUP BY city ORDER BY cnt DESC LIMIT 30
+    """).fetchall()
+    cities_list = [r["city"] for r in city_rows]
 
     # Pagination
     total_pages = max(1, (total + per_page - 1) // per_page)
@@ -216,19 +270,36 @@ async def prospect_list(
         base_params["source"] = source
     if stage:
         base_params["stage"] = stage
+    if cities:
+        base_params["cities"] = cities
     base_qs = urlencode(base_params)
+
+    # Build query string for print link (preserve all filters)
+    print_params = dict(base_params)
+    print_params["print"] = "1"
+    print_qs = urlencode(print_params)
+
+    # Build query string for pagination links
+    pg_params = dict(base_params)
+    pg_params["sort"] = sort
+    pg_params["dir"] = sort_dir.lower()
+    pg_qs = urlencode(pg_params)
 
     return templates.TemplateResponse("prospects.html", {
         "request": request,
         "prospects": rows,
         "sources": sources,
+        "cities_list": cities_list,
         "campaigns": campaign_map,
         "q": q,
         "source_filter": source,
         "stage_filter": stage,
+        "cities_filter": cities,
         "sort": sort,
         "sort_dir": sort_dir.lower(),
         "base_qs": base_qs,
+        "pg_qs": pg_qs,
+        "print_qs": print_qs,
         "page": page,
         "per_page": per_page,
         "total": total,

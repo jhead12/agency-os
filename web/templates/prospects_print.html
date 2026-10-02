@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prospect List — {{ total }} organizations — agency-os</title>
+    <style>
+        /* Print-friendly styles — self-contained, no external CSS */
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: 11px;
+            line-height: 1.4;
+            color: #1a1a1a;
+            background: white;
+        }
+
+        .print-header {
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 2px solid #333;
+        }
+        .print-header h1 { font-size: 18px; }
+        .print-header .meta {
+            color: #666;
+            font-size: 11px;
+            margin-top: 4px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+        .print-header .meta span { white-space: nowrap; }
+
+        .print-actions {
+            margin-bottom: 16px;
+            display: flex;
+            gap: 8px;
+        }
+        .print-actions button, .print-actions a {
+            padding: 6px 14px;
+            border: 1px solid #333;
+            background: white;
+            color: #333;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            text-decoration: none;
+        }
+        .print-actions button:hover { background: #333; color: white; }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 8px;
+        }
+        thead { display: table-header-group; }
+        th {
+            background: #f0f0f0;
+            padding: 6px 8px;
+            text-align: left;
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+            border-bottom: 1px solid #ccc;
+            font-weight: 600;
+        }
+        td {
+            padding: 5px 8px;
+            border-bottom: 1px solid #eee;
+            font-size: 11px;
+            vertical-align: top;
+        }
+        tr { page-break-inside: avoid; }
+        tr:nth-child(even) { background: #fafafa; }
+
+        .badge {
+            display: inline-block;
+            padding: 1px 6px;
+            border-radius: 3px;
+            font-size: 9px;
+            font-weight: 600;
+            background: #e0e0e0;
+            color: #333;
+        }
+        .badge-cold { background: #e8e8e8; color: #666; }
+        .badge-contacted { background: #dbeafe; color: #2563eb; }
+        .badge-engaged { background: #cffafe; color: #0891b2; }
+        .badge-demo_scheduled { background: #ede9fe; color: #7c3aed; }
+        .badge-proposal_sent { background: #fed7aa; color: #c2410c; }
+        .badge-closed_won { background: #dcfce7; color: #16a34a; }
+        .badge-closed_lost { background: #fee2e2; color: #dc2626; }
+        .badge-nurture { background: #f3f4f6; color: #9ca3af; }
+
+        .tag-voter {
+            display: inline-block;
+            padding: 0 4px;
+            border-radius: 3px;
+            font-size: 9px;
+            background: #dcfce7;
+            color: #16a34a;
+            margin-left: 4px;
+        }
+
+        .muted { color: #999; }
+
+        .footer {
+            margin-top: 16px;
+            padding-top: 8px;
+            border-top: 1px solid #ccc;
+            font-size: 10px;
+            color: #666;
+            text-align: center;
+        }
+
+        /* Screen-only: hide print button when printing */
+        @media print {
+            .print-actions { display: none; }
+            .footer { display: none; }
+            body { font-size: 10px; }
+            table { font-size: 10px; }
+        }
+
+        /* Print-only: show everything */
+        @media screen {
+            .print-only { display: none; }
+        }
+        @media print {
+            .print-only { display: block; }
+            .screen-only { display: none; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="print-actions screen-only">
+    <button onclick="window.print()">🖨 Print / Save as PDF</button>
+    <a href="/prospects">← Back to Prospects</a>
+</div>
+
+<div class="print-header">
+    <h1>Prospect List — {{ total }} organizations</h1>
+    <div class="meta">
+        <span>Generated: {{ now }}</span>
+        {% if q %}<span>Search: "{{ q }}"</span>{% endif %}
+        {% if source_filter %}<span>Source: {{ source_filter }}</span>{% endif %}
+        {% if stage_filter %}<span>Stage: {{ stage_filter }}</span>{% endif %}
+        {% if cities_filter %}<span>City: {{ cities_filter }}</span>{% endif %}
+        {% if sort %}<span>Sorted by: {{ sort }} {{ sort_dir }}</span>{% endif %}
+    </div>
+</div>
+
+<table>
+    <thead>
+        <tr>
+            <th>#</th>
+            <th>Organization</th>
+            <th>City</th>
+            <th>Source</th>
+            <th>Focus</th>
+            <th>Revenue</th>
+            <th>Stage</th>
+            <th>Contact Name</th>
+            <th>Email</th>
+            <th>Phone</th>
+            <th>Website</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for p in prospects %}
+        <tr>
+            <td>{{ loop.index }}</td>
+            <td>
+                {{ p.name }}
+                {% if p.voter_engagement %}<span class="tag-voter">voter</span>{% endif %}
+            </td>
+            <td>{{ p.city or '—' }}</td>
+            <td>{{ p.source }}</td>
+            <td>{{ (p.focus_area or '—')|replace('_', ' ') }}</td>
+            <td>{{ p.annual_revenue|currency }}</td>
+            <td><span class="badge badge-{{ p.stage or 'cold' }}">{{ p.stage or 'cold' }}</span></td>
+            <td>{{ p.contact_name or '—' }}</td>
+            <td>{{ p.contact_email or '—' }}</td>
+            <td>{{ p.contact_phone or '—' }}</td>
+            <td>{{ p.website_url or '—' }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<div class="footer">
+    agency-os · {{ total }} prospects · Generated {{ now }}
+</div>
+
+<script>
+    // Auto-open print dialog on load
+    window.addEventListener('load', () => {
+        // Small delay to ensure rendering
+        setTimeout(() => {
+            // Don't auto-print — let the user click the button
+        }, 200);
+    });
+</script>
+
+</body>
+</html>
