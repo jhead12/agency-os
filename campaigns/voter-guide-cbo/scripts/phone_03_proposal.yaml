@@ -1,0 +1,110 @@
+key: phone_proposal_followup
+stage: proposal_sent
+channel: phone
+title: "Proposal Follow-Up — Closing the Deal"
+goal: "Get a yes or a clear next step"
+duration: "5-10 minutes"
+body: |
+  ── OPENING ──────────────────────────────────────────────
+
+  "Hi {{contact_name}}, it's {{your_name}} from u9itus. I sent over a
+  proposal last week for the voter guide partnership. Did you have a
+  chance to review it with your team?"
+
+  [If yes: "Great — what did you think?" → listen]
+
+  [If no: "No worries — did you have a chance to share it with your
+  board / ED?" → if no, offer to resend]
+
+  ── IF THEY HAVE QUESTIONS ───────────────────────────────
+
+  "Happy to answer anything. What's on your mind?"
+
+  [Common questions ↓]
+
+  Q: "What's the setup process?"
+  A: "It takes about 2 weeks. We handle all the data — candidates,
+  ballot measures, election dates. You just give us your logo and
+  pick your URL. We set up the embed snippet for your website."
+
+  Q: "What happens after the election?"
+  A: "The guide stays live with archived results. When the next
+  election cycle starts, it automatically updates with new candidates
+  and measures. One subscription covers a full cycle."
+
+  Q: "Can we add our own content?"
+  A: "Yes — on the Pro and Coalition tiers you can add custom
+  messaging, voter registration links, and event announcements
+  alongside the guide."
+
+  Q: "What's the difference between Pro and Coalition?"
+  A: "Pro is for a single organization. Coalition is if you want to
+  bring in partner CBOs under one umbrella — up to 10 partners, each
+  with their own branding. If {{org_name}} is part of a coalition or
+  network, that might be the better fit."
+
+  ── IF THEY NEED MORE TIME ───────────────────────────────
+
+  "Totally understand. When do you expect to have a decision? I want
+  to make sure I'm available to help with anything you need."
+
+  [Get a specific date. Schedule follow-up in system.]
+
+  "Is there anything specific holding things up? Sometimes I can help
+  unblock — like providing more info for your board or adjusting the
+  proposal."
+
+  ── IF PRICE IS THE ISSUE ────────────────────────────────
+
+  "I hear you. Let me ask — what budget range were you thinking? I
+  might be able to work with that. The Starter tier at $500 is
+  designed to be accessible, but if that's still a stretch, let me
+  see what I can do."
+
+  [If they can do something but not $500:]
+  "Let me talk to my team and see if we can structure something. Can
+  I get back to you by {{day}}?"
+
+  ── IF THEY SAY YES ──────────────────────────────────────
+
+  "That's great news! Let me walk you through next steps:
+
+  1. I'll send you a simple agreement to sign — one page, no fine
+     print surprises.
+  2. You send me your logo and preferred URL.
+  3. We get you set up within 2 weeks.
+
+  Which tier are you going with — Starter, Pro, or Coalition?"
+
+  [Note the tier. Move to closed_won. Send agreement.]
+
+  ── IF THEY SAY NO ───────────────────────────────────────
+
+  "I appreciate you taking the time to review it, {{contact_name}}.
+  Can I ask what tipped the decision? It helps me improve."
+
+  [Listen. Note the reason. Move to closed_lost with reason.]
+
+  "No problem at all. If anything changes before the next election
+  cycle, you have my number. Thanks for considering us."
+
+  ── IF NO ANSWER / VOICEMAIL ─────────────────────────────
+
+  "Hi {{contact_name}}, this is {{your_name}} from u9itus. I'm
+  following up on the proposal I sent for the voter guide
+  partnership. Just wanted to check in and see if you have any
+  questions. You can reach me at [your number] or reply to the email.
+  Thanks — talk to you soon."
+
+  [If 3+ voicemails with no response → move to nurture]
+
+  ── NOTES TO CAPTURE AFTER CALL ──────────────────────────
+
+  □ Did they review the proposal? Yes / No
+  □ Decision: Yes / No / Need more time
+  □ If yes: which tier? Starter / Pro / Coalition
+  □ If no: reason?
+  □ If more time: decision date?
+  □ Price concern? What's their budget?
+  □ Questions they asked
+  □ Next step + date

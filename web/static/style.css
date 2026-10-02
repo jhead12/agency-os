@@ -380,6 +380,100 @@ body {
 }
 .contact-form input:focus { border-color: var(--accent); }
 
+/* Call script styles */
+.prospect-info-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 16px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.info-bar-right {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    font-size: 13px;
+    color: var(--text-muted);
+}
+.info-bar-right a { color: var(--accent); text-decoration: none; }
+
+.stage-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+}
+.stage-tab {
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 12px;
+    text-decoration: none;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    transition: all 0.15s;
+}
+.stage-tab:hover { background: var(--surface-hover); color: var(--text); }
+.stage-tab.active { background: var(--accent); color: white; border-color: var(--accent); }
+
+.script-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: 16px;
+    overflow: hidden;
+}
+.script-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+}
+.script-header h3 { font-size: 16px; font-weight: 600; }
+.script-meta {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--text-muted);
+    flex-wrap: wrap;
+}
+.badge-stage {
+    background: rgba(59,130,246,0.15);
+    color: var(--accent);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+}
+.badge-duration {
+    background: rgba(249,115,22,0.15);
+    color: var(--orange);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+}
+.script-goal {
+    font-style: italic;
+}
+.script-body {
+    padding: 16px 20px;
+    font-family: 'SF Mono', 'Courier New', monospace;
+    font-size: 13px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    color: var(--text);
+    overflow-x: auto;
+}
+
 /* Page header with actions */
 .page-header-row {
     display: flex;

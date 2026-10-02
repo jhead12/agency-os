@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Call Scripts — agency-os{% endblock %}
+{% block content %}
+<div class="active" style="display:none"></div>
+
+<div class="page-header">
+    <div class="page-header-row">
+        <div>
+            <h1>Phone Call Scripts</h1>
+            <p class="subtitle">
+                {{ scripts|length }} scripts{% if prospect %} for {{ prospect.name }}{% endif %}
+            </p>
+        </div>
+        <div class="page-header-actions">
+            {% if prospect %}
+            <a href="/call-scripts?prospect_id={{ prospect.id }}&print=1" class="btn btn-sm btn-print" target="_blank">🖨 Print All</a>
+            {% else %}
+            <a href="/call-scripts?print=1" class="btn btn-sm btn-print" target="_blank">🖨 Print All</a>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+{% if not prospect %}
+<div class="filters">
+    <form method="get" action="/call-scripts">
+        <label class="filter-label">Personalize for prospect:</label>
+        <select name="prospect_id" class="filter-select" onchange="this.form.submit()">
+            <option value="0">— Select a prospect —</option>
+            {% for p in prospect_options %}
+            <option value="{{ p.id }}" {% if prospect and prospect.id == p.id %}selected{% endif %}>{{ p.name }} ({{ p.city }})</option>
+            {% endfor %}
+        </select>
+        <select name="stage" class="filter-select">
+            <option value="">All stages</option>
+            {% set stages = ['cold', 'contacted', 'engaged', 'demo_scheduled', 'proposal_sent'] %}
+            {% for s in stages %}
+            <option value="{{ s }}" {% if stage_filter == s %}selected{% endif %}>{{ s }}</option>
+            {% endfor %}
+        </select>
+        <button type="submit" class="btn btn-sm">Go</button>
+    </form>
+</div>
+{% else %}
+<div class="prospect-info-bar">
+    <div class="info-bar-left">
+        <strong>{{ prospect.name }}</strong>
+        {% if prospect.city %}· {{ prospect.city }}{% endif %}
+        {% if prospect.focus_area %}· {{ prospect.focus_area|replace('_', ' ') }}{% endif %}
+        {% if prospect.voter_engagement %}<span class="tag tag-voter">voter</span>{% endif %}
+    </div>
+    <div class="info-bar-right">
+        {% if scripts[0].prospect_phone %}📞 {{ scripts[0].prospect_phone }}{% endif %}
+        {% if scripts[0].prospect_email %}✉ {{ scripts[0].prospect_email }}{% endif %}
+        {% if prospect.website_url %}🌐 <a href="{{ prospect.website_url }}" target="_blank">{{ prospect.website_url }}</a>{% endif %}
+    </div>
+</div>
+
+<div class="stage-tabs">
+    {% set stages = ['cold', 'contacted', 'engaged', 'demo_scheduled', 'proposal_sent'] %}
+    {% for s in stages %}
+    <a href="/call-scripts?prospect_id={{ prospect.id }}&stage={{ s }}"
+       class="stage-tab {{ 'active' if stage_filter == s else '' }}">{{ s }}</a>
+    {% endfor %}
+    <a href="/call-scripts?prospect_id={{ prospect.id }}" class="stage-tab {{ 'active' if not stage_filter else '' }}">All</a>
+</div>
+{% endif %}
+
+{% for script in scripts %}
+<div class="script-card">
+    <div class="script-header">
+        <div>
+            <h3>{{ script.title_rendered or script.title }}</h3>
+            <div class="script-meta">
+                <span class="badge badge-stage">{{ script.stage }}</span>
+                <span class="badge badge-duration">{{ script.duration }}</span>
+                <span class="script-goal">Goal: {{ script.goal }}</span>
+            </div>
+        </div>
+        <a href="/call-scripts?prospect_id={{ prospect.id if prospect else 0 }}&stage={{ script.stage }}&print=1"
+           class="btn btn-sm btn-print" target="_blank">🖨 Print</a>
+    </div>
+
+    <pre class="script-body">{{ script.body_rendered or script.body }}</pre>
+</div>
+{% endfor %}
+
+{% if not scripts %}
+<p class="empty-state">No phone scripts found. Add <code>phone_*.yaml</code> files to your campaign's <code>scripts/</code> folder.</p>
+{% endif %}
+
+{% endblock %}

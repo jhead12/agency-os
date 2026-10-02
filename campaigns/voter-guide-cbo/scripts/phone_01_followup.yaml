@@ -1,0 +1,73 @@
+key: phone_followup_after_email
+stage: contacted
+channel: phone
+title: "Follow-Up Call — After Sending Email"
+goal: "Confirm they saw the email, book a 20-min demo call"
+duration: "3-5 minutes"
+body: |
+  ── OPENING ──────────────────────────────────────────────
+
+  "Hi {{contact_name}}, it's {{your_name}} from u9itus. I sent you an
+  email a few days ago about a digital voter guide for {{org_name}}.
+  Did you have a chance to look at it?"
+
+  [If yes: "Great — what did you think?" → listen, then go to THE ASK]
+
+  [If no: "No worries — the email might have gotten buried. Can I give
+  you the 30-second version right now?"]
+
+  ── 30-SECOND PITCH (if they haven't seen email) ─────────
+
+  "We built a platform where {{org_name}} can give your constituents a
+  personalized voter guide — candidates side-by-side, ballot measures
+  in plain language, in multiple languages, co-branded with your logo.
+  It embeds on your website. I sent you a link to a live demo."
+
+  ── THE ASK ──────────────────────────────────────────────
+
+  "I'd love to walk you through it properly — do you have 20 minutes
+  this {{day_option}} or {{day_option_alt}} for a quick call? I can
+  show you how it'd look for {{org_name}} specifically."
+
+  [Offer two specific days: "this Thursday or Friday"]
+
+  ── IF THEY BOOK ─────────────────────────────────────────
+
+  "Perfect — I'll send a calendar invite to {{contact_email}}. I'll
+  also customize the demo with {{city}}'s actual candidates and ballot
+  measures so you can see exactly what your constituents would see."
+
+  [Note the scheduled date/time in the system → move to demo_scheduled]
+
+  ── IF THEY NEED TO CHECK WITH SOMEONE ───────────────────
+
+  "Totally understand. Who else should be in the conversation? I'm
+  happy to do a group call so everyone sees it at once."
+
+  [Get the other person's name and role]
+
+  ── IF NOT INTERESTED ────────────────────────────────────
+
+  "I appreciate you taking the call. Is there someone else at
+  {{org_name}} who handles voter education or civic engagement I
+  should connect with instead?"
+
+  [If no: "No problem — I'll note that we connected. If anything
+  changes before the next election cycle, here's my direct line."]
+
+  ── IF NO ANSWER / VOICEMAIL ─────────────────────────────
+
+  "Hi {{contact_name}}, this is {{your_name}} from u9itus. I sent you
+  an email about a digital voter guide for {{org_name}}. Just
+  following up to see if you had any questions. You can reach me at
+  [your number] or just reply to the email. The demo link is in there.
+  Thanks — talk to you soon."
+
+  ── NOTES TO CAPTURE AFTER CALL ──────────────────────────
+
+  □ Did they see the email? Yes / No
+  □ Demo scheduled? Yes → date/time | No → why?
+  □ Other decision makers identified?
+  □ Interest level: High / Medium / Low / Not interested
+  □ Objections raised
+  □ Next step + date

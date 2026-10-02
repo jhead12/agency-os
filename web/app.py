@@ -310,6 +310,126 @@ async def prospect_list(
     })
 
 
+@app.get("/call-scripts", response_class=HTMLResponse)
+async def call_scripts(
+    request: Request,
+    prospect_id: int = Query(default=0, description="Personalize scripts for this prospect"),
+    stage: str = Query(default="", description="Filter by pipeline stage"),
+    print: int = Query(default=0, description="Print view"),
+):
+    """Phone call script viewer — personalized per prospect, printable."""
+    db = get_db()
+    campaigns = get_campaigns()
+
+    # Load all phone script YAMLs from all campaigns
+    import yaml
+    from pathlib import Path
+
+    all_scripts = []
+    for c in campaigns:
+        scripts_dir = c.config_dir / "scripts"
+        if not scripts_dir.exists():
+            continue
+        for script_file in sorted(scripts_dir.glob("phone_*.yaml")):
+            try:
+                script = yaml.safe_load(script_file.read_text())
+                script["campaign_name"] = c.name
+                script["file_name"] = script_file.stem
+                all_scripts.append(script)
+            except Exception:
+                continue
+
+    # Filter by stage if requested
+    if stage:
+        all_scripts = [s for s in all_scripts if s.get("stage") == stage]
+
+    # Personalize for a specific prospect
+    prospect = None
+    if prospect_id:
+        prospect = db.get_prospect(prospect_id)
+        if prospect:
+            # Get outreach info
+            outreach_rows = db.conn.execute(
+                """SELECT o.*, c.name as campaign_name FROM outreach o
+                   JOIN campaigns c ON o.campaign_id = c.id
+                   WHERE o.prospect_id = ? ORDER BY o.updated_at DESC""",
+                (prospect_id,),
+            ).fetchall()
+
+            # Build template variables
+            from core.pipeline import Pipeline
+            pipeline = Pipeline(db, PluginRegistry())
+            # Find the campaign config for this prospect
+            campaign_config = None
+            for c in campaigns:
+                for o in outreach_rows:
+                    if c.db_name == o["campaign_name"]:
+                        campaign_config = c
+                        break
+                if campaign_config:
+                    break
+
+            variables = {
+                "org_name": prospect.name,
+                "contact_name": outreach_rows[0]["contact_name"] if outreach_rows else prospect.name,
+                "contact_first": (outreach_rows[0]["contact_name"] or "").split()[0] if outreach_rows and outreach_rows[0]["contact_name"] else "there",
+                "focus_area": (prospect.focus_area or "civic engagement").replace("_", " "),
+                "city": prospect.city or "Los Angeles",
+                "state": prospect.state or "CA",
+                "your_name": campaign_config.sender_name if campaign_config else "",
+                "voter_status": "active" if prospect.voter_engagement else "emerging",
+            }
+
+            # Get demo link from product plugin
+            if campaign_config:
+                registry = PluginRegistry()
+                registry.discover("plugins")
+                product = registry.get_product(campaign_config.product)
+                if product:
+                    variables["demo_link"] = product.generate_demo_link(prospect) or ""
+                    variables["value_prop"] = product.describe_value(prospect) or ""
+
+            # Render scripts with variables
+            import re
+            def render(text):
+                def replace(match):
+                    key = match.group(1).strip()
+                    return str(variables.get(key, match.group(0)))
+                return re.sub(r"\{\{(\w+)\}\}", replace, text)
+
+            for s in all_scripts:
+                s["body_rendered"] = render(s.get("body", ""))
+                s["title_rendered"] = render(s.get("title", ""))
+                s["prospect_name"] = prospect.name
+                s["prospect_phone"] = outreach_rows[0]["contact_phone"] if outreach_rows else None
+                s["prospect_email"] = outreach_rows[0]["contact_email"] if outreach_rows else None
+                s["prospect_org"] = prospect.name
+                s["prospect_website"] = prospect.website_url
+
+    from datetime import datetime as _dt
+
+    # Build prospect options for the dropdown (top 100 by name)
+    prospect_options = []
+    if not prospect_id:
+        prospect_options = db.conn.execute(
+            """SELECT p.id, p.name, p.city FROM prospects p
+               JOIN outreach o ON p.id = o.prospect_id
+               WHERE o.contact_phone IS NOT NULL OR o.contact_email IS NOT NULL
+               ORDER BY p.name LIMIT 100"""
+        ).fetchall()
+
+    template_name = "call_scripts_print.html" if print else "call_scripts.html"
+
+    return templates.TemplateResponse(template_name, {
+        "request": request,
+        "scripts": all_scripts,
+        "prospect": prospect,
+        "prospect_options": prospect_options,
+        "stage_filter": stage,
+        "now": _dt.now().strftime("%B %d, %Y at %I:%M %p"),
+    })
+
+
 @app.get("/prospects/{prospect_id}", response_class=HTMLResponse)
 async def prospect_detail(request: Request, prospect_id: int):
     """Prospect detail — info, outreach timeline, email log."""

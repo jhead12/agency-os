@@ -1,0 +1,117 @@
+key: phone_demo_call
+stage: demo_scheduled
+channel: phone
+title: "Demo Call — 20 Minute Walkthrough"
+goal: "Show the product live, handle objections, send proposal"
+duration: "15-20 minutes"
+body: |
+  ── BEFORE THE CALL (5 min prep) ─────────────────────────
+
+  □ Open the demo link customized for their state: {{demo_link}}
+  □ Have {{org_name}}'s website open to reference their branding
+  □ Review their focus area: {{focus_area}}
+  □ Have pricing tiers ready (see proposal script)
+
+  ── OPENING (1 minute) ───────────────────────────────────
+
+  "Thanks for taking the time, {{contact_name}}. I want to make this
+  useful for {{org_name}} specifically, not just a generic demo. Before
+  I show the platform — quick question: what does voter education look
+  like at {{org_name}} right now? Are you doing print guides, phone
+  banking, anything digital?"
+
+  [Listen. Note their current approach. This tells you what gap
+  you're filling.]
+
+  ── DEMO WALKTHROUGH (10 minutes) ────────────────────────
+
+  "Let me show you what this looks like for your constituents."
+
+  1. CANDIDATE COMPARISON PAGE
+     "This is what a voter sees. Candidates side-by-side — their
+     positions, endorsements, donor snapshots. Everything's sourced
+     and linked. Your constituents can compare up to 3 candidates for
+     any race in {{state}}."
+
+     [Show the comparison page. Point out sources at the bottom.]
+
+  2. BALLOT MEASURES
+     "Here's the ballot measures section — plain-language yes/no
+     meanings with a link to the full legal text. This is the stuff
+     most voters skip because it's confusing."
+
+  3. CO-BRANDING
+     "Now here's the part that matters for {{org_name}} — this entire
+     guide can be co-branded with your logo, your colors, and embedded
+     on your website at your URL. Your constituents see YOU, not us."
+
+  4. MULTILINGUAL
+     "It's available in Spanish, Korean, Chinese, and Tagalog. I know
+     {{org_name}} serves {{focus_area}} communities — is multilingual
+     support important for your constituents?"
+
+     [Listen. If yes, emphasize this.]
+
+  5. PRINT / SHARE
+     "Voters can also print a PDF version or share a link. So if
+     you're doing any in-person events or door knocking, you can use
+     the print version too."
+
+  ── CHECK-IN (2 minutes) ─────────────────────────────────
+
+  "What questions do you have so far? Does this feel like something
+  that would work for {{org_name}}'s community?"
+
+  [Listen for objections. Common ones below ↓]
+
+  ── HANDLING OBJECTIONS ──────────────────────────────────
+
+  OBJECTION: "We already have a voter guide"
+  → "That's great — a lot of orgs use print guides. This doesn't
+  replace that, it complements it. The digital version updates in
+  real-time as new candidates file or ballot measures change. And it
+  reaches people who won't pick up a flyer."
+
+  OBJECTION: "We don't have budget"
+  → "The Starter tier is $500 per election cycle — that's less than
+  what most orgs spend on printing. And it reaches unlimited people
+  digitally. Can I show you the pricing options?"
+
+  OBJECTION: "We're nonpartisan — is this nonpartisan?"
+  → "100% nonpartisan. Candidates are presented side-by-side with
+  sourced statements. No endorsements, no ratings. Just information.
+  You stay nonpartisan — the guide is a tool, not a position."
+
+  OBJECTION: "We need to check with our board / ED"
+  → "Totally understandable. Can I send you a one-page proposal you
+  can share with them? It'll have the pricing, what's included, and a
+  link to this demo so they can see it themselves."
+
+  ── THE CLOSE (2 minutes) ────────────────────────────────
+
+  [If they're interested:]
+  "I'll send you a proposal today with three pricing options —
+  Starter, Pro, and Coalition. The proposal will have everything your
+  board would need to make a decision. Can I send that to
+  {{contact_email}}?"
+
+  [Move to proposal_sent stage after sending]
+
+  [If they want to think about it:]
+  "No problem. I'll send a summary email with the demo link and pricing
+  so you have it on file. When does your board meet next? I can follow
+  up after that."
+
+  [Note the board meeting date → schedule follow-up]
+
+  ── NOTES TO CAPTURE AFTER CALL ──────────────────────────
+
+  □ Current voter education approach (print/digital/none)
+  □ Interest level: High / Medium / Low
+  □ Key objections raised
+  □ Multilingual need? Which languages?
+  □ Budget concerns?
+  □ Decision process (who else needs to approve?)
+  □ Board meeting date (if applicable)
+  □ Next step + date
+  □ Send proposal? Yes → move to proposal_sent

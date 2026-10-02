@@ -1,0 +1,79 @@
+key: phone_cold_call
+stage: cold
+channel: phone
+title: "Cold Call — First Contact"
+goal: "Get permission to send a follow-up email with demo link"
+duration: "3-5 minutes"
+body: |
+  ── OPENING ──────────────────────────────────────────────
+
+  "Hi, is this {{contact_name}}? My name is {{your_name}}, I'm with
+  u9itus. I'm calling about {{org_name}} — is this a good time to talk
+  for two minutes?"
+
+  [If no: "No problem — when would be a better time to reach you? I can
+  call back. What's the best number?"]
+
+  [If yes, continue ↓]
+
+  ── WHO WE ARE (15 seconds) ──────────────────────────────
+
+  "I work with community organizations in {{city}} on voter education.
+  We built a digital voter guide platform — basically a way for
+  {{org_name}} to give your constituents a personalized, nonpartisan
+  voter guide with candidates side-by-side and ballot measures in plain
+  language, co-branded with your logo."
+
+  ── WHY THEM (15 seconds) ────────────────────────────────
+
+  "I came across {{org_name}} because of your work in {{focus_area}}.
+  Since you're already doing {{voter_status}} voter engagement, I
+  thought this could be a natural fit."
+
+  [If voter_engagement = Yes: "Since you're already doing voter
+  engagement in the community..."]
+
+  [If voter_engagement = No: "As an organization serving the
+  community, your constituents could really benefit from having
+  clear, nonpartisan voting information..."]
+
+  ── THE ASK (10 seconds) ─────────────────────────────────
+
+  "I don't want to take up your whole day — can I send you a quick
+  email with a link to a live demo? You can see it in about two
+  minutes and decide if it's worth a longer conversation."
+
+  ── IF INTERESTED ────────────────────────────────────────
+
+  "Great — what's the best email to send that to?"
+
+  [Confirm email. Note it in the system after the call.]
+
+  "I'll send that today. Should I follow up this week or next week?"
+
+  ── IF NOT INTERESTED ────────────────────────────────────
+
+  "Totally understand. Can I send you one email with the demo link so
+  you have it on file? No follow-up unless you reach out."
+
+  ── IF GATEKEEPER ────────────────────────────────────────
+
+  [If someone else answers:]
+  "Hi, I'm trying to reach the person who handles community outreach
+  or voter engagement programs at {{org_name}}. Who would that be, and
+  what's the best way to reach them?"
+
+  ── CLOSING ──────────────────────────────────────────────
+
+  "Thanks for your time, {{contact_first}}. I'll send that email
+  today. Have a good one."
+
+  ── NOTES TO CAPTURE AFTER CALL ──────────────────────────
+
+  □ Decision maker name (if different from contact)
+  □ Best phone number
+  □ Best email
+  □ Preferred contact method
+  □ Interest level: High / Medium / Low / Not interested
+  □ Callback date (if scheduled)
+  □ Notes / objections / questions they asked

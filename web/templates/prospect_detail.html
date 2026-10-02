@@ -5,12 +5,19 @@
 
 <div class="page-header">
     <div class="breadcrumb"><a href="/prospects">← Prospects</a></div>
-    <h1>{{ prospect.name }}</h1>
-    <p class="subtitle">
-        {{ prospect.city or '' }}{{ ', ' if prospect.city else '' }}{{ prospect.state or '' }}
+    <div class="page-header-row">
+        <div>
+            <h1>{{ prospect.name }}</h1>
+            <p class="subtitle">
+                {{ prospect.city or '' }}{{ ', ' if prospect.city else '' }}{{ prospect.state or '' }}
         {% if prospect.ein %} · EIN: {{ prospect.ein }}{% endif %}
         {% if prospect.ntee_code %} · NTEE: {{ prospect.ntee_code }}{% endif %}
     </p>
+        </div>
+        <div class="page-header-actions">
+            <a href="/call-scripts?prospect_id={{ prospect.id }}" class="btn btn-sm">📞 Call Scripts</a>
+        </div>
+    </div>
 </div>
 
 <div class="detail-grid">
