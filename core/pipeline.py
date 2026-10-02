@@ -8,6 +8,7 @@ send emails → update stages → check stale → weekly digest.
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime, timedelta
 from typing import Optional
@@ -413,7 +414,6 @@ class Pipeline:
                         "expires_at": result.get("expires_at"),
                     }
                     # Save metadata back
-                    import json
                     self.db.conn.execute(
                         "UPDATE prospects SET metadata = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                         (json.dumps(prospect.metadata), prospect.id),
@@ -433,11 +433,12 @@ class Pipeline:
 
     # ── Pull Product Events (A4) ──────────────────────────────────────
 
-    # Stage mapping: event type → target stage (only moves forward)
+    # Stage mapping: event type → target stage (only moves forward).
+    # portal.published is listed so it is processed, but never changes the stage.
     EVENT_STAGE_MAP = {
         "portal.viewed": "engaged",
         "portal.claimed": "demo_scheduled",
-        "portal.published": "demo_scheduled",  # no stage change, just flag
+        "portal.published": "demo_scheduled",
     }
 
     # Stage order for "never move backward" guard
@@ -541,10 +542,9 @@ class Pipeline:
             current_rank = self.STAGE_ORDER.get(current_stage, 0)
             target_rank = self.STAGE_ORDER.get(target_stage, 0)
 
-            # Only move forward
-            if target_rank > current_rank:
+            # Only move forward. portal.published is a flag, not a stage change.
+            if target_rank > current_rank and event_type != "portal.published":
                 # Check activity_log for the event ref to avoid double-processing
-                import json
                 activity = json.loads(outreach_row["activity_log"] or "[]")
                 event_ref = f"u9itus:{event_id}"
                 if any(a.get("ref") == event_ref for a in activity):
@@ -620,7 +620,6 @@ class Pipeline:
 
     def _record_event(self, product_key: str, event_id: int, event: dict) -> None:
         """Record a raw event in product_events."""
-        import json
         c = self.db.conn
         c.execute(
             """INSERT OR IGNORE INTO product_events
