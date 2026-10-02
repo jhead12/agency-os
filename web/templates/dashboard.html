@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — agency-os{% endblock %}
+{% block content %}
+<div class="active" style="display:none"></div>
+
+<div class="page-header">
+    <h1>Dashboard</h1>
+    <p class="subtitle">{{ total_prospects }} prospects · {{ total_emails }} emails sent</p>
+</div>
+
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-label">Total Prospects</div>
+        <div class="stat-value">{{ total_prospects }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Emails Sent</div>
+        <div class="stat-value">{{ total_emails }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Active Campaigns</div>
+        <div class="stat-value">{{ campaigns|length }}</div>
+    </div>
+</div>
+
+{% for c in campaigns %}
+<div class="campaign-section">
+    <div class="campaign-header">
+        <h2>{{ c.config.name }}</h2>
+        <span class="badge badge-product">{{ c.config.product }}</span>
+    </div>
+
+    <div class="stage-bars">
+        {% set stages = c.stage_counts or {} %}
+        {% set total = c.total_prospects or 1 %}
+        {% for stage_name, count in stages.items() %}
+        <div class="stage-row">
+            <div class="stage-label">
+                <span class="stage-dot stage-{{ stage_name }}"></span>
+                {{ stage_name }}
+            </div>
+            <div class="stage-bar-container">
+                <div class="stage-bar stage-{{ stage_name }}" style="width: {{ (count / total * 100)|round(1) }}%"></div>
+                <span class="stage-count">{{ count }}</span>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <div class="campaign-meta">
+        <div class="meta-item">
+            <span class="meta-label">Open Rate</span>
+            <span class="meta-value">{{ c.open_rate }}</span>
+        </div>
+        <div class="meta-item">
+            <span class="meta-label">Reply Rate</span>
+            <span class="meta-value">{{ c.reply_rate }}</span>
+        </div>
+        <div class="meta-item">
+            <span class="meta-label">Sources</span>
+            <span class="meta-value">{{ c.config.prospect_sources|join(', ') }}</span>
+        </div>
+    </div>
+</div>
+{% endfor %}
+
+{% endblock %}

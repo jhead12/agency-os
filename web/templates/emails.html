@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Email Log — agency-os{% endblock %}
+{% block content %}
+<div class="active" style="display:none"></div>
+
+<div class="page-header">
+    <h1>Email Log</h1>
+    <p class="subtitle">{{ total }} emails</p>
+</div>
+
+<div class="filters">
+    <form method="get" action="/emails">
+        <select name="campaign" class="filter-select">
+            <option value="">All campaigns</option>
+            {% for c in campaigns %}
+            <option value="{{ c }}" {% if campaign_filter == c %}selected{% endif %}>{{ c }}</option>
+            {% endfor %}
+        </select>
+        <select name="status" class="filter-select">
+            <option value="">All statuses</option>
+            {% set statuses = ['sent', 'bounced', 'opened', 'replied', 'failed', 'skipped'] %}
+            {% for s in statuses %}
+            <option value="{{ s }}" {% if status_filter == s %}selected{% endif %}>{{ s }}</option>
+            {% endfor %}
+        </select>
+        <button type="submit" class="btn btn-sm">Filter</button>
+    </form>
+</div>
+
+{% if emails %}
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>Date</th>
+            <th>Prospect</th>
+            <th>Template</th>
+            <th>Subject</th>
+            <th>Status</th>
+            <th>Campaign</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for e in emails %}
+        <tr>
+            <td>{{ e.sent_at|fmt_date }}</td>
+            <td>{{ e.prospect_name or '—' }}</td>
+            <td><code>{{ e.template_key }}</code></td>
+            <td>{{ e.subject[:80] }}</td>
+            <td><span class="status-badge status-{{ e.status }}">{{ e.status }}</span></td>
+            <td>{{ e.campaign_name }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<div class="pagination">
+    <div class="pagination-info">Page {{ page }} of {{ total_pages }}</div>
+    <div class="pagination-buttons">
+        {% if has_prev %}<a href="/emails?campaign={{ campaign_filter }}&status={{ status_filter }}&page={{ page - 1 }}" class="btn btn-sm">← Prev</a>{% endif %}
+        {% if has_next %}<a href="/emails?campaign={{ campaign_filter }}&status={{ status_filter }}&page={{ page + 1 }}" class="btn btn-sm">Next →</a>{% endif %}
+    </div>
+</div>
+{% else %}
+<p class="empty-state">No emails sent yet. Run <code>python3 agency_os.py enqueue --campaign voter-guide--cbo-outreach-los-angeles</code> to start.</p>
+{% endif %}
+
+{% endblock %}

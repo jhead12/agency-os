@@ -61,7 +61,23 @@ No core code changes. The plugin auto-discovers.
 1. Create `plugins/channels/my_channel.py` with `key`, `is_configured()`, and `send(recipient, subject, body, metadata) -> SendResult`
 2. Reference it in a campaign's `channels` list
 
-## Cron schedule (Hermes or crontab)
+## Web Dashboard
+
+```bash
+pip install -r requirements.txt
+python3 -m web.app
+```
+
+Open http://localhost:8000
+
+| Page | What you can do |
+|---|---|
+| **Dashboard** | Pipeline stats across all campaigns — stage breakdown, open/reply rates |
+| **Prospects** | Search, filter by source/stage, sort by name/revenue/city. Click any prospect for detail |
+| **Prospect Detail** | View org info, outreach timeline, email history. Edit contact info. Move between stages |
+| **Campaigns** | View campaign config — sources, channels, enrichers, cadence |
+| **Emails** | Email log with status filter (sent, opened, replied, bounced) |
+| **/api/stats** | JSON API for external dashboards |
 
 ```bash
 # Monthly: refresh prospect lists

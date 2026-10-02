@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}Prospects — agency-os{% endblock %}
+{% block content %}
+<div class="active" style="display:none"></div>
+
+<div class="page-header">
+    <h1>Prospects</h1>
+    <p class="subtitle">{{ total }} organizations{% if q %} matching "{{ q }}"{% endif %}</p>
+</div>
+
+<div class="filters">
+    <form method="get" action="/prospects">
+        <input type="text" name="q" value="{{ q }}" placeholder="Search name, city, EIN..." class="filter-input">
+        <select name="source" class="filter-select">
+            <option value="">All sources</option>
+            {% for s in sources %}
+            <option value="{{ s }}" {% if source_filter == s %}selected{% endif %}>{{ s }}</option>
+            {% endfor %}
+        </select>
+        <select name="stage" class="filter-select">
+            <option value="">All stages</option>
+            {% set all_stages = ['cold', 'contacted', 'engaged', 'demo_scheduled', 'proposal_sent', 'closed_won', 'closed_lost', 'nurture'] %}
+            {% for s in all_stages %}
+            <option value="{{ s }}" {% if stage_filter == s %}selected{% endif %}>{{ s }}</option>
+            {% endfor %}
+        </select>
+        <select name="sort" class="filter-select">
+            <option value="name" {% if sort == 'name' %}selected{% endif %}>Name A-Z</option>
+            <option value="revenue" {% if sort == 'revenue' %}selected{% endif %}>Revenue (high→low)</option>
+            <option value="city" {% if sort == 'city' %}selected{% endif %}>City A-Z</option>
+            <option value="source" {% if sort == 'source' %}selected{% endif %}>Source</option>
+            <option value="stage" {% if sort == 'stage' %}selected{% endif %}>Stage</option>
+        </select>
+        <button type="submit" class="btn btn-sm">Filter</button>
+        <a href="/prospects" class="btn btn-sm btn-secondary">Clear</a>
+    </form>
+</div>
+
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>City</th>
+            <th>Source</th>
+            <th>Focus</th>
+            <th>Revenue</th>
+            <th>Stage</th>
+            <th>Touch</th>
+            <th>Contact</th>
+            <th>Next Follow-up</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for p in prospects %}
+        <tr>
+            <td>
+                <a href="/prospects/{{ p.id }}">{{ p.name }}</a>
+                {% if p.voter_engagement %}<span class="tag tag-voter">voter</span>{% endif %}
+            </td>
+            <td>{{ p.city or '—' }}</td>
+            <td><span class="source-badge source-{{ p.source }}">{{ p.source }}</span></td>
+            <td>{{ (p.focus_area or '—')|replace('_', ' ') }}</td>
+            <td>{{ p.annual_revenue|currency }}</td>
+            <td><span class="stage-badge stage-{{ p.stage or 'cold' }}">{{ p.stage or 'cold' }}</span></td>
+            <td>{{ p.touch_count or 0 }}</td>
+            <td>
+                {% if p.contact_email %}
+                ✉
+                {% else %}
+                <span class="muted">—</span>
+                {% endif %}
+            </td>
+            <td>{{ p.next_follow_up_at|fmt_date if p.next_follow_up_at else '—' }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<div class="pagination">
+    <div class="pagination-info">
+        Page {{ page }} of {{ total_pages }} · {{ total }} total
+    </div>
+    <div class="pagination-buttons">
+        {% if has_prev %}
+        <a href="/prospects?{{ request.url_query }}&page={{ page - 1 }}" class="btn btn-sm">← Prev</a>
+        {% endif %}
+        {% if has_next %}
+        <a href="/prospects?{{ request.url_query }}&page={{ page + 1 }}" class="btn btn-sm">Next →</a>
+        {% endif %}
+    </div>
+</div>
+
+{% endblock %}

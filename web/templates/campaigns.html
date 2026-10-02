@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Campaigns — agency-os{% endblock %}
+{% block content %}
+<div class="active" style="display:none"></div>
+
+<div class="page-header">
+    <h1>Campaigns</h1>
+    <p class="subtitle">{{ campaigns|length }} active campaign(s)</p>
+</div>
+
+{% for c in campaigns %}
+<div class="campaign-section">
+    <div class="campaign-header">
+        <h2>{{ c.config.name }}</h2>
+        <span class="badge badge-product">{{ c.config.product }}</span>
+    </div>
+
+    <div class="campaign-grid">
+        <div class="campaign-col">
+            <h4>Prospect Sources</h4>
+            <ul class="plugin-list">
+                {% for s in c.config.prospect_sources %}<li><span class="source-badge source-{{ s }}">{{ s }}</span></li>{% endfor %}
+            </ul>
+        </div>
+        <div class="campaign-col">
+            <h4>Channels</h4>
+            <ul class="plugin-list">
+                {% for ch in c.config.channels %}<li>{{ ch }}</li>{% endfor %}
+            </ul>
+        </div>
+        <div class="campaign-col">
+            <h4>Enrichers</h4>
+            <ul class="plugin-list">
+                {% for e in c.config.enrichers %}<li>{{ e }}</li>{% endfor %}
+            </ul>
+        </div>
+        <div class="campaign-col">
+            <h4>Cadence</h4>
+            <ul class="plugin-list">
+                {% for step in c.config.cadence %}
+                <li>Touch {{ step.touch }}: {{ step.script }} → {{ step.next_stage }} ({{ step.delay_days }}d)</li>
+                {% endfor %}
+            </ul>
+        </div>
+    </div>
+
+    <div class="stage-bars">
+        {% set stages = c.stats.stage_counts or {} %}
+        {% set total = c.stats.total_prospects or 1 %}
+        {% for stage_name, count in stages.items() %}
+        <div class="stage-row">
+            <div class="stage-label">
+                <span class="stage-dot stage-{{ stage_name }}"></span>
+                {{ stage_name }}
+            </div>
+            <div class="stage-bar-container">
+                <div class="stage-bar stage-{{ stage_name }}" style="width: {{ (count / total * 100)|round(1) }}%"></div>
+                <span class="stage-count">{{ count }}</span>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endfor %}
+
+{% endblock %}

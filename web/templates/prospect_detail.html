@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}{{ prospect.name }} — agency-os{% endblock %}
+{% block content %}
+<div class="active" style="display:none"></div>
+
+<div class="page-header">
+    <div class="breadcrumb"><a href="/prospects">← Prospects</a></div>
+    <h1>{{ prospect.name }}</h1>
+    <p class="subtitle">
+        {{ prospect.city or '' }}{{ ', ' if prospect.city else '' }}{{ prospect.state or '' }}
+        {% if prospect.ein %} · EIN: {{ prospect.ein }}{% endif %}
+        {% if prospect.ntee_code %} · NTEE: {{ prospect.ntee_code }}{% endif %}
+    </p>
+</div>
+
+<div class="detail-grid">
+    <div class="detail-card">
+        <h3>Organization Info</h3>
+        <div class="detail-row"><span>Source</span><span class="source-badge source-{{ prospect.source }}">{{ prospect.source }}</span></div>
+        <div class="detail-row"><span>Focus Area</span><span>{{ (prospect.focus_area or '—')|replace('_', ' ') }}</span></div>
+        <div class="detail-row"><span>Revenue</span><span>{{ prospect.annual_revenue|currency }}</span></div>
+        <div class="detail-row"><span>Address</span><span>{{ prospect.address or '—' }}</span></div>
+        <div class="detail-row"><span>Website</span>
+            {% if prospect.website_url %}<a href="{{ prospect.website_url }}" target="_blank">{{ prospect.website_url }}</a>{% else %}—{% endif %}
+        </div>
+        <div class="detail-row"><span>Voter Engagement</span>
+            {% if prospect.voter_engagement %}<span class="tag tag-voter">Yes</span>{% else %}No{% endif %}
+        </div>
+    </div>
+
+    <div class="detail-card">
+        <h3>Pipeline</h3>
+        {% for o in outreach_rows %}
+        <div class="outreach-block">
+            <div class="detail-row"><span>Campaign</span><strong>{{ o.campaign_name }}</strong></div>
+            <div class="detail-row"><span>Stage</span>
+                <span class="stage-badge stage-{{ o.stage }}">{{ o.stage }}</span>
+            </div>
+            <div class="detail-row"><span>Touches</span><span>{{ o.touch_count }}</span></div>
+            <div class="detail-row"><span>Last Contacted</span><span>{{ o.last_contacted_at|fmt_date }}</span></div>
+            <div class="detail-row"><span>Next Follow-up</span><span>{{ o.next_follow_up_at|fmt_date }}</span></div>
+            {% if o.notes %}<div class="detail-row"><span>Notes</span><span>{{ o.notes }}</span></div>{% endif %}
+            {% if o.close_reason %}<div class="detail-row"><span>Close Reason</span><span>{{ o.close_reason }}</span></div>{% endif %}
+
+            <form method="post" action="/prospects/{{ prospect.id }}/stage" class="inline-form">
+                <input type="hidden" name="outreach_id" value="{{ o.id }}">
+                <select name="stage" class="filter-select">
+                    {% set all_stages = ['cold', 'contacted', 'engaged', 'demo_scheduled', 'proposal_sent', 'closed_won', 'closed_lost', 'nurture'] %}
+                    {% for s in all_stages %}
+                    <option value="{{ s }}" {% if o.stage == s %}selected{% endif %}>{{ s }}</option>
+                    {% endfor %}
+                </select>
+                <input type="text" name="notes" placeholder="Notes (optional)" class="filter-input" style="flex:1">
+                <button type="submit" class="btn btn-sm">Update</button>
+            </form>
+        </div>
+        {% endfor %}
+    </div>
+
+    <div class="detail-card">
+        <h3>Contact Info</h3>
+        {% for o in outreach_rows %}
+        <form method="post" action="/prospects/{{ prospect.id }}/contact" class="contact-form">
+            <input type="hidden" name="outreach_id" value="{{ o.id }}">
+            <div class="form-row">
+                <label>Contact Name</label>
+                <input type="text" name="contact_name" value="{{ o.contact_name or '' }}" placeholder="Jane Doe">
+            </div>
+            <div class="form-row">
+                <label>Email</label>
+                <input type="email" name="contact_email" value="{{ o.contact_email or '' }}" placeholder="jane@org.org">
+            </div>
+            <div class="form-row">
+                <label>Phone</label>
+                <input type="text" name="contact_phone" value="{{ o.contact_phone or '' }}" placeholder="(213) 555-0100">
+            </div>
+            <div class="form-row">
+                <label>Title</label>
+                <input type="text" name="contact_title" value="{{ o.contact_title or '' }}" placeholder="Executive Director">
+            </div>
+            <button type="submit" class="btn btn-sm">Save Contact</button>
+        </form>
+        {% endfor %}
+    </div>
+</div>
+
+{% if email_logs %}
+<div class="detail-card full-width">
+    <h3>Email History</h3>
+    <table class="data-table compact">
+        <thead>
+            <tr><th>Date</th><th>Template</th><th>Subject</th><th>Status</th><th>Campaign</th></tr>
+        </thead>
+        <tbody>
+            {% for e in email_logs %}
+            <tr>
+                <td>{{ e.sent_at|fmt_date }}</td>
+                <td><code>{{ e.template_key }}</code></td>
+                <td>{{ e.subject[:80] }}</td>
+                <td><span class="status-badge status-{{ e.status }}">{{ e.status }}</span></td>
+                <td>{{ e.campaign_name }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% endblock %}
