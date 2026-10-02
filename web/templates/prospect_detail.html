@@ -22,17 +22,65 @@
 
 <div class="detail-grid">
     <div class="detail-card">
-        <h3>Organization Info</h3>
-        <div class="detail-row"><span>Source</span><span class="source-badge source-{{ prospect.source }}">{{ prospect.source }}</span></div>
-        <div class="detail-row"><span>Focus Area</span><span>{{ (prospect.focus_area or '—')|replace('_', ' ') }}</span></div>
-        <div class="detail-row"><span>Revenue</span><span>{{ prospect.annual_revenue|currency }}</span></div>
-        <div class="detail-row"><span>Address</span><span>{{ prospect.address or '—' }}</span></div>
-        <div class="detail-row"><span>Website</span>
-            {% if prospect.website_url %}<a href="{{ prospect.website_url }}" target="_blank">{{ prospect.website_url }}</a>{% else %}—{% endif %}
+        <h3>Organization Info <button class="btn btn-sm btn-secondary" style="float: right; margin-top: -4px;" onclick="toggleEditInfo()">✎ Edit</button></h3>
+
+        {# Read-only view #}
+        <div id="info-view">
+            <div class="detail-row"><span>Source</span><span class="source-badge source-{{ prospect.source }}">{{ prospect.source }}</span></div>
+            <div class="detail-row"><span>Focus Area</span><span>{{ (prospect.focus_area or '—')|replace('_', ' ') }}</span></div>
+            <div class="detail-row"><span>Revenue</span><span>{{ prospect.annual_revenue|currency }}</span></div>
+            <div class="detail-row"><span>Address</span><span>{{ prospect.address or '—' }}</span></div>
+            <div class="detail-row"><span>City, State</span><span>{{ prospect.city or '—' }}, {{ prospect.state or '—' }} {{ prospect.zip or '' }}</span></div>
+            <div class="detail-row"><span>Website</span>
+                {% if prospect.website_url %}<a href="{{ prospect.website_url }}" target="_blank">{{ prospect.website_url }}</a>{% else %}—{% endif %}
+            </div>
+            <div class="detail-row"><span>Voter Engagement</span>
+                {% if prospect.voter_engagement %}<span class="tag tag-voter">Yes</span>{% else %}No{% endif %}
+            </div>
         </div>
-        <div class="detail-row"><span>Voter Engagement</span>
-            {% if prospect.voter_engagement %}<span class="tag tag-voter">Yes</span>{% else %}No{% endif %}
-        </div>
+
+        {# Editable form (hidden by default) #}
+        <form method="post" action="/prospects/{{ prospect.id }}/info" id="info-edit" style="display: none;" class="contact-form">
+            <div class="form-row">
+                <label>Organization Name</label>
+                <input type="text" name="name" value="{{ prospect.name }}" class="filter-input">
+            </div>
+            <div class="form-row">
+                <label>Website URL</label>
+                <input type="text" name="website_url" value="{{ prospect.website_url or '' }}" placeholder="https://example.org" class="filter-input">
+            </div>
+            <div class="form-row">
+                <label>Address</label>
+                <input type="text" name="address" value="{{ prospect.address or '' }}" placeholder="123 Main St" class="filter-input">
+            </div>
+            <div class="form-row">
+                <label>City</label>
+                <input type="text" name="city" value="{{ prospect.city or '' }}" placeholder="Los Angeles" class="filter-input">
+            </div>
+            <div class="form-row" style="display: flex; gap: 8px;">
+                <div style="flex: 1;">
+                    <label>State</label>
+                    <input type="text" name="state" value="{{ prospect.state or '' }}" placeholder="CA" class="filter-input" maxlength="3">
+                </div>
+                <div style="flex: 1;">
+                    <label>ZIP</label>
+                    <input type="text" name="zip_code" value="{{ prospect.zip or '' }}" placeholder="90001" class="filter-input" maxlength="10">
+                </div>
+            </div>
+            <div class="form-row">
+                <label>Focus Area</label>
+                <input type="text" name="focus_area" value="{{ prospect.focus_area or '' }}" placeholder="civic_engagement" class="filter-input">
+            </div>
+            <div class="form-row">
+                <label>Voter Engagement</label>
+                <select name="voter_engagement" class="filter-select">
+                    <option value="yes" {% if prospect.voter_engagement %}selected{% endif %}>Yes</option>
+                    <option value="no" {% if not prospect.voter_engagement %}selected{% endif %}>No</option>
+                </select>
+            </div>
+            <button type="submit" class="btn btn-sm" style="margin-top: 8px;">💾 Save Info</button>
+            <button type="button" class="btn btn-sm btn-secondary" style="margin-top: 8px; margin-left: 4px;" onclick="toggleEditInfo()">Cancel</button>
+        </form>
     </div>
 
     <div class="detail-card">
@@ -264,5 +312,19 @@ function toggleEmail(id) {
     </table>
 </div>
 {% endif %}
+
+<script>
+function toggleEditInfo() {
+    var view = document.getElementById('info-view');
+    var edit = document.getElementById('info-edit');
+    if (edit.style.display === 'none') {
+        view.style.display = 'none';
+        edit.style.display = 'block';
+    } else {
+        view.style.display = 'block';
+        edit.style.display = 'none';
+    }
+}
+</script>
 
 {% endblock %}

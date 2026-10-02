@@ -924,6 +924,53 @@ async def update_contact(
     return RedirectResponse(url=f"/prospects/{prospect_id}", status_code=303)
 
 
+@app.post("/prospects/{prospect_id}/info")
+async def update_prospect_info(
+    prospect_id: int,
+    name: str = Form(default=""),
+    website_url: str = Form(default=""),
+    address: str = Form(default=""),
+    city: str = Form(default=""),
+    state: str = Form(default=""),
+    zip_code: str = Form(default=""),
+    focus_area: str = Form(default=""),
+    voter_engagement: str = Form(default=""),
+):
+    """Update prospect organization info."""
+    db = get_db()
+    updates = {}
+    if name:
+        updates["name"] = name
+    if website_url:
+        updates["website_url"] = website_url
+    if address:
+        updates["address"] = address
+    if city:
+        updates["city"] = city
+    if state:
+        updates["state"] = state
+    if zip_code:
+        updates["zip"] = zip_code
+    if focus_area:
+        updates["focus_area"] = focus_area
+    if voter_engagement:
+        updates["voter_engagement"] = 1 if voter_engagement == "yes" else 0
+
+    if updates:
+        c = db.conn
+        sets = []
+        vals = []
+        for k, v in updates.items():
+            sets.append(f"{k} = ?")
+            vals.append(v)
+        sets.append("updated_at = CURRENT_TIMESTAMP")
+        vals.append(prospect_id)
+        c.execute(f"UPDATE prospects SET {', '.join(sets)} WHERE id = ?", vals)
+        c.commit()
+
+    return RedirectResponse(url=f"/prospects/{prospect_id}", status_code=303)
+
+
 @app.get("/campaigns", response_class=HTMLResponse)
 async def campaign_list(request: Request):
     """Campaign overview page."""
