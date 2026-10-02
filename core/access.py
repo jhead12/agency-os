@@ -112,6 +112,10 @@ ROUTE_RULES: dict[str, str] = {
     "POST /admin/roles/{role_id}": OWNER,
     "POST /admin/roles/{role_id}/delete": OWNER,
     "GET /admin/audit": OWNER,
+    "GET /admin/campaigns": OWNER,
+    "POST /admin/campaigns": OWNER,
+    "POST /admin/campaigns/{campaign_id}/toggle": OWNER,
+    "GET /plugins": "campaigns.view",
 }
 
 # Pages in nav order — used to pick a landing page the user can actually open.

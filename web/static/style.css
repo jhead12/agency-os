@@ -126,6 +126,8 @@ body {
     font-weight: 600;
 }
 .badge-product { background: var(--purple); color: white; }
+.badge-success { background: #16a34a; color: white; }
+.badge-warning { background: #d97706; color: white; }
 
 .tag {
     display: inline-block;

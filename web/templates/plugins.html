@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}Plugins — agency-os{% endblock %}
+{% block content %}
+
+<div class="page-header">
+    <div>
+        <h1>Plugins</h1>
+        <p class="subtitle">All installed plugins — sources, products, channels, enrichers, and schedulers</p>
+    </div>
+</div>
+
+<div class="stats-grid">
+    {% set ns = namespace(total=0, configured=0) %}
+    {% for ptype, ptype_data in all_plugins.items() %}
+        {% for p in ptype_data.plugins %}
+            {% set ns.total = ns.total + 1 %}
+            {% if p.configured %}{% set ns.configured = ns.configured + 1 %}{% endif %}
+        {% endfor %}
+    {% endfor %}
+    <div class="stat-card">
+        <div class="stat-label">Total Plugins</div>
+        <div class="stat-value">{{ ns.total }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Configured</div>
+        <div class="stat-value">{{ ns.configured }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Needs Setup</div>
+        <div class="stat-value">{{ ns.total - ns.configured }}</div>
+    </div>
+</div>
+
+{% for ptype_key, ptype_data in all_plugins.items() %}
+
+<div class="campaign-section">
+    <div class="campaign-header">
+        <h2>{{ ptype_data.label }}</h2>
+        <span class="badge badge-product">{{ ptype_data.plugins|length }} plugin{% if ptype_data.plugins|length != 1 %}s{% endif %}</span>
+    </div>
+    <p class="campaign-meta-text" style="color: var(--muted-foreground); margin: 0 0 1rem 0; font-size: 0.875rem;">
+        {{ ptype_data.description }}
+    </p>
+
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Plugin</th>
+                <th>Description</th>
+                <th>Status</th>
+                <th>Required Env Vars</th>
+                <th>Used By Campaigns</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for p in ptype_data.plugins %}
+            <tr>
+                <td><strong>{{ p.key }}</strong></td>
+                <td>{{ p.description }}</td>
+                <td>
+                    {% if p.configured %}
+                    <span class="badge badge-success">✓ Configured</span>
+                    {% else %}
+                    <span class="badge badge-warning">⚠ Not configured</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if p.env_vars %}
+                        {% for ev in p.env_vars %}
+                        <code style="font-size: 0.8rem; display: inline-block; margin: 2px 0;">{{ ev }}</code>
+                        {% endfor %}
+                    {% else %}
+                    <span style="color: var(--muted-foreground);">No env vars needed</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if p.used_by %}
+                    {% for c in p.used_by %}
+                    <span style="display: inline-block; margin: 2px 0;">{{ c }}</span>
+                    {% if not loop.last %}<br>{% endif %}
+                    {% endfor %}
+                    {% else %}
+                    <span style="color: var(--muted-foreground);">Not used</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% endfor %}
+
+<div class="campaign-section">
+    <div class="campaign-header">
+        <h2>Add a New Plugin</h2>
+    </div>
+    <p style="color: var(--muted-foreground); font-size: 0.875rem; margin: 0 0 1rem 0;">
+        Drop a <code>.py</code> file in the right folder under <code>plugins/</code> and it's auto-discovered.
+        Reference it in a campaign's YAML and it's live. No core code changes needed.
+    </p>
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Plugin Type</th>
+                <th>Folder</th>
+                <th>Required Methods</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>Prospect Source</strong></td>
+                <td><code>plugins/prospect_sources/</code></td>
+                <td><code>key</code>, <code>is_configured()</code>, <code>discover(filters)</code></td>
+            </tr>
+            <tr>
+                <td><strong>Product</strong></td>
+                <td><code>plugins/products/</code></td>
+                <td><code>key</code>, <code>describe_value()</code>, <code>generate_demo_link()</code>, <code>pricing_tiers()</code></td>
+            </tr>
+            <tr>
+                <td><strong>Channel</strong></td>
+                <td><code>plugins/channels/</code></td>
+                <td><code>key</code>, <code>is_configured()</code>, <code>send()</code></td>
+            </tr>
+            <tr>
+                <td><strong>Enricher</strong></td>
+                <td><code>plugins/enrichers/</code></td>
+                <td><code>key</code>, <code>is_configured()</code>, <code>enrich()</code></td>
+            </tr>
+            <tr>
+                <td><strong>Scheduler</strong></td>
+                <td><code>plugins/schedulers/</code></td>
+                <td><code>key</code>, <code>is_configured()</code>, <code>booking_link()</code>, <code>fetch_bookings()</code></td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+
+{% endblock %}

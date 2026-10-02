@@ -1120,6 +1120,99 @@ async def campaign_list(request: Request):
     })
 
 
+@app.get("/plugins", response_class=HTMLResponse)
+async def plugins_page(request: Request):
+    """Plugin management — view all plugins, their type, status, and config requirements."""
+    from core.registry import PluginRegistry
+
+    registry = PluginRegistry()
+    registry.discover()
+
+    # Build plugin info with descriptions and config status
+    plugin_types = [
+        ("prospect_sources", "Prospect Sources", "Where prospects come from"),
+        ("products", "Products", "What you're selling"),
+        ("channels", "Channels", "How outreach messages are delivered"),
+        ("enrichers", "Enrichers", "Find contact names, emails, phones"),
+        ("schedulers", "Schedulers", "Meeting booking services"),
+    ]
+
+    all_plugins = {}
+    for ptype_key, ptype_label, ptype_desc in plugin_types:
+        plugins_list = []
+        keys = registry.list_plugins().get(ptype_key, [])
+        for key in keys:
+            if ptype_key == "prospect_sources":
+                p = registry.get_source(key)
+            elif ptype_key == "products":
+                p = registry.get_product(key)
+            elif ptype_key == "channels":
+                p = registry.get_channel(key)
+            elif ptype_key == "enrichers":
+                p = registry.get_enricher(key)
+            else:
+                p = registry.get_scheduler(key)
+
+            if p is None:
+                continue
+
+            # Get description from docstring
+            desc = (p.__doc__ or "").strip().split("\n")[0] if p.__doc__ else ""
+
+            # Get config status
+            configured = p.is_configured() if hasattr(p, "is_configured") else True
+
+            # Determine which env vars this plugin needs
+            env_vars = _get_plugin_env_vars(key)
+
+            # Count which campaigns use this plugin
+            campaigns = get_campaigns()
+            used_by = []
+            for c in campaigns:
+                if ptype_key == "prospect_sources" and key in c.prospect_sources:
+                    used_by.append(c.name)
+                elif ptype_key == "products" and key == c.product:
+                    used_by.append(c.name)
+                elif ptype_key == "channels" and key in c.channels:
+                    used_by.append(c.name)
+                elif ptype_key == "enrichers" and key in c.enrichers:
+                    used_by.append(c.name)
+                elif ptype_key == "schedulers" and key == c.scheduler:
+                    used_by.append(c.name)
+
+            plugins_list.append({
+                "key": key,
+                "description": desc,
+                "configured": configured,
+                "env_vars": env_vars,
+                "used_by": used_by,
+            })
+        all_plugins[ptype_key] = {
+            "label": ptype_label,
+            "description": ptype_desc,
+            "plugins": plugins_list,
+        }
+
+    return templates.TemplateResponse(request, "plugins.html", {
+        "active": "plugins",
+        "all_plugins": all_plugins,
+    })
+
+
+def _get_plugin_env_vars(plugin_key: str) -> list[str]:
+    """Return the env var names a plugin needs to be configured."""
+    env_map = {
+        "email_smartlead": ["SMARTLEAD_API_KEY"],
+        "email_smtp": ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "SMTP_FROM"],
+        "sms_twilio": ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER"],
+        "apollo": ["APOLLO_API_KEY"],
+        "hunter": ["HUNTER_API_KEY"],
+        "calendly": ["CALENDLY_SCHEDULING_URL", "CALENDLY_API_TOKEN"],
+        "u9itus_voter_guide": ["U9ITUS_BASE_URL", "U9ITUS_AGENCY_TOKEN"],
+    }
+    return env_map.get(plugin_key, [])
+
+
 @app.get("/emails", response_class=HTMLResponse)
 async def email_log(
     request: Request,
