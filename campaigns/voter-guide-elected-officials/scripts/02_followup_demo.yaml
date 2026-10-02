@@ -1,0 +1,18 @@
+key: eo_followup_demo
+stage: contacted
+subject: "Let's show your constituents what they're missing"
+body: |
+  Hi {{contact_first}},
+
+  Election season is here and voters in your district are looking for
+  clear, nonpartisan information about what's on their ballot.
+
+  I'd love to walk you through a tailored demo of how U9itus can serve
+  {{org_name}}'s constituents — specifically for your district's races
+  and ballot measures.
+
+  Here's the live demo: {{demo_link}}
+
+  Reply with your best time this week and I'll set it up.
+
+  {{your_name}}

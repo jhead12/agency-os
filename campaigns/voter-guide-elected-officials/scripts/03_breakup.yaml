@@ -1,0 +1,17 @@
+key: eo_breakup
+stage: contacted
+subject: "Closing the loop — U9itus voter guide for {{org_name}}"
+body: |
+  Hi {{contact_first}},
+
+  I've reached out a few times about a co-branded voter guide for
+  {{org_name}} and haven't heard back — totally understand if the
+  timing isn't right.
+
+  If things change and you want to explore how U9itus can help your
+  constituents make informed voting decisions, you can see it anytime
+  here: {{demo_link}}
+
+  Wishing you a successful election season.
+
+  {{your_name}}

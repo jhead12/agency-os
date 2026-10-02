@@ -231,6 +231,7 @@ async def prospect_list(
     source: str = Query(default="", description="Filter by source"),
     stage: str = Query(default="", description="Filter by stage"),
     cities: str = Query(default="", description="Comma-separated city filter"),
+    campaign: str = Query(default="", description="Filter by campaign slug"),
     sort: str = Query(default="name", description="Sort column"),
     dir: str = Query(default="asc", description="Sort direction: asc or desc"),
     page: int = Query(default=1, ge=1),
@@ -263,6 +264,11 @@ async def prospect_list(
     if stage:
         where_parts.append("o.stage = ?")
         params.append(stage)
+
+    # Campaign filter — only show prospects in the selected campaign
+    if campaign:
+        where_parts.append("o.campaign_id = (SELECT id FROM campaigns WHERE name = ?)")
+        params.append(campaign)
 
     # City filter — supports multiple cities (comma-separated)
     if cities:
@@ -385,6 +391,8 @@ async def prospect_list(
         base_params["stage"] = stage
     if cities:
         base_params["cities"] = cities
+    if campaign:
+        base_params["campaign"] = campaign
     base_qs = urlencode(base_params)
 
     # Build query string for print link (preserve all filters)
@@ -407,6 +415,7 @@ async def prospect_list(
         "source_filter": source,
         "stage_filter": stage,
         "cities_filter": cities,
+        "campaign_filter": campaign,
         "sort": sort,
         "sort_dir": sort_dir.lower(),
         "base_qs": base_qs,

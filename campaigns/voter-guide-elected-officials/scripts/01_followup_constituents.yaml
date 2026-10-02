@@ -1,0 +1,25 @@
+key: eo_followup_constituents
+stage: contacted
+subject: "How other California offices use U9itus for voter education"
+body: |
+  Hi {{contact_first}},
+
+  Following up on my note about a co-branded voter guide for {{org_name}}.
+
+  Civic orgs and election offices across California are using U9itus right now
+  to help their constituents make informed voting decisions. Partners have seen
+  a significant increase in informed participation after distributing our
+  voter guide.
+
+  What makes it work for your constituents:
+  - Verified candidate profiles from public records
+  - Ballot measures explained in plain language
+  - Available in English, Spanish, Chinese, Korean, and Tagalog
+  - Co-branded with your office name, embedded on your site
+  - No account required for your constituents
+
+  Here's what it looks like: {{demo_link}}
+
+  Worth a quick 15-min chat?
+
+  {{your_name}}

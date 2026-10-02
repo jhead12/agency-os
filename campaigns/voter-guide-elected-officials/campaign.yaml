@@ -1,0 +1,64 @@
+name: "Voter Guide — Elected Officials Outreach (California)"
+
+# What we're selling
+product: u9itus_voter_guide
+
+# Where prospects come from
+# (google_places source can be added later for elected official offices)
+prospect_sources:
+  - irs_bmf
+
+# Contact enrichment (run in order, first hit wins)
+enrichers:
+  - local_scraper
+  - apollo
+  - hunter
+
+# Delivery channels
+channels:
+  - email_smartlead
+  - email_smtp
+  - manual
+
+# Prospect filters — broader geography for state-level officials
+filters:
+  state: CA
+  ntee_codes: [R, W, P]
+  min_revenue: 500000
+
+# Pipeline stages (same as CBO campaign)
+stages:
+  - cold
+  - contacted
+  - engaged
+  - demo_scheduled
+  - proposal_sent
+  - closed_won
+  - closed_lost
+  - nurture
+
+# Follow-up sequence cadence — tailored for elected officials
+cadence:
+  - touch: 0
+    delay_days: 0
+    script: 00_cold_outreach
+    next_stage: contacted
+  - touch: 1
+    delay_days: 5
+    script: 01_followup_constituents
+    next_stage: contacted
+  - touch: 2
+    delay_days: 7
+    script: 02_followup_demo
+    next_stage: contacted
+  - touch: 3
+    delay_days: 7
+    script: 03_breakup
+    next_stage: nurture
+
+# Move to nurture if no contact in 21 days (longer cycle for officials)
+stale_threshold_days: 21
+
+# Sender info
+sender_name: "Joshua"
+sender_email: "joshua@u9itus.com"

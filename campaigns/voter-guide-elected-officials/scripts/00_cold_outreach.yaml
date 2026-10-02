@@ -1,0 +1,23 @@
+key: eo_cold_outreach
+stage: cold
+subject: "A voter guide your constituents will actually use"
+body: |
+  Hi {{contact_first}},
+
+  I'm {{your_name}}, founder of U9itus. We build digital voter guides that
+  help constituents research candidates and ballot measures in under 60 seconds.
+
+  Here's why I'm reaching out to {{org_name}}:
+
+  - 68% of voters say they lack confidence in their candidate research
+  - Most official voter information pages get fewer than 10% of voters to visit
+  - U9itus guides are mobile-first, multilingual, and require no account
+
+  Your office could offer a co-branded voter guide at {{demo_link}} that
+  constituents actually use — embedded on your website or shared via email
+  and social media.
+
+  Would you be open to a 15-minute call this week?
+
+  {{your_name}}
+  {{your_email}}
