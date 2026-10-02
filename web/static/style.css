@@ -380,6 +380,37 @@ body {
 }
 .contact-form input:focus { border-color: var(--accent); }
 
+/* Sortable table headers */
+.sort-header {
+    color: var(--text-muted);
+    text-decoration: none;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    transition: color 0.15s;
+}
+.sort-header:hover { color: var(--accent); }
+.sort-header.sort-active { color: var(--accent); }
+.sort-arrow {
+    font-size: 10px;
+    line-height: 1;
+}
+.sort-arrow.sort-inactive {
+    opacity: 0.3;
+}
+.sort-header:hover .sort-arrow.sort-inactive {
+    opacity: 0.6;
+}
+table.sortable th {
+    cursor: pointer;
+    user-select: none;
+}
+
 /* Misc */
 .muted { color: var(--text-muted); }
 .empty-state {

@@ -116,25 +116,30 @@ async def dashboard(request: Request):
 @app.get("/prospects", response_class=HTMLResponse)
 async def prospect_list(
     request: Request,
-    q: str = Query(default="", description="Search name, city, EIN"),
+    q: str = Query(default="", description="Search name, city, EIN, zip, focus area, website"),
     source: str = Query(default="", description="Filter by source"),
     stage: str = Query(default="", description="Filter by stage"),
-    sort: str = Query(default="name", description="Sort by"),
+    sort: str = Query(default="name", description="Sort column"),
+    dir: str = Query(default="asc", description="Sort direction: asc or desc"),
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=50, ge=10, le=200),
 ):
-    """Prospect list with search, filters, pagination."""
+    """Prospect list with search, filters, sortable columns, pagination."""
     db = get_db()
     campaigns = get_campaigns()
     campaign_map = {c.db_name: c for c in campaigns}
 
-    # Build query
+    # Build query — search across multiple fields
     where_parts = []
     params = []
 
     if q:
-        where_parts.append("(p.name LIKE ? OR p.city LIKE ? OR p.ein LIKE ?)")
-        params.extend([f"%{q}%", f"%{q}%", f"%{q}%"])
+        where_parts.append(
+            "(p.name LIKE ? OR p.city LIKE ? OR p.ein LIKE ? "
+            "OR p.zip LIKE ? OR p.focus_area LIKE ? OR p.website_url LIKE ? "
+            "OR p.county LIKE ? OR p.ntee_code LIKE ?)"
+        )
+        params.extend([f"%{q}%"] * 8)
 
     if source:
         where_parts.append("p.source = ?")
@@ -154,15 +159,30 @@ async def prospect_list(
     """
     total = db.conn.execute(count_sql, params).fetchone()[0]
 
-    # Sort
+    # Sort — every column is sortable, with direction toggle
     sort_map = {
-        "name": "p.name ASC",
-        "revenue": "p.annual_revenue DESC",
-        "city": "p.city ASC",
-        "source": "p.source ASC",
-        "stage": "o.stage ASC",
+        "name": "p.name",
+        "city": "p.city",
+        "source": "p.source",
+        "focus": "p.focus_area",
+        "revenue": "p.annual_revenue",
+        "stage": "o.stage",
+        "touch": "o.touch_count",
+        "contact": "o.contact_email",
+        "followup": "o.next_follow_up_at",
     }
-    order = sort_map.get(sort, "p.name ASC")
+    sort_col = sort_map.get(sort, "p.name")
+    sort_dir = "DESC" if dir.lower() == "desc" else "ASC"
+    # For revenue, default to DESC (high to low makes more sense)
+    if sort == "revenue" and dir == "asc" and sort not in request.query_params:
+        sort_dir = "DESC"
+    order = f"{sort_col} {sort_dir}"
+
+    # Nulls last for DESC, nulls first for ASC (SQLite: use CASE)
+    if sort_dir == "DESC":
+        order = f"CASE WHEN {sort_col} IS NULL THEN 1 ELSE 0 END, {sort_col} DESC"
+    else:
+        order = f"CASE WHEN {sort_col} IS NULL THEN 1 ELSE 0 END, {sort_col} ASC"
 
     offset = (page - 1) * per_page
     data_sql = f"""
@@ -187,6 +207,17 @@ async def prospect_list(
     has_prev = page > 1
     has_next = page < total_pages
 
+    # Build base query string for sort links (preserve filters + page)
+    from urllib.parse import urlencode
+    base_params = {}
+    if q:
+        base_params["q"] = q
+    if source:
+        base_params["source"] = source
+    if stage:
+        base_params["stage"] = stage
+    base_qs = urlencode(base_params)
+
     return templates.TemplateResponse("prospects.html", {
         "request": request,
         "prospects": rows,
@@ -196,6 +227,8 @@ async def prospect_list(
         "source_filter": source,
         "stage_filter": stage,
         "sort": sort,
+        "sort_dir": sort_dir.lower(),
+        "base_qs": base_qs,
         "page": page,
         "per_page": per_page,
         "total": total,

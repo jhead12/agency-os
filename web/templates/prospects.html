@@ -3,14 +3,46 @@
 {% block content %}
 <div class="active" style="display:none"></div>
 
+{# Macro: renders a sortable column header.
+   Clicking toggles asc/desc. Arrow shows current sort state. #}
+{% macro sort_header(key, label, current_sort, current_dir, qs_str) %}
+<a href="/prospects?{{ qs_str }}&sort={{ key }}&dir={{ 'desc' if (current_sort == key and current_dir == 'asc') else 'asc' }}&page=1"
+   class="sort-header {{ 'sort-active' if current_sort == key else '' }}">
+    {{ label }}
+    {% if current_sort == key and current_dir == 'asc' %}
+    <span class="sort-arrow">▲</span>
+    {% elif current_sort == key and current_dir == 'desc' %}
+    <span class="sort-arrow">▼</span>
+    {% else %}
+    <span class="sort-arrow sort-inactive">↕</span>
+    {% endif %}
+</a>
+{% endmacro %}
+
+{# Build query string for sort links — preserves search + filters but resets sort/page #}
+{% set qs_parts = [] %}
+{% if q %}{% set _ = qs_parts.append('q=' ~ q) %}{% endif %}
+{% if source_filter %}{% set _ = qs_parts.append('source=' ~ source_filter) %}{% endif %}
+{% if stage_filter %}{% set _ = qs_parts.append('stage=' ~ stage_filter) %}{% endif %}
+{% set qs = qs_parts | join('&') %}
+
+{# Build query string for pagination links — preserves search + filters + sort #}
+{% set pg_qs_parts = [] %}
+{% if q %}{% set _ = pg_qs_parts.append('q=' ~ q) %}{% endif %}
+{% if source_filter %}{% set _ = pg_qs_parts.append('source=' ~ source_filter) %}{% endif %}
+{% if stage_filter %}{% set _ = pg_qs_parts.append('stage=' ~ stage_filter) %}{% endif %}
+{% if sort %}{% set _ = pg_qs_parts.append('sort=' ~ sort) %}{% endif %}
+{% if sort_dir %}{% set _ = pg_qs_parts.append('dir=' ~ sort_dir) %}{% endif %}
+{% set pg_qs = pg_qs_parts | join('&') %}
+
 <div class="page-header">
     <h1>Prospects</h1>
     <p class="subtitle">{{ total }} organizations{% if q %} matching "{{ q }}"{% endif %}</p>
 </div>
 
 <div class="filters">
-    <form method="get" action="/prospects">
-        <input type="text" name="q" value="{{ q }}" placeholder="Search name, city, EIN..." class="filter-input">
+    <form method="get" action="/prospects" id="filter-form">
+        <input type="text" name="q" value="{{ q }}" placeholder="Search name, city, EIN, zip, focus area, website..." class="filter-input">
         <select name="source" class="filter-select">
             <option value="">All sources</option>
             {% for s in sources %}
@@ -24,30 +56,26 @@
             <option value="{{ s }}" {% if stage_filter == s %}selected{% endif %}>{{ s }}</option>
             {% endfor %}
         </select>
-        <select name="sort" class="filter-select">
-            <option value="name" {% if sort == 'name' %}selected{% endif %}>Name A-Z</option>
-            <option value="revenue" {% if sort == 'revenue' %}selected{% endif %}>Revenue (high→low)</option>
-            <option value="city" {% if sort == 'city' %}selected{% endif %}>City A-Z</option>
-            <option value="source" {% if sort == 'source' %}selected{% endif %}>Source</option>
-            <option value="stage" {% if sort == 'stage' %}selected{% endif %}>Stage</option>
-        </select>
+        {# Hidden sort/dir so filter changes preserve current sort #}
+        <input type="hidden" name="sort" value="{{ sort }}">
+        <input type="hidden" name="dir" value="{{ sort_dir }}">
         <button type="submit" class="btn btn-sm">Filter</button>
         <a href="/prospects" class="btn btn-sm btn-secondary">Clear</a>
     </form>
 </div>
 
-<table class="data-table">
+<table class="data-table sortable">
     <thead>
         <tr>
-            <th>Name</th>
-            <th>City</th>
-            <th>Source</th>
-            <th>Focus</th>
-            <th>Revenue</th>
-            <th>Stage</th>
-            <th>Touch</th>
-            <th>Contact</th>
-            <th>Next Follow-up</th>
+            <th>{{ sort_header('name', 'Name', sort, sort_dir, qs) }}</th>
+            <th>{{ sort_header('city', 'City', sort, sort_dir, qs) }}</th>
+            <th>{{ sort_header('source', 'Source', sort, sort_dir, qs) }}</th>
+            <th>{{ sort_header('focus', 'Focus', sort, sort_dir, qs) }}</th>
+            <th>{{ sort_header('revenue', 'Revenue', sort, sort_dir, qs) }}</th>
+            <th>{{ sort_header('stage', 'Stage', sort, sort_dir, qs) }}</th>
+            <th>{{ sort_header('touch', 'Touch', sort, sort_dir, qs) }}</th>
+            <th>{{ sort_header('contact', 'Contact', sort, sort_dir, qs) }}</th>
+            <th>{{ sort_header('followup', 'Next Follow-up', sort, sort_dir, qs) }}</th>
         </tr>
     </thead>
     <tbody>
@@ -82,10 +110,10 @@
     </div>
     <div class="pagination-buttons">
         {% if has_prev %}
-        <a href="/prospects?{{ request.url_query }}&page={{ page - 1 }}" class="btn btn-sm">← Prev</a>
+        <a href="/prospects?{{ pg_qs }}&page={{ page - 1 }}" class="btn btn-sm">← Prev</a>
         {% endif %}
         {% if has_next %}
-        <a href="/prospects?{{ request.url_query }}&page={{ page + 1 }}" class="btn btn-sm">Next →</a>
+        <a href="/prospects?{{ pg_qs }}&page={{ page + 1 }}" class="btn btn-sm">Next →</a>
         {% endif %}
     </div>
 </div>
