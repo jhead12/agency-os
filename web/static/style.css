@@ -1022,3 +1022,42 @@ table.sortable th {
     .cal-day-num { font-size: 10px; }
     .btn-sm { padding: 5px 10px; font-size: 11px; }
 }
+/* Auth, account & team administration */
+.nav-logout { display: inline; }
+.nav-logout button {
+    background: none; border: none; color: var(--text-muted); cursor: pointer;
+    padding: 8px 16px; border-radius: var(--radius); font: inherit; font-size: 13px;
+}
+.nav-logout button:hover { background: var(--surface-hover); color: var(--text); }
+.auth-card { max-width: 420px; margin: 48px auto; }
+.auth-card h1 { font-size: 20px; margin-bottom: 16px; }
+.auth-card code, .empty-state code { display: inline-block; margin: 4px 0; }
+.stack-form { display: flex; flex-direction: column; gap: 12px; }
+.stack-form label, .admin-row-fields label {
+    display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-muted);
+}
+.stack-form .filter-input, .admin-row-fields .filter-input { width: 100%; }
+.stack-form .btn { align-self: flex-start; }
+.form-error {
+    background: rgba(239, 68, 68, 0.12); border: 1px solid var(--red); color: var(--text);
+    padding: 10px 14px; border-radius: var(--radius); margin-bottom: 16px;
+}
+.perm-list { list-style: none; margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+.admin-tabs { margin-bottom: 16px; }
+.admin-row { display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px; }
+.admin-row form { display: flex; flex-direction: column; gap: 12px; }
+.admin-row .btn { align-self: flex-start; }
+.admin-row-inactive { opacity: 0.6; }
+.admin-row-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.admin-row-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.check-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+.check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; cursor: pointer; }
+.check input { margin-top: 3px; }
+.table-scroll { overflow-x: auto; }
+.audit-details { font-family: ui-monospace, monospace; font-size: 11px; word-break: break-word; max-width: 420px; }
+
+@media (max-width: 640px) {
+    .auth-card { margin: 16px auto; }
+    .admin-row-head { flex-direction: column; }
+    .nav-logout button { width: 100%; text-align: left; }
+}

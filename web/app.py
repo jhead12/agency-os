@@ -14,25 +14,34 @@ Features:
     - Stage management (move prospects between stages)
     - Email log viewer
     - Campaign overview
+    - Multi-user sign-in with role-based permissions (see core/access.py)
 """
 
 from __future__ import annotations
 
 import json
 import os
+import secrets
+import shutil
 import sys
+import time
+from collections import defaultdict
+from contextlib import asynccontextmanager
 from pathlib import Path
 from datetime import datetime
+from urllib.parse import quote, urlsplit
 
 # Ensure project root is on path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from fastapi import FastAPI, Request, Query, HTTPException, Form
+from fastapi import FastAPI, Request, Query, HTTPException, Form, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from core import access
+from core.access import AccessError, CurrentUser
 from core.db import Database
 from core.campaign import discover_campaigns
 from core.registry import PluginRegistry
@@ -40,12 +49,15 @@ from core.pipeline import Pipeline
 
 # ── Init ────────────────────────────────────────────────────────────
 
-app = FastAPI(title="agency-os", docs_url=None, redoc_url=None)
+# On Railway, a mounted volume exposes RAILWAY_VOLUME_MOUNT_PATH. Keep the
+# SQLite DB and editable campaign files there so they survive redeploys.
+DATA_DIR = Path(os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", str(PROJECT_ROOT)))
+DB_PATH = os.environ.get("AGENCY_OS_DB", str(DATA_DIR / "db.sqlite"))
+CAMPAIGNS_DIR = Path(os.environ.get("AGENCY_OS_CAMPAIGNS_DIR", str(DATA_DIR / "campaigns")))
 
-templates = Jinja2Templates(directory=str(PROJECT_ROOT / "web" / "templates"))
-app.mount("/static", StaticFiles(directory=str(PROJECT_ROOT / "web" / "static")), name="static")
-
-DB_PATH = os.environ.get("AGENCY_OS_DB", str(PROJECT_ROOT / "db.sqlite"))
+# Seed the campaigns dir from the repo the first time it's used on a volume
+if not CAMPAIGNS_DIR.exists():
+    shutil.copytree(PROJECT_ROOT / "campaigns", CAMPAIGNS_DIR)
 
 
 def get_db() -> Database:
@@ -55,7 +67,107 @@ def get_db() -> Database:
 
 
 def get_campaigns():
-    return discover_campaigns(str(PROJECT_ROOT / "campaigns"))
+    return discover_campaigns(str(CAMPAIGNS_DIR))
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    bootstrap_access()
+    yield
+
+
+app = FastAPI(title="agency-os", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
+
+templates = Jinja2Templates(directory=str(PROJECT_ROOT / "web" / "templates"))
+app.mount("/static", StaticFiles(directory=str(PROJECT_ROOT / "web" / "static")), name="static")
+
+# ── Auth ────────────────────────────────────────────────────────────
+# Multi-user login with role-based permissions (policy in core/access.py).
+# Every route is checked against access.ROUTE_RULES before its handler
+# runs; a route missing from that map is denied for everyone.
+
+SESSION_COOKIE = "aos_session"
+SESSION_TTL_DAYS = 14
+LOGIN_WINDOW_SECONDS = 15 * 60
+LOGIN_MAX_FAILURES = 5
+_login_failures: dict[str, list[float]] = defaultdict(list)
+_DUMMY_HASH = access.hash_password(secrets.token_hex(16))
+
+
+class LoginRequired(Exception):
+    pass
+
+
+class Forbidden(Exception):
+    pass
+
+
+def bootstrap_access() -> None:
+    """Install roles and, on a fresh DB, create the owner from env vars."""
+    db = get_db()
+    db.install_access()
+    email = os.environ.get("AGENCY_OS_OWNER_EMAIL", "").strip()
+    password = os.environ.get("AGENCY_OS_OWNER_PASSWORD", "")
+    if db.count_users() == 0 and email and password:
+        owner_id = next(r["id"] for r in db.list_roles() if r["name"] == access.OWNER_ROLE)
+        name = os.environ.get("AGENCY_OS_OWNER_NAME", "").strip() or email.split("@")[0]
+        db.create_user(email, name, password, [owner_id], actor=None)
+        print(f"agency-os: created owner account {email}")
+    if os.environ.get("AGENCY_OS_PASSWORD"):
+        print("agency-os: AGENCY_OS_PASSWORD is no longer used — sign in with a user account")
+
+
+def current_user(request: Request) -> CurrentUser:
+    return request.state.user
+
+
+def _same_origin(request: Request) -> bool:
+    """Reject cross-site form posts (CSRF). Cookies are also SameSite=Lax."""
+    source = request.headers.get("origin") or request.headers.get("referer")
+    if not source:
+        return True
+    return urlsplit(source).netloc == request.headers.get("host")
+
+
+async def authorize(request: Request) -> None:
+    rule = access.rule_for(request.method, request.scope["route"].path)
+    request.state.user = None
+    if rule == access.PUBLIC:
+        return
+    db = get_db()
+    token = request.cookies.get(SESSION_COOKIE)
+    user_id = db.session_user_id(access.hash_token(token)) if token else None
+    user = db.load_current_user(user_id) if user_id else None
+    if user is None:
+        raise LoginRequired()
+    request.state.user = user
+    if rule is None or not user.allows(rule):
+        raise Forbidden()
+    if request.method not in ("GET", "HEAD", "OPTIONS") and not _same_origin(request):
+        raise Forbidden()
+
+
+# Applies to every route declared below.
+app.router.dependencies.append(Depends(authorize))
+
+
+def _wants_json(request: Request) -> bool:
+    return request.url.path.startswith("/api/") or request.url.path.endswith(".ics")
+
+
+@app.exception_handler(LoginRequired)
+async def _login_required(request: Request, _exc: LoginRequired):
+    if _wants_json(request):
+        return JSONResponse({"detail": "Not authenticated"}, status_code=401)
+    target = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+    return RedirectResponse(url=f"/login?next={quote(target)}", status_code=303)
+
+
+@app.exception_handler(Forbidden)
+async def _forbidden(request: Request, _exc: Forbidden):
+    if _wants_json(request):
+        return JSONResponse({"detail": "Forbidden"}, status_code=403)
+    return templates.TemplateResponse(request, "forbidden.html", {}, status_code=403)
 
 
 # ── Helpers ─────────────────────────────────────────────────────────
@@ -105,8 +217,7 @@ async def dashboard(request: Request):
     total_prospects = sum(s["total_prospects"] for s in all_stats)
     total_emails = sum(s["total_emails_sent"] for s in all_stats)
 
-    return templates.TemplateResponse("dashboard.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "dashboard.html", {
         "campaigns": all_stats,
         "total_prospects": total_prospects,
         "total_emails": total_emails,
@@ -127,6 +238,8 @@ async def prospect_list(
     print: int = Query(default=0, description="Print view: 1 = all rows, no pagination"),
 ):
     """Prospect list with search, filters, sortable columns, pagination, print view."""
+    if print and not current_user(request).can("prospects.export"):
+        raise Forbidden()
     db = get_db()
     campaigns = get_campaigns()
     campaign_map = {c.db_name: c for c in campaigns}
@@ -216,8 +329,7 @@ async def prospect_list(
 
         from datetime import datetime as _dt
 
-        return templates.TemplateResponse("prospects_print.html", {
-            "request": request,
+        return templates.TemplateResponse(request, "prospects_print.html", {
             "prospects": rows,
             "total": len(rows),
             "q": q,
@@ -286,8 +398,7 @@ async def prospect_list(
     pg_params["dir"] = sort_dir.lower()
     pg_qs = urlencode(pg_params)
 
-    return templates.TemplateResponse("prospects.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "prospects.html", {
         "prospects": rows,
         "sources": sources,
         "cities_list": cities_list,
@@ -389,8 +500,7 @@ async def calendar_page(
 
     feed_url = f"http://localhost:8000/calendar.ics?days={days}"
 
-    return templates.TemplateResponse("calendar.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "calendar.html", {
         "events": events,
         "grid_weeks": grid_weeks,
         "weekdays": weekdays,
@@ -507,8 +617,7 @@ async def email_templates_page(
            ORDER BY p.name LIMIT 50"""
     ).fetchall()
 
-    return templates.TemplateResponse("email_templates.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "email_templates.html", {
         "scripts": all_scripts,
         "prospect_options": prospect_options,
         "preview_prospect": preview_prospect,
@@ -520,6 +629,7 @@ async def email_templates_page(
 
 @app.post("/email-templates/save")
 async def save_email_template(
+    request: Request,
     file_path: str = Form(...),
     subject: str = Form(default=""),
     body: str = Form(default=""),
@@ -528,8 +638,12 @@ async def save_email_template(
     from pathlib import Path
     import yaml
 
-    path = Path(file_path)
-    if not path.exists() or not path.name.endswith(".yaml"):
+    path = Path(file_path).resolve()
+    if (
+        not path.exists()
+        or not path.name.endswith(".yaml")
+        or not path.is_relative_to(CAMPAIGNS_DIR.resolve())
+    ):
         raise HTTPException(status_code=400, detail="Invalid file path")
 
     # Load existing to preserve other keys
@@ -539,6 +653,8 @@ async def save_email_template(
 
     # Write back
     path.write_text(yaml.dump(existing, default_flow_style=False, sort_keys=False, allow_unicode=True))
+    get_db().audit(current_user(request), "template.save", "template",
+                   str(path.relative_to(CAMPAIGNS_DIR.resolve())), {"subject": subject})
     return RedirectResponse(url="/email-templates?saved=1", status_code=303)
 
 
@@ -644,8 +760,7 @@ async def call_log_page(
     stats = db.get_call_stats()
     total_pages = max(1, (total + per_page - 1) // per_page)
 
-    return templates.TemplateResponse("call_log.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "call_log.html", {
         "calls": calls,
         "stats": stats,
         "outcome_filter": outcome,
@@ -660,6 +775,7 @@ async def call_log_page(
 
 @app.post("/call-log/record")
 async def record_call(
+    request: Request,
     prospect_id: int = Form(...),
     outreach_id: int = Form(...),
     campaign_id: int = Form(...),
@@ -675,7 +791,6 @@ async def record_call(
     next_step_date: str = Form(default=""),
     voicemail_left: str = Form(default=""),
     notes: str = Form(default=""),
-    called_by: str = Form(default=""),
 ):
     """Record a completed phone call."""
     from core.models import CallLog
@@ -705,7 +820,7 @@ async def record_call(
         next_step_date=nsd,
         voicemail_left=bool(voicemail_left),
         notes=notes or None,
-        called_by=called_by or None,
+        called_by=current_user(request).name,
     )
     db.log_call(call)
     return RedirectResponse(url=f"/prospects/{prospect_id}", status_code=303)
@@ -821,8 +936,7 @@ async def call_scripts(
 
     template_name = "call_scripts_print.html" if print else "call_scripts.html"
 
-    return templates.TemplateResponse(template_name, {
-        "request": request,
+    return templates.TemplateResponse(request, template_name, {
         "scripts": all_scripts,
         "prospect": prospect,
         "prospect_options": prospect_options,
@@ -869,8 +983,7 @@ async def prospect_detail(request: Request, prospect_id: int):
     # Get call history for this prospect
     call_history = db.get_calls_for_prospect(prospect_id)
 
-    return templates.TemplateResponse("prospect_detail.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "prospect_detail.html", {
         "prospect": prospect,
         "outreach_rows": outreach_rows,
         "email_logs": email_logs,
@@ -881,6 +994,7 @@ async def prospect_detail(request: Request, prospect_id: int):
 
 @app.post("/prospects/{prospect_id}/stage")
 async def update_stage(
+    request: Request,
     prospect_id: int,
     outreach_id: int = Form(...),
     stage: str = Form(...),
@@ -896,11 +1010,14 @@ async def update_stage(
         if notes:
             updates["close_reason"] = notes
     db.update_outreach(outreach_id, updates)
+    db.audit(current_user(request), "prospect.stage", "outreach", outreach_id,
+             {"prospect_id": prospect_id, "stage": stage, "notes": notes})
     return RedirectResponse(url=f"/prospects/{prospect_id}", status_code=303)
 
 
 @app.post("/prospects/{prospect_id}/contact")
 async def update_contact(
+    request: Request,
     prospect_id: int,
     outreach_id: int = Form(...),
     contact_name: str = Form(default=""),
@@ -921,11 +1038,14 @@ async def update_contact(
         updates["contact_title"] = contact_title
     if updates:
         db.update_outreach(outreach_id, updates)
+        db.audit(current_user(request), "prospect.contact", "outreach", outreach_id,
+                 {"prospect_id": prospect_id, **updates})
     return RedirectResponse(url=f"/prospects/{prospect_id}", status_code=303)
 
 
 @app.post("/prospects/{prospect_id}/info")
 async def update_prospect_info(
+    request: Request,
     prospect_id: int,
     name: str = Form(default=""),
     website_url: str = Form(default=""),
@@ -967,6 +1087,7 @@ async def update_prospect_info(
         vals.append(prospect_id)
         c.execute(f"UPDATE prospects SET {', '.join(sets)} WHERE id = ?", vals)
         c.commit()
+        db.audit(current_user(request), "prospect.info", "prospect", prospect_id, updates)
 
     return RedirectResponse(url=f"/prospects/{prospect_id}", status_code=303)
 
@@ -985,8 +1106,7 @@ async def campaign_list(request: Request):
             "stats": stats,
         })
 
-    return templates.TemplateResponse("campaigns.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "campaigns.html", {
         "campaigns": campaign_data,
     })
 
@@ -1039,8 +1159,7 @@ async def email_log(
 
     total_pages = max(1, (total + per_page - 1) // per_page)
 
-    return templates.TemplateResponse("emails.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "emails.html", {
         "emails": rows,
         "campaigns": campaigns_list,
         "campaign_filter": campaign,
@@ -1051,6 +1170,233 @@ async def email_log(
         "has_prev": page > 1,
         "has_next": page < total_pages,
     })
+
+
+# ── Login & account ────────────────────────────────────────────────
+
+
+def _safe_next(target: str) -> str:
+    """Only allow local redirects after login (no //evil.com)."""
+    if target.startswith("/") and not target.startswith("//") and target != "/":
+        return target
+    return ""
+
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request, next: str = Query(default=""), error: str = Query(default="")):
+    return templates.TemplateResponse(request, "login.html", {
+        "next": next,
+        "error": error,
+        "no_users": get_db().count_users() == 0,
+    })
+
+
+@app.post("/login")
+async def login(
+    request: Request,
+    email: str = Form(...),
+    password: str = Form(...),
+    next: str = Form(default=""),
+):
+    client = request.client.host if request.client else "?"
+    key = f"{email.strip().lower()}|{client}"
+    now = time.monotonic()
+    recent = [t for t in _login_failures[key] if now - t < LOGIN_WINDOW_SECONDS]
+    _login_failures[key] = recent
+
+    def fail(message: str):
+        return RedirectResponse(
+            url=f"/login?error={quote(message)}&next={quote(next)}", status_code=303
+        )
+
+    if len(recent) >= LOGIN_MAX_FAILURES:
+        return fail("Too many failed attempts. Try again in 15 minutes.")
+
+    db = get_db()
+    row = db.get_user_by_email(email)
+    # Always run a hash check so response time doesn't reveal which emails exist
+    ok = access.verify_password(password, row["password_hash"] if row else _DUMMY_HASH)
+    if not (row and ok and row["is_active"]):
+        _login_failures[key].append(now)
+        return fail("Incorrect email or password.")
+
+    _login_failures.pop(key, None)
+    token = access.new_session_token()
+    db.create_session(row["id"], access.hash_token(token), SESSION_TTL_DAYS)
+    user = db.load_current_user(row["id"])
+    db.audit(user, "auth.login", "user", user.id)
+
+    response = RedirectResponse(url=_safe_next(next) or user.landing_page(), status_code=303)
+    response.set_cookie(
+        SESSION_COOKIE, token,
+        max_age=SESSION_TTL_DAYS * 86400,
+        httponly=True,
+        samesite="lax",
+        secure=request.url.scheme == "https",
+    )
+    return response
+
+
+@app.post("/logout")
+async def logout(request: Request):
+    token = request.cookies.get(SESSION_COOKIE)
+    if token:
+        get_db().delete_session(access.hash_token(token))
+    response = RedirectResponse(url="/login", status_code=303)
+    response.delete_cookie(SESSION_COOKIE)
+    return response
+
+
+@app.get("/account", response_class=HTMLResponse)
+async def account_page(request: Request, msg: str = Query(default=""), error: str = Query(default="")):
+    user = current_user(request)
+    return templates.TemplateResponse(request, "account.html", {
+        "active": "account",
+        "permissions": [(k, v) for k, v in access.CATALOG.items() if user.can(k)],
+        "msg": msg,
+        "error": error,
+    })
+
+
+@app.post("/account/password")
+async def change_password(
+    request: Request,
+    current_password: str = Form(...),
+    new_password: str = Form(...),
+    confirm_password: str = Form(...),
+):
+    user = current_user(request)
+    db = get_db()
+    row = db.get_user_by_email(user.email)
+    if not access.verify_password(current_password, row["password_hash"]):
+        return RedirectResponse(url="/account?error=Current+password+is+incorrect.", status_code=303)
+    if new_password != confirm_password:
+        return RedirectResponse(url="/account?error=New+passwords+don%27t+match.", status_code=303)
+    try:
+        token = request.cookies.get(SESSION_COOKIE, "")
+        db.set_password(user.id, new_password, user, keep_session_hash=access.hash_token(token))
+    except AccessError as e:
+        return RedirectResponse(url=f"/account?error={quote(str(e))}", status_code=303)
+    return RedirectResponse(
+        url="/account?msg=Password+changed.+Other+sessions+were+signed+out.", status_code=303
+    )
+
+
+# ── Team administration (owners only) ──────────────────────────────
+
+
+def _back(path: str, *, msg: str = "", error: str = "") -> RedirectResponse:
+    qs = f"?msg={quote(msg)}" if msg else f"?error={quote(error)}" if error else ""
+    return RedirectResponse(url=f"{path}{qs}", status_code=303)
+
+
+@app.get("/admin/users", response_class=HTMLResponse)
+async def admin_users(request: Request, msg: str = Query(default=""), error: str = Query(default="")):
+    db = get_db()
+    return templates.TemplateResponse(request, "admin_users.html", {
+        "active": "admin",
+        "users": db.list_users(),
+        "roles": db.list_roles(),
+        "msg": msg,
+        "error": error,
+    })
+
+
+@app.post("/admin/users")
+async def admin_create_user(
+    request: Request,
+    email: str = Form(...),
+    name: str = Form(...),
+    password: str = Form(...),
+    role_ids: list[int] = Form(default=[]),
+):
+    try:
+        get_db().create_user(email, name, password, role_ids, current_user(request))
+    except AccessError as e:
+        return _back("/admin/users", error=str(e))
+    return _back("/admin/users", msg=f"Added {email.strip().lower()}.")
+
+
+@app.post("/admin/users/{user_id}")
+async def admin_update_user(
+    request: Request,
+    user_id: int,
+    name: str = Form(...),
+    is_active: str = Form(default=""),
+    role_ids: list[int] = Form(default=[]),
+    new_password: str = Form(default=""),
+):
+    actor = current_user(request)
+    db = get_db()
+    try:
+        db.update_user(user_id, name=name, is_active=bool(is_active), role_ids=role_ids, actor=actor)
+        if new_password:
+            db.set_password(user_id, new_password, actor)
+    except AccessError as e:
+        return _back("/admin/users", error=str(e))
+    return _back("/admin/users", msg=f"Saved {name.strip()}.")
+
+
+@app.get("/admin/roles", response_class=HTMLResponse)
+async def admin_roles(request: Request, msg: str = Query(default=""), error: str = Query(default="")):
+    return templates.TemplateResponse(request, "admin_roles.html", {
+        "active": "admin",
+        "roles": get_db().list_roles(),
+        "catalog": access.CATALOG,
+        "msg": msg,
+        "error": error,
+    })
+
+
+@app.post("/admin/roles")
+async def admin_create_role(
+    request: Request,
+    name: str = Form(...),
+    description: str = Form(default=""),
+    permissions: list[str] = Form(default=[]),
+):
+    try:
+        get_db().create_role(name, description, permissions, current_user(request))
+    except AccessError as e:
+        return _back("/admin/roles", error=str(e))
+    return _back("/admin/roles", msg=f"Created role {name.strip()}.")
+
+
+@app.post("/admin/roles/{role_id}")
+async def admin_update_role(
+    request: Request,
+    role_id: int,
+    name: str = Form(...),
+    description: str = Form(default=""),
+    permissions: list[str] = Form(default=[]),
+):
+    try:
+        get_db().update_role(role_id, name, description, permissions, current_user(request))
+    except AccessError as e:
+        return _back("/admin/roles", error=str(e))
+    return _back("/admin/roles", msg=f"Saved role {name.strip()}.")
+
+
+@app.post("/admin/roles/{role_id}/delete")
+async def admin_delete_role(request: Request, role_id: int):
+    try:
+        get_db().delete_role(role_id, current_user(request))
+    except AccessError as e:
+        return _back("/admin/roles", error=str(e))
+    return _back("/admin/roles", msg="Role deleted.")
+
+
+@app.get("/admin/audit", response_class=HTMLResponse)
+async def admin_audit(request: Request):
+    return templates.TemplateResponse(request, "admin_audit.html", {
+        "active": "admin",
+        "entries": get_db().list_audit(),
+    })
+
+
+@app.get("/healthz")
+async def healthz():
+    return {"ok": True}
 
 
 @app.get("/api/stats")
@@ -1066,4 +1412,4 @@ async def api_stats():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))

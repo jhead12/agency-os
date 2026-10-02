@@ -17,6 +17,38 @@ python agency_os.py enqueue --campaign voter-guide-cbo --dry-run
 python agency_os.py digest --campaign voter-guide-cbo
 ```
 
+## Deploying to Railway
+
+The web dashboard (`web/app.py`) ships as a container: Railway builds the
+`Dockerfile` (per `railway.json`) and health-checks `/healthz`.
+
+To test the image locally with Podman (or Docker):
+
+```bash
+podman build -t agency-os .
+podman run --rm -p 8000:8000 \
+  -e AGENCY_OS_OWNER_EMAIL=you@example.com -e AGENCY_OS_OWNER_PASSWORD=change-me-now \
+  -e RAILWAY_VOLUME_MOUNT_PATH=/data -v agency-os-data:/data agency-os
+```
+
+1. Create a Railway project from this GitHub repo.
+2. **Add a volume** to the service, mounted at `/data`. The app detects
+   `RAILWAY_VOLUME_MOUNT_PATH` and stores `db.sqlite` and the editable
+   `campaigns/` folder there (seeded from the repo on first boot), so data and
+   template edits survive redeploys.
+3. Set variables: `AGENCY_OS_OWNER_EMAIL` and `AGENCY_OS_OWNER_PASSWORD`
+   (creates the first owner account on an empty database — see
+   [Users & permissions](#users--permissions)) plus whichever API keys from
+   `.env.example` you use.
+4. Generate a public domain under Settings → Networking.
+
+To bring your local data along, upload `db.sqlite` into the volume once
+(e.g. `railway ssh`, then copy it to `/data/db.sqlite`) before using the app.
+
+Note: after the first boot, campaign YAML on the volume is the source of
+truth — changes to `campaigns/` in git won't overwrite it. Delete
+`/data/campaigns` and redeploy to re-seed.
+
 ## Architecture
 
 ```
@@ -68,7 +100,12 @@ pip install -r requirements.txt
 python3 -m web.app
 ```
 
-Open http://localhost:8000
+Open http://localhost:8000 and sign in. On a fresh database, create the first
+owner account first:
+
+```bash
+python agency_os.py users create-owner --email you@example.com
+```
 
 | Page | What you can do |
 |---|---|
@@ -95,6 +132,42 @@ python agency_os.py stale --all
 # Weekly: pipeline digest
 python agency_os.py digest --all
 ```
+
+## Users & permissions
+
+The dashboard is multi-user with role-based permissions, modeled on the
+u9itus.dev staff permission system. Everyone shares one workspace (same
+campaigns and prospects); roles control what each person can see and do.
+
+- **Permissions** are a fixed catalog defined in code (`core/access.py` →
+  `CATALOG`), e.g. `prospects.edit`, `calls.log`, `templates.edit`.
+- **Roles** are named sets of permissions that owners create and edit at
+  **Team → Roles**. A user's access is the union of all of their roles.
+  Starter roles: Caller, Sales Rep, Template Editor, Viewer. Edit or delete
+  them freely; restarts never overwrite your changes.
+- **Owner** is a protected role with every permission plus team
+  administration (users, roles, audit log). The app refuses any change that
+  would leave no active owner.
+- **New users get no access** until an owner gives them a role.
+- **Every route is listed in `access.ROUTE_RULES`.** A route that isn't
+  listed is denied for everyone, owners included. `tests/test_access.py`
+  fails if a route is added without a rule.
+- Changes apply on the user's next request. Deactivating a user signs them
+  out immediately.
+- Sign-ins, team changes, and prospect/template edits are recorded in
+  **Team → Audit log**. Logged calls are attributed to the signed-in user.
+
+Recovery from the server shell (on Railway, use `railway ssh` and pass
+`--db /data/db.sqlite`):
+
+```bash
+python agency_os.py users list
+python agency_os.py users create-owner --email you@example.com
+python agency_os.py users grant-owner --email someone@example.com   # re-promote + reactivate
+python agency_os.py users set-password --email someone@example.com
+```
+
+Run the access tests with `python -m pytest tests/`.
 
 ## API keys
 

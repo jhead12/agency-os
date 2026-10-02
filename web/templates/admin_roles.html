@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Roles — agency-os{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Roles</h1>
+    <p class="subtitle">A role is a named set of permissions. A user's access is the combined permissions of all of their roles.</p>
+</div>
+{% set tab = 'roles' %}{% include "_admin_tabs.html" %}
+
+{% macro perm_checks(selected) %}
+<div class="check-grid">
+    {% for key, label in catalog.items() %}
+    <label class="check" title="{{ label }}">
+        <input type="checkbox" name="permissions" value="{{ key }}" {% if key in selected %}checked{% endif %}>
+        <span><code>{{ key }}</code><br><span class="muted">{{ label }}</span></span>
+    </label>
+    {% endfor %}
+</div>
+{% endmacro %}
+
+{% for r in roles %}
+<div class="detail-card admin-row">
+    {% if r.is_protected %}
+    <div class="admin-row-head">
+        <div><strong>{{ r.name }}</strong> <span class="tag">protected</span>
+            <div class="muted">{{ r.description }} · {{ r.user_count }} user(s)</div></div>
+    </div>
+    <p class="muted">Has every permission plus team administration. Can't be edited or deleted.</p>
+    {% else %}
+    <form method="post" action="/admin/roles/{{ r.id }}">
+        <div class="admin-row-fields">
+            <label>Name <input type="text" name="name" value="{{ r.name }}" required class="filter-input"></label>
+            <label>Description <input type="text" name="description" value="{{ r.description or '' }}" class="filter-input"></label>
+        </div>
+        <div class="muted">{{ r.user_count }} user(s)</div>
+        {{ perm_checks(r.permissions) }}
+        <button type="submit" class="btn btn-sm">Save role</button>
+    </form>
+    <form method="post" action="/admin/roles/{{ r.id }}/delete"
+          onsubmit="return confirm('Delete the {{ r.name }} role? {{ r.user_count }} user(s) will lose its permissions.');">
+        <button type="submit" class="btn btn-sm btn-secondary">Delete</button>
+    </form>
+    {% endif %}
+</div>
+{% endfor %}
+
+<form method="post" action="/admin/roles" class="detail-card admin-row">
+    <h3>New role</h3>
+    <div class="admin-row-fields">
+        <label>Name <input type="text" name="name" required class="filter-input"></label>
+        <label>Description <input type="text" name="description" class="filter-input"></label>
+    </div>
+    {{ perm_checks([]) }}
+    <button type="submit" class="btn btn-sm">Create role</button>
+</form>
+{% endblock %}

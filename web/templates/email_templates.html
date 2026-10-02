@@ -83,7 +83,7 @@
             </div>
 
             <div class="template-actions">
-                <button type="submit" class="btn">💾 Save Template</button>
+                {% if request.state.user.can('templates.edit') %}<button type="submit" class="btn">💾 Save Template</button>{% endif %}
                 {% if preview_p %}
                 <button type="button" class="btn btn-sm btn-secondary"
                         onclick="loadPreview({{ loop.index0 }}, {{ preview_p.id }})">👁 Preview for {{ preview_p.name[:20] }}</button>

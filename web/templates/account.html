@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Account — agency-os{% endblock %}
+{% block content %}
+{% set user = request.state.user %}
+<div class="page-header">
+    <h1>{{ user.name }}</h1>
+    <p class="subtitle">{{ user.email }}</p>
+</div>
+
+{% if msg %}<div class="save-notice">{{ msg }}</div>{% endif %}
+{% if error %}<div class="form-error">{{ error }}</div>{% endif %}
+
+<div class="detail-grid">
+    <div class="detail-card">
+        <h3>Your access</h3>
+        <div class="detail-row"><span>Roles</span><span>{{ user.roles|join(', ') or 'None' }}</span></div>
+        {% if user.is_owner %}
+        <p class="muted" style="margin-top: 12px;">Owners have every permission and manage the team.</p>
+        {% elif permissions %}
+        <ul class="perm-list">
+            {% for key, label in permissions %}<li><code>{{ key }}</code> {{ label }}</li>{% endfor %}
+        </ul>
+        {% else %}
+        <p class="muted" style="margin-top: 12px;">
+            You haven't been given any permissions yet. Ask an owner to assign you a role.
+        </p>
+        {% endif %}
+    </div>
+
+    <div class="detail-card">
+        <h3>Change password</h3>
+        <form method="post" action="/account/password" class="stack-form">
+            <label>Current password
+                <input type="password" name="current_password" required autocomplete="current-password" class="filter-input">
+            </label>
+            <label>New password
+                <input type="password" name="new_password" required minlength="10" autocomplete="new-password" class="filter-input">
+            </label>
+            <label>Confirm new password
+                <input type="password" name="confirm_password" required minlength="10" autocomplete="new-password" class="filter-input">
+            </label>
+            <button type="submit" class="btn">Change password</button>
+        </form>
+    </div>
+</div>
+{% endblock %}

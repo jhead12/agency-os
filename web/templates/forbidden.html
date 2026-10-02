@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}No access — agency-os{% endblock %}
+{% block content %}
+<div class="auth-card detail-card">
+    <h1>You don't have access to this page</h1>
+    <p class="muted" style="margin: 12px 0 16px;">
+        Your role doesn't include the permission this page needs. Ask an owner if you need it.
+    </p>
+    {% if request.state.user %}
+    <a href="{{ request.state.user.landing_page() }}" class="btn">Go to your start page</a>
+    {% endif %}
+</div>
+{% endblock %}

@@ -10,10 +10,13 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
 
+from core import access
+from core.access import AccessError, CurrentUser
 from core.models import Prospect, Outreach, EmailLog, SendResult, EnrichmentResult, CallLog
 
 
@@ -116,6 +119,57 @@ CREATE INDEX IF NOT EXISTS idx_call_log_outreach ON call_log(outreach_id);
 CREATE INDEX IF NOT EXISTS idx_call_log_prospect ON call_log(prospect_id);
 CREATE INDEX IF NOT EXISTS idx_call_log_campaign ON call_log(campaign_id);
 CREATE INDEX IF NOT EXISTS idx_call_log_called_at ON call_log(called_at);
+
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT UNIQUE NOT NULL COLLATE NOCASE,
+    name TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    is_active INTEGER DEFAULT 1,
+    last_login_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS roles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT UNIQUE NOT NULL COLLATE NOCASE,
+    description TEXT,
+    is_protected INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS role_permissions (
+    role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+    permission TEXT NOT NULL,
+    PRIMARY KEY (role_id, permission)
+);
+
+CREATE TABLE IF NOT EXISTS user_roles (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+    PRIMARY KEY (user_id, role_id)
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    token_hash TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMP NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    actor_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    actor_label TEXT NOT NULL,
+    action TEXT NOT NULL,
+    target_type TEXT,
+    target_id TEXT,
+    details TEXT DEFAULT '{}',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
 """
 
 
@@ -659,3 +713,342 @@ class Database:
             "by_interest": by_interest,
             "total_minutes": total_minutes,
         }
+
+    # ── Users, roles & sessions ────────────────────────────────────────
+    # Policy (catalog, route rules, password hashing) lives in core/access.py.
+
+    @contextmanager
+    def transaction(self) -> Iterator[sqlite3.Connection]:
+        """Write transaction that takes the DB lock up front (BEGIN IMMEDIATE),
+        so invariant checks like "at least one active owner" can't race."""
+        c = self.conn
+        if c.in_transaction:
+            c.commit()
+        c.execute("BEGIN IMMEDIATE")
+        try:
+            yield c
+        except BaseException:
+            c.rollback()
+            raise
+        else:
+            c.commit()
+
+    def install_access(self) -> None:
+        """Create the protected Owner role and any missing starter roles.
+
+        Idempotent. Never touches a role that already exists, so owner edits
+        to starter roles survive restarts.
+        """
+        with self.transaction() as c:
+            c.execute(
+                "INSERT OR IGNORE INTO roles (name, description, is_protected) VALUES (?, ?, 1)",
+                (access.OWNER_ROLE, "Full access, including managing users and roles"),
+            )
+            for name, (description, permissions) in access.STARTER_ROLES.items():
+                cur = c.execute(
+                    "INSERT OR IGNORE INTO roles (name, description) VALUES (?, ?)",
+                    (name, description),
+                )
+                if cur.rowcount:
+                    c.executemany(
+                        "INSERT INTO role_permissions (role_id, permission) VALUES (?, ?)",
+                        [(cur.lastrowid, p) for p in permissions],
+                    )
+
+    def _audit(self, c: sqlite3.Connection, actor: Optional[CurrentUser], action: str,
+               target_type: str = None, target_id=None, details: dict = None) -> None:
+        c.execute(
+            """INSERT INTO audit_log (actor_id, actor_label, action, target_type, target_id, details)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (
+                actor.id if actor else None,
+                actor.email if actor else "cli",
+                action, target_type,
+                str(target_id) if target_id is not None else None,
+                json.dumps(details or {}, default=str),
+            ),
+        )
+
+    def audit(self, actor: Optional[CurrentUser], action: str,
+              target_type: str = None, target_id=None, details: dict = None) -> None:
+        """Record an audited action outside a larger transaction."""
+        with self.transaction() as c:
+            self._audit(c, actor, action, target_type, target_id, details)
+
+    def list_audit(self, limit: int = 200) -> list:
+        return self.conn.execute(
+            "SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+
+    # Users
+
+    def count_users(self) -> int:
+        return self.conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+
+    def get_user_by_email(self, email: str):
+        return self.conn.execute(
+            "SELECT * FROM users WHERE email = ?", (email.strip(),)
+        ).fetchone()
+
+    def load_current_user(self, user_id: int) -> Optional[CurrentUser]:
+        """Load an active user with roles and effective permissions.
+
+        Called on every request, so role/permission changes and deactivation
+        take effect on the user's very next request.
+        """
+        c = self.conn
+        row = c.execute(
+            "SELECT id, email, name FROM users WHERE id = ? AND is_active = 1", (user_id,)
+        ).fetchone()
+        if not row:
+            return None
+        roles = c.execute(
+            """SELECT r.name FROM roles r JOIN user_roles ur ON ur.role_id = r.id
+               WHERE ur.user_id = ? ORDER BY r.name""",
+            (user_id,),
+        ).fetchall()
+        perms = c.execute(
+            """SELECT DISTINCT rp.permission FROM role_permissions rp
+               JOIN user_roles ur ON ur.role_id = rp.role_id WHERE ur.user_id = ?""",
+            (user_id,),
+        ).fetchall()
+        return CurrentUser(
+            id=row["id"], email=row["email"], name=row["name"],
+            roles=tuple(r["name"] for r in roles),
+            permissions=frozenset(p["permission"] for p in perms),
+        )
+
+    def list_users(self) -> list[dict]:
+        c = self.conn
+        users = [dict(r) for r in c.execute(
+            "SELECT id, email, name, is_active, last_login_at, created_at FROM users ORDER BY name"
+        ).fetchall()]
+        links = c.execute("SELECT user_id, role_id FROM user_roles").fetchall()
+        for u in users:
+            u["role_ids"] = {link["role_id"] for link in links if link["user_id"] == u["id"]}
+        return users
+
+    def _active_owner_count(self, c: sqlite3.Connection) -> int:
+        return c.execute(
+            """SELECT COUNT(DISTINCT u.id) FROM users u
+               JOIN user_roles ur ON ur.user_id = u.id
+               JOIN roles r ON r.id = ur.role_id
+               WHERE r.name = ? AND u.is_active = 1""",
+            (access.OWNER_ROLE,),
+        ).fetchone()[0]
+
+    def _user_role_names(self, c: sqlite3.Connection, user_id: int) -> list[str]:
+        return [r["name"] for r in c.execute(
+            """SELECT r.name FROM roles r JOIN user_roles ur ON ur.role_id = r.id
+               WHERE ur.user_id = ? ORDER BY r.name""",
+            (user_id,),
+        ).fetchall()]
+
+    def create_user(self, email: str, name: str, password: str, role_ids: list[int],
+                    actor: Optional[CurrentUser]) -> int:
+        email, name = email.strip().lower(), name.strip()
+        if "@" not in email or not name:
+            raise AccessError("A valid email and a name are required.")
+        problem = access.password_problem(password)
+        if problem:
+            raise AccessError(problem)
+        with self.transaction() as c:
+            if c.execute("SELECT 1 FROM users WHERE email = ?", (email,)).fetchone():
+                raise AccessError(f"A user with email {email} already exists.")
+            cur = c.execute(
+                "INSERT INTO users (email, name, password_hash) VALUES (?, ?, ?)",
+                (email, name, access.hash_password(password)),
+            )
+            user_id = cur.lastrowid
+            self._set_roles(c, user_id, role_ids)
+            self._audit(c, actor, "user.create", "user", user_id, {
+                "email": email, "name": name, "roles": self._user_role_names(c, user_id),
+            })
+        return user_id
+
+    def update_user(self, user_id: int, *, name: str, is_active: bool, role_ids: list[int],
+                    actor: Optional[CurrentUser]) -> None:
+        """Change a user's name, active flag, and roles in one audited step.
+
+        Rejected if it would leave no active owner.
+        """
+        name = name.strip()
+        if not name:
+            raise AccessError("Name is required.")
+        with self.transaction() as c:
+            before = c.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+            if not before:
+                raise AccessError("User not found.")
+            roles_before = self._user_role_names(c, user_id)
+            c.execute(
+                "UPDATE users SET name = ?, is_active = ? WHERE id = ?",
+                (name, int(is_active), user_id),
+            )
+            self._set_roles(c, user_id, role_ids)
+            if self._active_owner_count(c) == 0:
+                raise AccessError("At least one active Owner is required.")
+            if not is_active:
+                c.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+            self._audit(c, actor, "user.update", "user", user_id, {
+                "before": {"name": before["name"], "is_active": bool(before["is_active"]),
+                           "roles": roles_before},
+                "after": {"name": name, "is_active": is_active,
+                          "roles": self._user_role_names(c, user_id)},
+            })
+
+    def _set_roles(self, c: sqlite3.Connection, user_id: int, role_ids: list[int]) -> None:
+        role_ids = sorted(set(role_ids))
+        if role_ids:
+            found = c.execute(
+                f"SELECT COUNT(*) FROM roles WHERE id IN ({','.join('?' * len(role_ids))})",
+                role_ids,
+            ).fetchone()[0]
+            if found != len(role_ids):
+                raise AccessError("Unknown role.")
+        c.execute("DELETE FROM user_roles WHERE user_id = ?", (user_id,))
+        c.executemany(
+            "INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)",
+            [(user_id, r) for r in role_ids],
+        )
+
+    def set_password(self, user_id: int, password: str, actor: Optional[CurrentUser],
+                     keep_session_hash: str = None) -> None:
+        """Set a password and sign out every other session for that user."""
+        problem = access.password_problem(password)
+        if problem:
+            raise AccessError(problem)
+        with self.transaction() as c:
+            c.execute(
+                "UPDATE users SET password_hash = ? WHERE id = ?",
+                (access.hash_password(password), user_id),
+            )
+            c.execute(
+                "DELETE FROM sessions WHERE user_id = ? AND token_hash IS NOT ?",
+                (user_id, keep_session_hash),
+            )
+            self._audit(c, actor, "user.password", "user", user_id)
+
+    def grant_owner(self, email: str, actor: Optional[CurrentUser]) -> None:
+        """Recovery path (CLI only): make an existing user an active Owner."""
+        with self.transaction() as c:
+            row = c.execute("SELECT id FROM users WHERE email = ?", (email.strip(),)).fetchone()
+            if not row:
+                raise AccessError(f"No user with email {email}.")
+            owner_role = c.execute(
+                "SELECT id FROM roles WHERE name = ?", (access.OWNER_ROLE,)
+            ).fetchone()
+            c.execute("UPDATE users SET is_active = 1 WHERE id = ?", (row["id"],))
+            c.execute(
+                "INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)",
+                (row["id"], owner_role["id"]),
+            )
+            self._audit(c, actor, "user.grant_owner", "user", row["id"], {"email": email})
+
+    # Roles
+
+    def list_roles(self) -> list[dict]:
+        c = self.conn
+        roles = [dict(r) for r in c.execute(
+            """SELECT r.*, (SELECT COUNT(*) FROM user_roles ur WHERE ur.role_id = r.id) AS user_count
+               FROM roles r ORDER BY r.is_protected DESC, r.name"""
+        ).fetchall()]
+        perms = c.execute("SELECT role_id, permission FROM role_permissions").fetchall()
+        for r in roles:
+            r["permissions"] = {p["permission"] for p in perms if p["role_id"] == r["id"]}
+        return roles
+
+    def _validate_role(self, name: str, permissions: list[str]) -> tuple[str, list[str]]:
+        name = name.strip()
+        if not name:
+            raise AccessError("Role name is required.")
+        unknown = set(permissions) - set(access.CATALOG)
+        if unknown:
+            raise AccessError(f"Unknown permission(s): {', '.join(sorted(unknown))}")
+        return name, sorted(set(permissions))
+
+    def create_role(self, name: str, description: str, permissions: list[str],
+                    actor: Optional[CurrentUser]) -> int:
+        name, permissions = self._validate_role(name, permissions)
+        with self.transaction() as c:
+            if c.execute("SELECT 1 FROM roles WHERE name = ?", (name,)).fetchone():
+                raise AccessError(f"A role named {name} already exists.")
+            cur = c.execute(
+                "INSERT INTO roles (name, description) VALUES (?, ?)", (name, description.strip())
+            )
+            c.executemany(
+                "INSERT INTO role_permissions (role_id, permission) VALUES (?, ?)",
+                [(cur.lastrowid, p) for p in permissions],
+            )
+            self._audit(c, actor, "role.create", "role", cur.lastrowid,
+                        {"name": name, "permissions": permissions})
+        return cur.lastrowid
+
+    def update_role(self, role_id: int, name: str, description: str, permissions: list[str],
+                    actor: Optional[CurrentUser]) -> None:
+        name, permissions = self._validate_role(name, permissions)
+        with self.transaction() as c:
+            before = c.execute("SELECT * FROM roles WHERE id = ?", (role_id,)).fetchone()
+            if not before:
+                raise AccessError("Role not found.")
+            if before["is_protected"]:
+                raise AccessError(f"The {before['name']} role is protected and can't be edited.")
+            if c.execute(
+                "SELECT 1 FROM roles WHERE name = ? AND id != ?", (name, role_id)
+            ).fetchone():
+                raise AccessError(f"A role named {name} already exists.")
+            perms_before = sorted(r["permission"] for r in c.execute(
+                "SELECT permission FROM role_permissions WHERE role_id = ?", (role_id,)
+            ).fetchall())
+            c.execute(
+                "UPDATE roles SET name = ?, description = ? WHERE id = ?",
+                (name, description.strip(), role_id),
+            )
+            c.execute("DELETE FROM role_permissions WHERE role_id = ?", (role_id,))
+            c.executemany(
+                "INSERT INTO role_permissions (role_id, permission) VALUES (?, ?)",
+                [(role_id, p) for p in permissions],
+            )
+            self._audit(c, actor, "role.update", "role", role_id, {
+                "before": {"name": before["name"], "permissions": perms_before},
+                "after": {"name": name, "permissions": permissions},
+            })
+
+    def delete_role(self, role_id: int, actor: Optional[CurrentUser]) -> None:
+        with self.transaction() as c:
+            role = c.execute("SELECT * FROM roles WHERE id = ?", (role_id,)).fetchone()
+            if not role:
+                raise AccessError("Role not found.")
+            if role["is_protected"]:
+                raise AccessError(f"The {role['name']} role is protected and can't be deleted.")
+            holders = [r["email"] for r in c.execute(
+                """SELECT u.email FROM users u JOIN user_roles ur ON ur.user_id = u.id
+                   WHERE ur.role_id = ?""",
+                (role_id,),
+            ).fetchall()]
+            c.execute("DELETE FROM roles WHERE id = ?", (role_id,))
+            self._audit(c, actor, "role.delete", "role", role_id,
+                        {"name": role["name"], "removed_from": holders})
+
+    # Sessions
+
+    def create_session(self, user_id: int, token_hash: str, ttl_days: int) -> None:
+        with self.transaction() as c:
+            c.execute(
+                "INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)",
+                (token_hash, user_id, (datetime.now() + timedelta(days=ttl_days)).isoformat()),
+            )
+            c.execute(
+                "UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = ?", (user_id,)
+            )
+            c.execute("DELETE FROM sessions WHERE expires_at < ?", (datetime.now().isoformat(),))
+
+    def session_user_id(self, token_hash: str) -> Optional[int]:
+        row = self.conn.execute(
+            "SELECT user_id FROM sessions WHERE token_hash = ? AND expires_at > ?",
+            (token_hash, datetime.now().isoformat()),
+        ).fetchone()
+        return row["user_id"] if row else None
+
+    def delete_session(self, token_hash: str) -> None:
+        self.conn.execute("DELETE FROM sessions WHERE token_hash = ?", (token_hash,))
+        self.conn.commit()

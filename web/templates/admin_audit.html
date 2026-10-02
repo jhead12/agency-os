@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Audit log — agency-os{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Audit log</h1>
+    <p class="subtitle">Latest {{ entries|length }} entries: sign-ins, team changes, and prospect/template edits.</p>
+</div>
+{% set tab = 'audit' %}{% include "_admin_tabs.html" %}
+
+{% if entries %}
+<div class="table-scroll">
+<table class="data-table">
+    <thead><tr><th>When</th><th>Who</th><th>Action</th><th>Target</th><th>Details</th></tr></thead>
+    <tbody>
+    {% for e in entries %}
+    <tr>
+        <td style="white-space: nowrap;">{{ e.created_at }}</td>
+        <td>{{ e.actor_label }}</td>
+        <td><code>{{ e.action }}</code></td>
+        <td>{% if e.target_type %}{{ e.target_type }} #{{ e.target_id }}{% endif %}</td>
+        <td class="audit-details">{{ e.details if e.details != '{}' else '' }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<div class="empty-state">Nothing recorded yet.</div>
+{% endif %}
+{% endblock %}

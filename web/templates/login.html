@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Sign in — agency-os{% endblock %}
+{% block content %}
+<div class="auth-card detail-card">
+    <h1>Sign in</h1>
+    {% if error %}<div class="form-error">{{ error }}</div>{% endif %}
+    {% if no_users %}
+    <div class="empty-state" style="text-align: left; padding: 0 0 16px;">
+        No accounts exist yet. Create the owner account from the server:
+        <code>python agency_os.py users create-owner --email you@example.com</code>
+        or set <code>AGENCY_OS_OWNER_EMAIL</code> and <code>AGENCY_OS_OWNER_PASSWORD</code> and restart.
+    </div>
+    {% endif %}
+    <form method="post" action="/login" class="stack-form">
+        <input type="hidden" name="next" value="{{ next }}">
+        <label>Email
+            <input type="email" name="email" required autofocus autocomplete="username" class="filter-input">
+        </label>
+        <label>Password
+            <input type="password" name="password" required autocomplete="current-password" class="filter-input">
+        </label>
+        <button type="submit" class="btn">Sign in</button>
+    </form>
+</div>
+{% endblock %}

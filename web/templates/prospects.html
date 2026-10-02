@@ -33,7 +33,7 @@
             <p class="subtitle">{{ total }} organizations{% if q %} matching "{{ q }}"{% endif %}{% if cities_filter %} in {{ cities_filter }}{% endif %}</p>
         </div>
         <div class="page-header-actions">
-            <a href="/prospects?{{ print_qs }}" class="btn btn-sm btn-print" target="_blank">🖨 Print View</a>
+            {% if request.state.user.can('prospects.export') %}<a href="/prospects?{{ print_qs }}" class="btn btn-sm btn-print" target="_blank">🖨 Print View</a>{% endif %}
         </div>
     </div>
 </div>

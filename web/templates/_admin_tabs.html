@@ -1,0 +1,7 @@
+<div class="stage-tabs admin-tabs">
+    <a href="/admin/users" class="stage-tab {% if tab == 'users' %}active{% endif %}">Users</a>
+    <a href="/admin/roles" class="stage-tab {% if tab == 'roles' %}active{% endif %}">Roles</a>
+    <a href="/admin/audit" class="stage-tab {% if tab == 'audit' %}active{% endif %}">Audit log</a>
+</div>
+{% if msg %}<div class="save-notice">{{ msg }}</div>{% endif %}
+{% if error %}<div class="form-error">{{ error }}</div>{% endif %}

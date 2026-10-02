@@ -10,16 +10,22 @@ Usage:
     agency-os digest --campaign voter-guide-cbo
     agency-os campaigns
     agency-os plugins
+    agency-os users list
+    agency-os users create-owner --email you@example.com
+    agency-os users grant-owner --email someone@example.com
+    agency-os users set-password --email someone@example.com
 """
 
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
 import click
 
+from core.access import AccessError, OWNER_ROLE
 from core.campaign import discover_campaigns
 from core.db import Database
 from core.pipeline import Pipeline
@@ -50,7 +56,8 @@ def _get_campaign(campaigns: list, name: str):
 
 
 @click.group()
-@click.option("--db", default="db.sqlite", help="Path to SQLite database file")
+@click.option("--db", default=lambda: os.environ.get("AGENCY_OS_DB", "db.sqlite"),
+              help="Path to SQLite database file (default: $AGENCY_OS_DB or db.sqlite)")
 @click.pass_context
 def cli(ctx, db):
     """agency-os — plugin-driven sales outreach engine."""
@@ -214,6 +221,85 @@ def plugins(ctx, plugin_type):
         click.echo(f"\n{plugin_type}:")
         for k in keys:
             click.echo(f"  {k}")
+
+
+# ── Users ──────────────────────────────────────────────────────────────
+# Day-to-day user and role management happens in the web UI (/admin/users).
+# These commands cover bootstrap and recovery, so they run as "cli" in the
+# audit log and need shell access to the server instead of a login.
+
+
+def _access_db(ctx) -> Database:
+    db = Database(ctx.obj["db_path"])
+    db.install_access()
+    return db
+
+
+def _fail(e: AccessError):
+    click.echo(f"Error: {e}", err=True)
+    sys.exit(1)
+
+
+@cli.group()
+def users():
+    """Manage dashboard users (bootstrap & recovery)."""
+
+
+@users.command("list")
+@click.pass_context
+def users_list(ctx):
+    """List users and their roles."""
+    db = _access_db(ctx)
+    role_names = {r["id"]: r["name"] for r in db.list_roles()}
+    for u in db.list_users():
+        roles = ", ".join(sorted(role_names[r] for r in u["role_ids"])) or "(no roles)"
+        status = "" if u["is_active"] else "  [deactivated]"
+        click.echo(f"  {u['email']:<36} {u['name']:<24} {roles}{status}")
+
+
+@users.command("create-owner")
+@click.option("--email", required=True)
+@click.option("--name", default="", help="Display name (defaults to the email's local part)")
+@click.password_option(help="Password (prompted if omitted)")
+@click.pass_context
+def users_create_owner(ctx, email, name, password):
+    """Create a new user with the Owner role."""
+    db = _access_db(ctx)
+    owner_id = next(r["id"] for r in db.list_roles() if r["name"] == OWNER_ROLE)
+    try:
+        db.create_user(email, name or email.split("@")[0], password, [owner_id], actor=None)
+    except AccessError as e:
+        _fail(e)
+    click.echo(f"Created owner {email.strip().lower()}")
+
+
+@users.command("grant-owner")
+@click.option("--email", required=True)
+@click.pass_context
+def users_grant_owner(ctx, email):
+    """Recovery: give an existing user the Owner role and reactivate them."""
+    try:
+        _access_db(ctx).grant_owner(email, actor=None)
+    except AccessError as e:
+        _fail(e)
+    click.echo(f"{email} is now an active owner")
+
+
+@users.command("set-password")
+@click.option("--email", required=True)
+@click.password_option(help="New password (prompted if omitted)")
+@click.pass_context
+def users_set_password(ctx, email, password):
+    """Recovery: set a user's password and sign out their sessions."""
+    db = _access_db(ctx)
+    row = db.get_user_by_email(email)
+    if not row:
+        _fail(AccessError(f"No user with email {email}."))
+    try:
+        db.set_password(row["id"], password, actor=None)
+    except AccessError as e:
+        _fail(e)
+    click.echo(f"Password updated for {row['email']}")
 
 
 if __name__ == "__main__":
