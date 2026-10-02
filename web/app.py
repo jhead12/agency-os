@@ -314,40 +314,92 @@ async def prospect_list(
 async def calendar_page(
     request: Request,
     days: int = Query(default=30, ge=1, le=365),
+    month: str = Query(default="", description="YYYY-MM to display"),
 ):
-    """Calendar view — all upcoming follow-ups and call next-steps."""
+    """Calendar view — visual month grid with all follow-ups and call next-steps."""
     db = get_db()
-    events = db.get_upcoming_events(days=days)
-
-    # Group events by date
     from collections import defaultdict
     from datetime import datetime as _dt, timedelta
+    import calendar as _calendar
 
+    events = db.get_upcoming_events(days=90)  # fetch wider range for month nav
+
+    # Determine which month to display
+    today = _dt.now().date()
+    if month:
+        try:
+            display_year, display_month = map(int, month.split("-"))
+        except ValueError:
+            display_year, display_month = today.year, today.month
+    else:
+        display_year, display_month = today.year, today.month
+
+    # Build month grid
+    cal = _calendar.Calendar(firstweekday=6)  # Sunday first
+    month_days = cal.monthdatescalendar(display_year, display_month)
+
+    # Group events by date
     by_date = defaultdict(list)
     for e in events:
         date_key = e["date"].strftime("%Y-%m-%d")
         by_date[date_key].append(e)
 
-    # Sort dates
-    sorted_dates = sorted(by_date.keys())
+    # Flatten days with metadata
+    grid_weeks = []
+    for week in month_days:
+        week_days = []
+        for day in week:
+            date_key = day.strftime("%Y-%m-%d")
+            day_events = by_date.get(date_key, [])
+            week_days.append({
+                "date": day,
+                "date_key": date_key,
+                "day_num": day.day,
+                "is_today": day == today,
+                "is_current_month": day.month == display_month,
+                "events": day_events,
+                "event_count": len(day_events),
+            })
+        grid_weeks.append(week_days)
 
-    # Stats
+    # Month navigation
+    if display_month == 1:
+        prev_month = f"{display_year - 1}-12"
+        next_month = f"{display_year}-02"
+    elif display_month == 12:
+        prev_month = f"{display_year}-11"
+        next_month = f"{display_year + 1}-01"
+    else:
+        prev_month = f"{display_year}-{display_month - 1:02d}"
+        next_month = f"{display_year}-{display_month + 1:02d}"
+
+    month_name = _dt(display_year, display_month, 1).strftime("%B %Y")
+    weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+
+    # Stats for the displayed month
+    month_events = [e for e in events if e["date"].year == display_year and e["date"].month == display_month]
     stats = {
         "total": len(events),
-        "followups": sum(1 for e in events if e["type"] == "followup"),
-        "calls": sum(1 for e in events if e["type"] == "call"),
-        "today": sum(1 for e in events if e["date"].date() == _dt.now().date()),
-        "this_week": sum(1 for e in events if e["date"].date() <= (_dt.now() + timedelta(days=7)).date()),
+        "month_total": len(month_events),
+        "followups": sum(1 for e in month_events if e["type"] == "followup"),
+        "calls": sum(1 for e in month_events if e["type"] == "call"),
+        "today": sum(1 for e in events if e["date"].date() == today),
+        "this_week": sum(1 for e in events if e["date"].date() <= (today + timedelta(days=7))),
     }
 
-    # Calendar feed URL for subscription
     feed_url = f"http://localhost:8000/calendar.ics?days={days}"
 
     return templates.TemplateResponse("calendar.html", {
         "request": request,
         "events": events,
-        "by_date": by_date,
-        "sorted_dates": sorted_dates,
+        "grid_weeks": grid_weeks,
+        "weekdays": weekdays,
+        "month_name": month_name,
+        "display_year": display_year,
+        "display_month": display_month,
+        "prev_month": prev_month,
+        "next_month": next_month,
+        "today": today,
         "stats": stats,
         "days": days,
         "feed_url": feed_url,

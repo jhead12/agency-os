@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+    <meta name="theme-color" content="#0f1117">
     <title>{% block title %}agency-os{% endblock %}</title>
     <link rel="stylesheet" href="/static/style.css">
 </head>
@@ -10,8 +11,11 @@
     <nav class="navbar">
         <div class="nav-brand">
             <a href="/">agency-os</a>
+            <button class="nav-toggle" id="nav-toggle" aria-label="Toggle menu">
+                <span></span><span></span><span></span>
+            </button>
         </div>
-        <div class="nav-links">
+        <div class="nav-links" id="nav-links">
             <a href="/" class="{% if active == 'dashboard' %}active{% endif %}">Dashboard</a>
             <a href="/prospects" class="{% if active == 'prospects' %}active{% endif %}">Prospects</a>
             <a href="/call-scripts" class="{% if active == 'call-scripts' %}active{% endif %}">Call Scripts</a>

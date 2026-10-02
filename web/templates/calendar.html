@@ -7,10 +7,10 @@
     <div class="page-header-row">
         <div>
             <h1>Calendar</h1>
-            <p class="subtitle">{{ stats.total }} upcoming events in the next {{ days }} days</p>
+            <p class="subtitle">{{ stats.month_total }} events in {{ month_name }} · {{ stats.total }} total upcoming</p>
         </div>
         <div class="page-header-actions">
-            <a href="/calendar.ics?days={{ days }}" class="btn btn-sm btn-print" target="_blank">📅 Download .ics</a>
+            <a href="/calendar.ics?days=90" class="btn btn-sm btn-print" target="_blank">📅 .ics Feed</a>
         </div>
     </div>
 </div>
@@ -19,8 +19,7 @@
 <div class="subscribe-box">
     <div class="subscribe-left">
         <strong>📅 Subscribe in your calendar app</strong>
-        <p>Copy this URL and add it as a subscribed calendar in Google Calendar, Apple Calendar, or Outlook.
-        It auto-refreshes as new follow-ups and call next-steps are scheduled.</p>
+        <p>Add this URL as a subscribed calendar in Google Calendar, Apple Calendar, or Outlook. Auto-refreshes.</p>
     </div>
     <div class="subscribe-right">
         <input type="text" value="{{ feed_url }}" readonly class="ics-url-input" id="ics-url" onclick="this.select()">
@@ -31,8 +30,8 @@
 {# ── Stats ─────────────────────────────────────────────── #}
 <div class="stats-grid">
     <div class="stat-card">
-        <div class="stat-label">Total Upcoming</div>
-        <div class="stat-value">{{ stats.total }}</div>
+        <div class="stat-label">This Month</div>
+        <div class="stat-value">{{ stats.month_total }}</div>
     </div>
     <div class="stat-card">
         <div class="stat-label">Email Follow-ups</div>
@@ -52,47 +51,64 @@
     </div>
 </div>
 
-{# ── Day range selector ────────────────────────────────── #}
-<div class="filters">
-    <form method="get" action="/calendar">
-        <label class="filter-label">Show next:</label>
-        <select name="days" class="filter-select" onchange="this.form.submit()">
-            <option value="7" {% if days == 7 %}selected{% endif %}>7 days</option>
-            <option value="14" {% if days == 14 %}selected{% endif %}>14 days</option>
-            <option value="30" {% if days == 30 %}selected{% endif %}>30 days</option>
-            <option value="60" {% if days == 60 %}selected{% endif %}>60 days</option>
-            <option value="90" {% if days == 90 %}selected{% endif %}>90 days</option>
-        </select>
-    </form>
+{# ── Month navigation ──────────────────────────────────── #}
+<div class="cal-nav">
+    <a href="/calendar?month={{ prev_month }}" class="btn btn-sm">← {{ prev_month }}</a>
+    <h2>{{ month_name }}</h2>
+    <a href="/calendar?month={{ next_month }}" class="btn btn-sm">{{ next_month }} →</a>
+    {% if today.year != display_year or today.month != display_month %}
+    <a href="/calendar" class="btn btn-sm btn-secondary">Today</a>
+    {% endif %}
 </div>
 
-{# ── Events grouped by date ────────────────────────────── #}
-{% if sorted_dates %}
-<div class="calendar-list">
-    {% for date_key in sorted_dates %}
-    <div class="cal-date-group">
-        <div class="cal-date-header">
-            <span class="cal-date-day">{{ date_key | slice(8, 2) }}</span>
-            <span class="cal-date-month">{{ by_date[date_key][0].date.strftime('%b %Y') }}</span>
-            <span class="cal-date-weekday">{{ by_date[date_key][0].date.strftime('%A') }}</span>
-            <span class="cal-date-count">{{ by_date[date_key]|length }} event{{ 's' if by_date[date_key]|length > 1 else '' }}</span>
-        </div>
-        <div class="cal-events">
-            {% for e in by_date[date_key] %}
-            <div class="cal-event cal-event-{{ e.type }}">
-                <div class="cal-event-time">{{ e.date.strftime('%I:%M %p') }}</div>
-                <div class="cal-event-body">
-                    <div class="cal-event-title">{{ e.title }}</div>
-                    <div class="cal-event-meta">
-                        {% if e.location %}<span>📍 {{ e.location }}</span>{% endif %}
-                        <a href="/prospects/{{ e.prospect_id }}" class="cal-event-link">View prospect →</a>
-                    </div>
-                </div>
+{# ── Visual month grid ─────────────────────────────────── #}
+<div class="cal-month-grid">
+    {# Weekday headers #}
+    <div class="cal-grid-header">
+        {% for wd in weekdays %}
+        <div class="cal-weekday">{{ wd }}</div>
+        {% endfor %}
+    </div>
+
+    {# Days #}
+    {% for week in grid_weeks %}
+    <div class="cal-week-row">
+        {% for day in week %}
+        <div class="cal-day {{ 'cal-day-today' if day.is_today }} {{ 'cal-day-other' if not day.is_current_month }}">
+            <div class="cal-day-num">{{ day.day_num }}</div>
+            {% if day.events %}
+            <div class="cal-day-events">
+                {% for e in day.events %}
+                <a href="/prospects/{{ e.prospect_id }}" class="cal-day-event cal-day-event-{{ e.type }}" title="{{ e.title }}">
+                    <span class="cal-event-icon">{% if e.type == 'followup' %}📧{% else %}📞{% endif %}</span>
+                    <span class="cal-event-text">{{ e.prospect_name[:20] }}{% if e.prospect_name|length > 20 %}…{% endif %}</span>
+                </a>
+                {% endfor %}
             </div>
-            {% endfor %}
+            {% endif %}
         </div>
+        {% endfor %}
     </div>
     {% endfor %}
+</div>
+
+{# ── Upcoming events list (below grid) ─────────────────── #}
+{% if events %}
+<div class="cal-upcoming-section">
+    <h3>All Upcoming Events ({{ events|length }})</h3>
+    <div class="cal-upcoming-list">
+        {% for e in events[:20] %}
+        <a href="/prospects/{{ e.prospect_id }}" class="cal-upcoming-item cal-upcoming-{{ e.type }}">
+            <span class="cal-upcoming-date">{{ e.date.strftime('%b %d') }}</span>
+            <span class="cal-upcoming-time">{{ e.date.strftime('%I:%M %p') }}</span>
+            <span class="cal-upcoming-title">{{ e.title }}</span>
+            {% if e.location %}<span class="cal-upcoming-loc">{{ e.location }}</span>{% endif %}
+        </a>
+        {% endfor %}
+        {% if events|length > 20 %}
+        <p class="cal-upcoming-more">+ {{ events|length - 20 }} more events in the next 90 days</p>
+        {% endif %}
+    </div>
 </div>
 {% else %}
 <p class="empty-state">
