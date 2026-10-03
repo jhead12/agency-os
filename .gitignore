@@ -9,3 +9,4 @@ data/prospects/*.csv
 data/exports/*.csv
 !data/prospects/.gitkeep
 !data/exports/.gitkeep
+.venv/
