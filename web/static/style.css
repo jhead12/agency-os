@@ -1099,3 +1099,41 @@ table.sortable th {
 .portal-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .portal-card a { color: var(--accent); }
 .stage-badges { display: inline-flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+
+/* Grouped navigation: compact desktop disclosures, stacked mobile sections. */
+.nav-links { align-items: center; }
+.nav-group { position: relative; }
+.nav-group summary {
+    display: flex; align-items: center; gap: 8px; min-height: 44px;
+    padding: 8px 12px; border-radius: var(--radius); cursor: pointer;
+    color: var(--text-muted); font-size: 13px; list-style: none;
+}
+.nav-group summary::-webkit-details-marker { display: none; }
+.nav-group summary::after { content: '⌄'; flex-shrink: 0; }
+.nav-group[open] summary::after { transform: rotate(180deg); }
+.nav-group summary:hover, .nav-group[open] summary { background: var(--surface-hover); color: var(--text); }
+.nav-group-active summary { color: var(--text); box-shadow: inset 0 -2px var(--accent); }
+.nav-links a:focus-visible, .nav-group summary:focus-visible, .nav-toggle:focus-visible,
+.nav-dropdown button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.nav-dropdown {
+    position: absolute; top: calc(100% + 6px); right: 0; min-width: 200px;
+    padding: 6px; background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); box-shadow: 0 12px 32px rgba(0,0,0,.3);
+}
+.nav-dropdown a, .nav-dropdown .nav-logout button { display: block; width: 100%; text-align: left; min-height: 44px; padding: 12px; }
+.nav-account-name { max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 900px) {
+    .nav-brand { display: flex; align-items: center; justify-content: space-between; width: 100%; }
+    .nav-toggle { display: block; min-width: 44px; min-height: 44px; padding: 10px; }
+    .nav-links {
+        display: none; position: fixed; top: 56px; left: 0; right: 0;
+        background: var(--surface); border-bottom: 1px solid var(--border);
+        flex-direction: column; align-items: stretch; padding: 8px; gap: 0;
+        max-height: calc(100dvh - 56px); overflow-y: auto; z-index: 99;
+    }
+    .nav-links.nav-open { display: flex; }
+    .nav-links > a, .nav-group summary { min-height: 44px; padding: 12px 16px; font-size: 14px; }
+    .nav-group summary { justify-content: space-between; }
+    .nav-dropdown { position: static; min-width: 0; margin: 0 8px 8px; box-shadow: none; border: 0; border-left: 2px solid var(--border); border-radius: 0; }
+    .nav-account-name { max-width: 100%; }
+}

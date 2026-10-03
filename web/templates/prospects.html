@@ -76,6 +76,26 @@
     </form>
 </div>
 
+<section class="filters" aria-labelledby="saved-lists-heading">
+    <h2 id="saved-lists-heading" style="font-size:1rem">My saved lists</h2>
+    <p class="muted">Save your current filters and sorting. Lists are private to your account and always show current matching prospects.</p>
+    <form method="post" action="/prospects/saved-lists" style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0">
+        {% for key, value in current_criteria.items() %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}
+        <input type="text" name="name" required maxlength="80" placeholder="Name this list" aria-label="Saved list name" class="filter-input">
+        <button type="submit" class="btn btn-sm">Save current criteria</button>
+    </form>
+    <p class="muted">Use an existing list name to update its criteria.</p>
+    {% for saved in saved_lists %}
+    <div style="display:flex;gap:12px;align-items:center;margin-top:8px;flex-wrap:wrap">
+        <a href="{{ saved.url }}" class="btn btn-sm btn-secondary">{{ saved.name }}</a>
+        <form method="post" action="/prospects/saved-lists/{{ saved.id }}/delete">
+            {% for key, value in current_criteria.items() %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}
+            <button type="submit" class="btn btn-sm btn-secondary" aria-label="Delete saved list {{ saved.name }}">Delete</button>
+        </form>
+    </div>
+    {% else %}<p class="muted">You haven’t saved any lists yet.</p>{% endfor %}
+</section>
+
 <table class="data-table sortable">
     <thead>
         <tr>

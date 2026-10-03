@@ -30,7 +30,7 @@ from collections import defaultdict
 from contextlib import asynccontextmanager
 from pathlib import Path
 from datetime import datetime
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, urlsplit, urlencode
 
 # Ensure project root is on path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -240,6 +240,37 @@ async def dashboard(request: Request):
     })
 
 
+SAVED_LIST_FIELDS = ("q", "source", "stage", "cities", "campaign", "sort", "dir", "per_page")
+
+
+def prospect_list_criteria(values) -> dict:
+    # Never persist pagination, print mode, arbitrary URLs, or unknown query fields.
+    criteria = {key: str(values.get(key, ""))[:2000] for key in SAVED_LIST_FIELDS}
+    criteria["dir"] = "desc" if criteria["dir"] == "desc" else "asc"
+    try:
+        criteria["per_page"] = str(max(10, min(500, int(criteria["per_page"] or 50))))
+    except ValueError:
+        criteria["per_page"] = "50"
+    return criteria
+
+
+@app.post("/prospects/saved-lists")
+async def save_prospect_list(request: Request):
+    form = await request.form()
+    criteria = prospect_list_criteria(form)
+    name = str(form.get("name", "")).strip()
+    if not 1 <= len(name) <= 80:
+        raise HTTPException(status_code=422, detail="List name must be between 1 and 80 characters.")
+    get_db().save_prospect_list(current_user(request).id, name, criteria)
+    return RedirectResponse(url="/prospects?" + urlencode(criteria), status_code=303)
+
+
+@app.post("/prospects/saved-lists/{list_id}/delete")
+async def delete_prospect_list(request: Request, list_id: int):
+    get_db().delete_prospect_saved_list(current_user(request).id, list_id)
+    return RedirectResponse(url="/prospects?" + urlencode(prospect_list_criteria(await request.form())), status_code=303)
+
+
 @app.get("/prospects", response_class=HTMLResponse)
 async def prospect_list(
     request: Request,
@@ -422,7 +453,14 @@ async def prospect_list(
     pg_params["dir"] = sort_dir.lower()
     pg_qs = urlencode(pg_params)
 
+    saved_lists = db.list_prospect_saved_lists(current_user(request).id)
+    for saved in saved_lists:
+        saved["url"] = "/prospects?" + urlencode(prospect_list_criteria(saved["criteria"]))
+    current_criteria = prospect_list_criteria(dict(q=q, source=source, stage=stage,
+        cities=cities, campaign=campaign, sort=sort, dir=sort_dir.lower(), per_page=per_page))
     return templates.TemplateResponse(request, "prospects.html", {
+        "saved_lists": saved_lists,
+        "current_criteria": current_criteria,
         "prospects": rows,
         "sources": sources,
         "cities_list": cities_list,

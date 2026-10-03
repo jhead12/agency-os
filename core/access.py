@@ -89,6 +89,8 @@ ROUTE_RULES: dict[str, str] = {
 
     "GET /": "dashboard.view",
     "GET /api/stats": "dashboard.view",
+    "POST /prospects/saved-lists": "prospects.view",
+    "POST /prospects/saved-lists/{list_id}/delete": "prospects.view",
     "GET /prospects": "prospects.view",  # print=1 additionally needs prospects.export
     "GET /prospects/{prospect_id}": "prospects.view",
     "POST /prospects/{prospect_id}/stage": "pipeline.edit",
