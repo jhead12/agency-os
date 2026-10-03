@@ -210,8 +210,19 @@ def fmt_date(val) -> str:
     return val.strftime("%b %d, %Y")
 
 
+def nav_active(path: str) -> str:
+    """The nav item to highlight for a URL path, e.g. "/prospects/12" -> "prospects"."""
+    if path == "/":
+        return "dashboard"
+    parts = path.strip("/").split("/")
+    if parts[0] == "admin":
+        return "admin-campaigns" if parts[1:2] == ["campaigns"] else "admin"
+    return parts[0]
+
+
 templates.env.filters["currency"] = fmt_currency
 templates.env.filters["fmt_date"] = fmt_date
+templates.env.globals["nav_active"] = nav_active
 
 
 # ── Routes ──────────────────────────────────────────────────────────

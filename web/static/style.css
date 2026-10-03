@@ -1121,7 +1121,14 @@ table.sortable th {
     border-radius: var(--radius); box-shadow: 0 12px 32px rgba(0,0,0,.3);
 }
 .nav-dropdown a, .nav-dropdown .nav-logout button { display: block; width: 100%; text-align: left; min-height: 44px; padding: 12px; }
-.nav-account-name { max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav-account-id {
+    padding: 8px 12px 10px; margin-bottom: 4px; border-bottom: 1px solid var(--border);
+    font-size: 12px; color: var(--text-muted);
+}
+.nav-account-id strong {
+    display: block; color: var(--text); font-size: 13px; font-weight: 600;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 @media (max-width: 900px) {
     .nav-brand { display: flex; align-items: center; justify-content: space-between; width: 100%; }
     .nav-toggle { display: block; min-width: 44px; min-height: 44px; padding: 10px; }
@@ -1135,5 +1142,4 @@ table.sortable th {
     .nav-links > a, .nav-group summary { min-height: 44px; padding: 12px 16px; font-size: 14px; }
     .nav-group summary { justify-content: space-between; }
     .nav-dropdown { position: static; min-width: 0; margin: 0 8px 8px; box-shadow: none; border: 0; border-left: 2px solid var(--border); border-radius: 0; }
-    .nav-account-name { max-width: 100%; }
 }
