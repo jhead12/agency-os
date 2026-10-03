@@ -8,52 +8,53 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    // Mobile nav toggle
+    // Navigation: mobile hamburger panel plus grouped disclosures.
+    // Native <details> groups work with keyboard and without JavaScript.
     const navToggle = document.getElementById('nav-toggle');
     const navLinks = document.getElementById('nav-links');
-    if (navToggle && navLinks) {
-        navToggle.addEventListener('click', () => {
-            navLinks.classList.toggle('nav-open');
-            navToggle.classList.toggle('nav-toggle-active');
-            navToggle.setAttribute('aria-expanded', String(navLinks.classList.contains('nav-open')));
-        });
-        // Close menu when a link is clicked (mobile)
-        navLinks.querySelectorAll('a').forEach(link => {
-            link.addEventListener('click', () => {
-                navLinks.classList.remove('nav-open');
-                navToggle.classList.remove('nav-toggle-active');
-                navToggle.setAttribute('aria-expanded', 'false');
-            });
-        });
-    }
-});
-// Native disclosures work with keyboard and without JavaScript.
-document.addEventListener('DOMContentLoaded', () => {
     const groups = Array.from(document.querySelectorAll('.nav-group'));
     const closeGroups = () => groups.forEach(group => { group.open = false; });
+    const mobileNavOpen = () => !!navLinks && navLinks.classList.contains('nav-open');
+    const setMobileNav = open => {
+        if (!navToggle || !navLinks) return;
+        navLinks.classList.toggle('nav-open', open);
+        navToggle.classList.toggle('nav-toggle-active', open);
+        navToggle.setAttribute('aria-expanded', String(open));
+        // Show the current page's section instead of a fully collapsed menu.
+        if (open) groups.forEach(group => { group.open = group.classList.contains('nav-group-active'); });
+    };
+
+    if (navToggle && navLinks) {
+        navToggle.addEventListener('click', () => setMobileNav(!mobileNavOpen()));
+        navLinks.querySelectorAll('a').forEach(link => {
+            link.addEventListener('click', () => setMobileNav(false));
+        });
+    }
+
     groups.forEach(group => {
         group.querySelector('summary').addEventListener('click', () => {
             if (!group.open) groups.forEach(other => { if (other !== group) other.open = false; });
         });
+        // Close a dropdown when keyboard focus moves out of it.
+        group.addEventListener('focusout', event => {
+            if (event.relatedTarget && !group.contains(event.relatedTarget)) group.open = false;
+        });
     });
+
     document.addEventListener('click', event => {
         if (!event.target.closest('.nav-group')) closeGroups();
+        if (mobileNavOpen() && !event.target.closest('#nav-links, #nav-toggle')) setMobileNav(false);
     });
+
     document.addEventListener('keydown', event => {
         if (event.key !== 'Escape') return;
         const openGroup = groups.find(group => group.open);
-        if (openGroup) {
+        if (openGroup && !mobileNavOpen()) {
             closeGroups();
             openGroup.querySelector('summary').focus();
-        } else {
-            const nav = document.getElementById('nav-links');
-            const toggle = document.getElementById('nav-toggle');
-            if (nav && nav.classList.contains('nav-open')) {
-                nav.classList.remove('nav-open');
-                toggle.classList.remove('nav-toggle-active');
-                toggle.setAttribute('aria-expanded', 'false');
-                toggle.focus();
-            }
+        } else if (mobileNavOpen()) {
+            setMobileNav(false);
+            navToggle.focus();
         }
     });
 });

@@ -9,13 +9,15 @@
 </head>
 <body>
     <nav class="navbar">
+        {% set user = request.state.user %}
         <div class="nav-brand">
             <a href="/">agency-os</a>
+            {% if user %}
             <button class="nav-toggle" id="nav-toggle" aria-label="Toggle menu" aria-expanded="false" aria-controls="nav-links">
                 <span></span><span></span><span></span>
             </button>
+            {% endif %}
         </div>
-        {% set user = request.state.user %}
         {% if user %}
         <div class="nav-links" id="nav-links">
             {% if user.can('dashboard.view') %}<a href="/" class="{% if active == 'dashboard' %}active{% endif %}">Dashboard</a>{% endif %}
@@ -49,8 +51,9 @@
             </details>
             {% endif %}
             <details class="nav-group nav-account {% if active == 'account' %}nav-group-active{% endif %}">
-                <summary><span class="nav-account-name">{{ user.name }}</span></summary>
+                <summary>Account</summary>
                 <div class="nav-dropdown">
+                    <div class="nav-account-id" title="{{ user.email }}">Signed in as<strong>{{ user.name }}</strong></div>
                     <a href="/account" class="{% if active == 'account' %}active{% endif %}">My Account</a>
                     <form method="post" action="/logout" class="nav-logout"><button type="submit">Sign out</button></form>
                 </div>
