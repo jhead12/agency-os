@@ -10,6 +10,7 @@
 <body>
     <nav class="navbar">
         {% set user = request.state.user %}
+        {% set active = nav_active(request.url.path) %}
         <div class="nav-brand">
             <a href="/">agency-os</a>
             {% if user %}

@@ -42,7 +42,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     document.addEventListener('click', event => {
-        if (!event.target.closest('.nav-group')) closeGroups();
+        if (!event.target.closest('.nav-group, #nav-toggle')) closeGroups();
         if (mobileNavOpen() && !event.target.closest('#nav-links, #nav-toggle')) setMobileNav(false);
     });
 
