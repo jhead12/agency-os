@@ -11,7 +11,7 @@
     <nav class="navbar">
         <div class="nav-brand">
             <a href="/">agency-os</a>
-            <button class="nav-toggle" id="nav-toggle" aria-label="Toggle menu">
+            <button class="nav-toggle" id="nav-toggle" aria-label="Toggle menu" aria-expanded="false" aria-controls="nav-links">
                 <span></span><span></span><span></span>
             </button>
         </div>
@@ -20,20 +20,41 @@
         <div class="nav-links" id="nav-links">
             {% if user.can('dashboard.view') %}<a href="/" class="{% if active == 'dashboard' %}active{% endif %}">Dashboard</a>{% endif %}
             {% if user.can('prospects.view') %}<a href="/prospects" class="{% if active == 'prospects' %}active{% endif %}">Prospects</a>{% endif %}
-            {% if user.can('calls.view') %}<a href="/call-scripts" class="{% if active == 'call-scripts' %}active{% endif %}">Call Scripts</a>{% endif %}
-            {% if user.can('calls.view') %}<a href="/call-log" class="{% if active == 'call-log' %}active{% endif %}">Call Log</a>{% endif %}
-            {% if user.can('calendar.view') %}<a href="/calendar" class="{% if active == 'calendar' %}active{% endif %}">Calendar</a>{% endif %}
-            {% if user.can('campaigns.view') %}<a href="/campaigns" class="{% if active == 'campaigns' %}active{% endif %}">Campaigns</a>{% endif %}
-            {% if user.can('campaigns.view') %}<a href="/plugins" class="{% if active == 'plugins' %}active{% endif %}">Plugins</a>{% endif %}
-            {% if user.can('templates.view') %}<a href="/email-templates" class="{% if active == 'email-templates' %}active{% endif %}">Templates</a>{% endif %}
-            {% if user.can('templates.view') %}<a href="/mail-templates" class="{% if active == 'mail-templates' %}active{% endif %}">Mail Templates</a>{% endif %}
-            {% if user.can('emails.view') %}<a href="/emails" class="{% if active == 'emails' %}active{% endif %}">Emails</a>{% endif %}
-            {% if user.is_owner %}<a href="/admin/users" class="{% if active == 'admin' %}active{% endif %}">Team</a>{% endif %}
-            {% if user.is_owner %}<a href="/admin/campaigns" class="{% if active == 'admin-campaigns' %}active{% endif %}">Campaigns Admin</a>{% endif %}
-            <a href="/account" class="{% if active == 'account' %}active{% endif %}">{{ user.name }}</a>
-            <form method="post" action="/logout" class="nav-logout">
-                <button type="submit">Sign out</button>
-            </form>
+            {% if user.can('calls.view') or user.can('calendar.view') or user.can('emails.view') %}
+            <details class="nav-group {% if active in ['call-scripts', 'call-log', 'calendar', 'emails'] %}nav-group-active{% endif %}">
+                <summary>Outreach</summary>
+                <div class="nav-dropdown">
+                    {% if user.can('calls.view') %}<a href="/call-scripts" class="{% if active == 'call-scripts' %}active{% endif %}">Call Scripts</a><a href="/call-log" class="{% if active == 'call-log' %}active{% endif %}">Call Log</a>{% endif %}
+                    {% if user.can('emails.view') %}<a href="/emails" class="{% if active == 'emails' %}active{% endif %}">Sent Emails</a>{% endif %}
+                    {% if user.can('calendar.view') %}<a href="/calendar" class="{% if active == 'calendar' %}active{% endif %}">Calendar</a>{% endif %}
+                </div>
+            </details>
+            {% endif %}
+            {% if user.can('campaigns.view') or user.can('templates.view') %}
+            <details class="nav-group {% if active in ['campaigns', 'plugins', 'email-templates', 'mail-templates'] %}nav-group-active{% endif %}">
+                <summary>Campaigns</summary>
+                <div class="nav-dropdown">
+                    {% if user.can('campaigns.view') %}<a href="/campaigns" class="{% if active == 'campaigns' %}active{% endif %}">All Campaigns</a><a href="/plugins" class="{% if active == 'plugins' %}active{% endif %}">Plugins</a>{% endif %}
+                    {% if user.can('templates.view') %}<a href="/email-templates" class="{% if active == 'email-templates' %}active{% endif %}">Email Templates</a><a href="/mail-templates" class="{% if active == 'mail-templates' %}active{% endif %}">Mail Templates</a>{% endif %}
+                </div>
+            </details>
+            {% endif %}
+            {% if user.is_owner %}
+            <details class="nav-group {% if active in ['admin', 'admin-campaigns'] %}nav-group-active{% endif %}">
+                <summary>Administration</summary>
+                <div class="nav-dropdown">
+                    <a href="/admin/users" class="{% if active == 'admin' %}active{% endif %}">Team</a>
+                    <a href="/admin/campaigns" class="{% if active == 'admin-campaigns' %}active{% endif %}">Campaign Settings</a>
+                </div>
+            </details>
+            {% endif %}
+            <details class="nav-group nav-account {% if active == 'account' %}nav-group-active{% endif %}">
+                <summary><span class="nav-account-name">{{ user.name }}</span></summary>
+                <div class="nav-dropdown">
+                    <a href="/account" class="{% if active == 'account' %}active{% endif %}">My Account</a>
+                    <form method="post" action="/logout" class="nav-logout"><button type="submit">Sign out</button></form>
+                </div>
+            </details>
         </div>
         {% endif %}
     </nav>
