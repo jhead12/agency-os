@@ -17,11 +17,23 @@ Auth: HTTP Basic with API key as username, empty password.
 from __future__ import annotations
 
 import os
+import re
 import httpx
 from datetime import datetime
 from typing import Optional
 
 from core.models import SendResult
+
+# Designs live in Lob's HTML template editor; a mail template can point at one.
+LOB_TEMPLATES_URL = "https://dashboard.lob.com/templates"
+TEMPLATE_ID_RE = re.compile(r"^tmpl_[A-Za-z0-9]+$")
+
+
+def lob_template_url(template_id: str = "") -> str:
+    """Link to a template in Lob's editor, or to the template list to create one."""
+    if template_id and TEMPLATE_ID_RE.match(template_id):
+        return f"{LOB_TEMPLATES_URL}/{template_id}"
+    return LOB_TEMPLATES_URL
 
 
 class LobDirectMailChannel:
@@ -61,10 +73,15 @@ class LobDirectMailChannel:
         and mail_type), uses that instead of the generic subject/body. This lets
         campaigns define dedicated mail templates in scripts/mail_*.yaml.
 
-        recipient should have: name, address, city, state, zip
+        A mail template can instead name Lob HTML templates (front_template_id /
+        back_template_id for postcards, template_id for letters). Lob then
+        renders the design, filling {{variables}} from metadata['variables'].
+
+        recipient should have: name or company, address, city, state, zip
         metadata can include:
           - mail_type: "postcard" (default) or "letter"
-          - mail_template: dict from a mail_*.yaml script
+          - mail_template: dict from a mail_*.yaml script (already rendered)
+          - variables: template variables, sent to Lob as merge_variables
           - campaign_id: for tracking
         """
         if not self.is_configured():
@@ -76,12 +93,13 @@ class LobDirectMailChannel:
         state = recipient.get("state") or ""
         zip_code = recipient.get("zip") or ""
         name = recipient.get("name") or ""
+        company = recipient.get("company") or ""
 
         if not (addr and city and state and zip_code):
             return SendResult(status="skipped", error="No mailing address for prospect")
 
         mail_type = metadata.get("mail_type", "postcard")
-        mail_template = metadata.get("mail_template")
+        mail_template = metadata.get("mail_template") or {}
 
         # If a mail template is provided, use its content instead of subject/body
         if mail_template:
@@ -93,16 +111,30 @@ class LobDirectMailChannel:
                 subject = mail_template.get("front", subject)
                 body = mail_template.get("back", body)
 
+        to = {
+            "name": name,
+            "company": company,
+            "address_line1": addr,
+            "address_city": city,
+            "address_state": state,
+            "address_zip": zip_code,
+        }
+        to = {k: v for k, v in to.items() if v}
+        merge_variables = {k: str(v) for k, v in (metadata.get("variables") or {}).items()}
+
         try:
             if mail_type == "letter":
                 result = self._send_letter(
-                    name, addr, city, state, zip_code,
-                    subject, body, metadata,
+                    to, subject, body, metadata,
+                    template_id=mail_template.get("template_id", ""),
+                    merge_variables=merge_variables,
                 )
             else:
                 result = self._send_postcard(
-                    name, addr, city, state, zip_code,
-                    subject, body, metadata,
+                    to, subject, body, metadata,
+                    front_template_id=mail_template.get("front_template_id", ""),
+                    back_template_id=mail_template.get("back_template_id", ""),
+                    merge_variables=merge_variables,
                 )
             return result
 
@@ -113,48 +145,46 @@ class LobDirectMailChannel:
                 sent_at=datetime.now(),
             )
 
+    def _from_address(self) -> dict:
+        return {
+            "name": self._from_name,
+            "address_line1": self._from_address_line1,
+            "address_city": self._from_address_city,
+            "address_state": self._from_address_state,
+            "address_zip": self._from_address_zip,
+        }
+
     def _send_postcard(
         self,
-        to_name: str,
-        to_address: str,
-        to_city: str,
-        to_state: str,
-        to_zip: str,
+        to: dict,
         subject: str,
         body: str,
         metadata: dict,
+        front_template_id: str = "",
+        back_template_id: str = "",
+        merge_variables: Optional[dict] = None,
     ) -> SendResult:
         """Send a 4x6 postcard via Lob API.
 
-        Front: subject (headline)
-        Back: body (message, max 500 chars)
+        Front: Lob template front_template_id, else subject (headline)
+        Back: Lob template back_template_id, else body (message, max 500 chars)
         """
-        # Lob uses HTML templates for the front and back
-        front_html = f"<html><body><div style='padding: 40px; font-family: sans-serif;'><h1 style='font-size: 28px; color: #1a1a1a;'>{subject[:100]}</h1></div></body></html>"
+        # Lob takes a saved template ID or an HTML string for each side
+        front = front_template_id or f"<html><body><div style='padding: 40px; font-family: sans-serif;'><h1 style='font-size: 28px; color: #1a1a1a;'>{subject[:100]}</h1></div></body></html>"
 
         # Truncate body to 500 chars for postcard back
         back_text = body[:500]
-        back_html = f"<html><body><div style='padding: 30px; font-family: sans-serif; font-size: 14px; color: #1a1a1a; white-space: pre-wrap;'>{back_text}</div></body></html>"
+        back = back_template_id or f"<html><body><div style='padding: 30px; font-family: sans-serif; font-size: 14px; color: #1a1a1a; white-space: pre-wrap;'>{back_text}</div></body></html>"
 
         payload = {
-            "to": {
-                "name": to_name,
-                "address_line1": to_address,
-                "address_city": to_city,
-                "address_state": to_state,
-                "address_zip": to_zip,
-            },
-            "from": {
-                "name": self._from_name,
-                "address_line1": self._from_address_line1,
-                "address_city": self._from_address_city,
-                "address_state": self._from_address_state,
-                "address_zip": self._from_address_zip,
-            },
-            "front": front_html,
-            "back": back_html,
+            "to": to,
+            "from": self._from_address(),
+            "front": front,
+            "back": back,
             "size": "4x6",
         }
+        if (front_template_id or back_template_id) and merge_variables:
+            payload["merge_variables"] = merge_variables
 
         if metadata.get("campaign_id"):
             payload["metadata"] = {"campaign_id": str(metadata["campaign_id"])}
@@ -169,7 +199,8 @@ class LobDirectMailChannel:
             )
 
         lob_id = resp.get("id", "")
-        print(f"    → [lob] Postcard to {to_name}, {to_city}, {to_state} | ID: {lob_id}")
+        print(f"    → [lob] Postcard to {to.get('name') or to.get('company')}, "
+              f"{to['address_city']}, {to['address_state']} | ID: {lob_id}")
         return SendResult(
             status="sent",
             provider_message_id=lob_id,
@@ -178,18 +209,17 @@ class LobDirectMailChannel:
 
     def _send_letter(
         self,
-        to_name: str,
-        to_address: str,
-        to_city: str,
-        to_state: str,
-        to_zip: str,
+        to: dict,
         subject: str,
         body: str,
         metadata: dict,
+        template_id: str = "",
+        merge_variables: Optional[dict] = None,
     ) -> SendResult:
         """Send a letter via Lob API.
 
-        Full letter on paper — subject as heading, body as content.
+        Full letter on paper — Lob template template_id, else subject as
+        heading and body as content.
         """
         # Letter HTML — full page
         letter_html = f"""<html><head><style>
@@ -202,23 +232,13 @@ class LobDirectMailChannel:
         </body></html>"""
 
         payload = {
-            "to": {
-                "name": to_name,
-                "address_line1": to_address,
-                "address_city": to_city,
-                "address_state": to_state,
-                "address_zip": to_zip,
-            },
-            "from": {
-                "name": self._from_name,
-                "address_line1": self._from_address_line1,
-                "address_city": self._from_address_city,
-                "address_state": self._from_address_state,
-                "address_zip": self._from_address_zip,
-            },
-            "file": letter_html,
+            "to": to,
+            "from": self._from_address(),
+            "file": template_id or letter_html,
             "color": True,
         }
+        if template_id and merge_variables:
+            payload["merge_variables"] = merge_variables
 
         if metadata.get("campaign_id"):
             payload["metadata"] = {"campaign_id": str(metadata["campaign_id"])}
@@ -233,7 +253,8 @@ class LobDirectMailChannel:
             )
 
         lob_id = resp.get("id", "")
-        print(f"    → [lob] Letter to {to_name}, {to_city}, {to_state} | ID: {lob_id}")
+        print(f"    → [lob] Letter to {to.get('name') or to.get('company')}, "
+              f"{to['address_city']}, {to['address_state']} | ID: {lob_id}")
         return SendResult(
             status="sent",
             provider_message_id=lob_id,

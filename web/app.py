@@ -47,6 +47,7 @@ from core.db import Database
 from core.campaign import discover_campaigns, sync_campaign_files
 from core.registry import PluginRegistry
 from core.pipeline import Pipeline
+from plugins.channels.lob_direct_mail import TEMPLATE_ID_RE, lob_template_url
 from core.jobs import JobRunner, configured_jobs, jobs_enabled
 
 # ── Init ────────────────────────────────────────────────────────────
@@ -804,6 +805,7 @@ async def mail_templates_page(
         "prospect_options": prospect_options,
         "preview_prospect": preview_prospect,
         "preview_p": preview_p,
+        "lob_template_url": lob_template_url,
     })
 
 
@@ -816,6 +818,9 @@ async def save_mail_template(
     subject: str = Form(default=""),
     body: str = Form(default=""),
     mail_type: str = Form(default="postcard"),
+    front_template_id: str = Form(default=""),
+    back_template_id: str = Form(default=""),
+    template_id: str = Form(default=""),
 ):
     """Save an edited mail template back to its YAML file."""
     from pathlib import Path
@@ -829,20 +834,40 @@ async def save_mail_template(
     ):
         raise HTTPException(status_code=400, detail="Invalid file path")
 
+    # Optional Lob HTML template IDs: when set, Lob renders that design
+    design_ids = {
+        "front_template_id": front_template_id.strip(),
+        "back_template_id": back_template_id.strip(),
+        "template_id": template_id.strip(),
+    }
+    bad = [v for v in design_ids.values() if v and not TEMPLATE_ID_RE.match(v)]
+    if bad:
+        return RedirectResponse(
+            url=f"/mail-templates?error={quote(f'{bad[0]} is not a Lob template ID (they look like tmpl_…)')}",
+            status_code=303,
+        )
+
     existing = yaml.safe_load(path.read_text()) or {}
     existing["mail_type"] = mail_type
     if mail_type == "letter":
         existing["subject"] = subject
         existing["body"] = body
         # Remove postcard fields if they exist
-        existing.pop("front", None)
-        existing.pop("back", None)
+        for key in ("front", "back", "front_template_id", "back_template_id"):
+            existing.pop(key, None)
+        design_keys = ("template_id",)
     else:
         existing["front"] = front
         existing["back"] = back
         # Remove letter fields if they exist
-        existing.pop("subject", None)
-        existing.pop("body", None)
+        for key in ("subject", "body", "template_id"):
+            existing.pop(key, None)
+        design_keys = ("front_template_id", "back_template_id")
+    for key in design_keys:
+        if design_ids[key]:
+            existing[key] = design_ids[key]
+        else:
+            existing.pop(key, None)
 
     save_campaign_file(path, yaml.dump(existing, default_flow_style=False, sort_keys=False, allow_unicode=True))
     get_db().audit(current_user(request), "mail_template.save", "mail_template",
