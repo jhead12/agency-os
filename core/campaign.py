@@ -9,11 +9,15 @@ YAML files alongside it in scripts/.
 
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
+
+if TYPE_CHECKING:
+    from core.db import Database
 
 
 @dataclass
@@ -109,3 +113,26 @@ def discover_campaigns(base_dir: str | Path = "campaigns") -> list[CampaignConfi
             except Exception as exc:
                 print(f"  ! Failed to load campaign {d.name}: {exc}")
     return campaigns
+
+
+def sync_campaign_files(db: "Database", seed_dir: str | Path, cache_dir: str | Path) -> Path:
+    """Write the campaign files stored in the database out to cache_dir.
+
+    Files under seed_dir (the repo's campaigns/) that the database doesn't have
+    yet are added first, so new campaigns ship with a deploy while edits made
+    in the dashboard are kept. cache_dir is rebuilt from scratch each time.
+    """
+    seed = Path(seed_dir)
+    if seed.exists():
+        db.seed_campaign_files({
+            f.relative_to(seed).as_posix(): f.read_text()
+            for f in sorted(seed.rglob("*.yaml"))
+        })
+    cache = Path(cache_dir)
+    shutil.rmtree(cache, ignore_errors=True)
+    for rel_path, content in db.campaign_files().items():
+        target = cache / rel_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content)
+    cache.mkdir(parents=True, exist_ok=True)
+    return cache

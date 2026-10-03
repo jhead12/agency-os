@@ -60,13 +60,13 @@ def event(event_id, event_type, prospect_id):
 
 
 @pytest.fixture
-def world(tmp_path):
+def world(pg_url, tmp_path):
     campaign = CampaignConfig(
         name="Test Campaign", product="fake_u9itus", prospect_sources=[], channels=[],
         cadence=[CadenceStep(touch=0, delay_days=3, script="00_hello", next_stage="contacted")],
         config_dir=tmp_path / "campaign",
     )
-    db = Database(str(tmp_path / "test.sqlite"))
+    db = Database(pg_url)
     campaign_id = db.upsert_campaign(campaign.db_name, str(campaign.config_dir))
     product = FakeU9itus()
     registry = PluginRegistry()

@@ -507,7 +507,6 @@ class Pipeline:
             "UPDATE prospects SET metadata = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (json.dumps(metadata), prospect_id),
         )
-        self.db.conn.commit()
 
     # ── Pull Product Events (A4) ──────────────────────────────────────
 
@@ -609,7 +608,6 @@ class Pipeline:
                 self.db.conn.execute(
                     "UPDATE outreach SET demo_link = NULL WHERE prospect_id = ?", (prospect_id,),
                 )
-                self.db.conn.commit()
 
             # A demo portal belongs to the prospect, not to one campaign, and the
             # event cursor is shared by every campaign using this product, so the
@@ -687,7 +685,6 @@ class Pipeline:
                  updated_at = CURRENT_TIMESTAMP""",
             (product_key, cursor),
         )
-        c.commit()
 
     def _event_already_processed(self, product_key: str, event_id: int) -> bool:
         """Check if an event has already been recorded in product_events."""
@@ -701,9 +698,10 @@ class Pipeline:
         """Record a raw event in product_events."""
         c = self.db.conn
         c.execute(
-            """INSERT OR IGNORE INTO product_events
+            """INSERT INTO product_events
                (product_key, event_id, event_type, external_ref, data, processed_at)
-               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+               VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+               ON CONFLICT DO NOTHING""",
             (
                 product_key,
                 event_id,
@@ -712,4 +710,3 @@ class Pipeline:
                 json.dumps(event.get("data", {})),
             ),
         )
-        c.commit()

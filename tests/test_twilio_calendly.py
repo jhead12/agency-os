@@ -184,7 +184,7 @@ class RecordingChannel:
 
 
 @pytest.fixture
-def env(tmp_path):
+def env(pg_url, tmp_path):
     scripts = tmp_path / "campaign" / "scripts"
     scripts.mkdir(parents=True)
     (scripts / "00_hello.yaml").write_text("key: hello\nsubject: Hi\nbody: 'Book here: {{booking_link}}'\n")
@@ -195,7 +195,7 @@ def env(tmp_path):
         cadence=[CadenceStep(touch=0, delay_days=3, script="00_hello", next_stage="contacted")],
         config_dir=tmp_path / "campaign",
     )
-    db = Database(str(tmp_path / "test.sqlite"))
+    db = Database(pg_url)
     campaign_id = db.upsert_campaign(campaign.db_name, str(campaign.config_dir))
 
     registry = PluginRegistry()

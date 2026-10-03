@@ -23,8 +23,8 @@ import asyncio
 import json
 import os
 import secrets
-import shutil
 import sys
+import tempfile
 import time
 from collections import defaultdict
 from contextlib import asynccontextmanager
@@ -44,36 +44,42 @@ from fastapi.templating import Jinja2Templates
 from core import access
 from core.access import AccessError, CurrentUser
 from core.db import Database
-from core.campaign import discover_campaigns
+from core.campaign import discover_campaigns, sync_campaign_files
 from core.registry import PluginRegistry
 from core.pipeline import Pipeline
 from core.jobs import JobRunner, configured_jobs, jobs_enabled
 
 # ── Init ────────────────────────────────────────────────────────────
 
-# On Railway, a mounted volume exposes RAILWAY_VOLUME_MOUNT_PATH. Keep the
-# SQLite DB and editable campaign files there so they survive redeploys.
-DATA_DIR = Path(os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", str(PROJECT_ROOT)))
-DB_PATH = os.environ.get("AGENCY_OS_DB", str(DATA_DIR / "db.sqlite"))
-CAMPAIGNS_DIR = Path(os.environ.get("AGENCY_OS_CAMPAIGNS_DIR", str(DATA_DIR / "campaigns")))
-
-# Seed the campaigns dir from the repo the first time it's used on a volume
-if not CAMPAIGNS_DIR.exists():
-    shutil.copytree(PROJECT_ROOT / "campaigns", CAMPAIGNS_DIR)
+# All data lives in PostgreSQL (DATABASE_URL), including the editable campaign
+# files. Those are written to CAMPAIGNS_DIR, a local cache, so they can be loaded
+# from disk; every edit is saved to the database too (save_campaign_file).
+DB_URL = os.environ.get("DATABASE_URL", "")
+CAMPAIGNS_DIR = Path(os.environ.get(
+    "AGENCY_OS_CAMPAIGNS_DIR", str(Path(tempfile.gettempdir()) / "agency-os-campaigns")))
+_campaigns_synced = False
 
 
 def get_db() -> Database:
-    db = Database(DB_PATH)
-    _ = db.conn  # ensure schema is created
-    return db
+    return Database(DB_URL or None)
 
 
 def get_campaigns():
+    global _campaigns_synced
+    if not _campaigns_synced:
+        sync_campaign_files(get_db(), PROJECT_ROOT / "campaigns", CAMPAIGNS_DIR)
+        _campaigns_synced = True
     return discover_campaigns(str(CAMPAIGNS_DIR))
 
 
+def save_campaign_file(path: Path, content: str) -> None:
+    """Write a campaign file to the local cache and to the database."""
+    path.write_text(content)
+    get_db().save_campaign_file(path.resolve().relative_to(CAMPAIGNS_DIR.resolve()).as_posix(), content)
+
+
 def get_job_runner() -> JobRunner:
-    return JobRunner(DB_PATH, str(PROJECT_ROOT / "plugins"), get_campaigns)
+    return JobRunner(get_db().url, str(PROJECT_ROOT / "plugins"), get_campaigns)
 
 
 @asynccontextmanager
@@ -261,9 +267,9 @@ async def prospect_list(
 
     if q:
         where_parts.append(
-            "(p.name LIKE ? OR p.city LIKE ? OR p.ein LIKE ? "
-            "OR p.zip LIKE ? OR p.focus_area LIKE ? OR p.website_url LIKE ? "
-            "OR p.county LIKE ? OR p.ntee_code LIKE ?)"
+            "(p.name ILIKE ? OR p.city ILIKE ? OR p.ein ILIKE ? "
+            "OR p.zip ILIKE ? OR p.focus_area ILIKE ? OR p.website_url ILIKE ? "
+            "OR p.county ILIKE ? OR p.ntee_code ILIKE ?)"
         )
         params.extend([f"%{q}%"] * 8)
 
@@ -671,7 +677,7 @@ async def save_email_template(
     existing["body"] = body
 
     # Write back
-    path.write_text(yaml.dump(existing, default_flow_style=False, sort_keys=False, allow_unicode=True))
+    save_campaign_file(path, yaml.dump(existing, default_flow_style=False, sort_keys=False, allow_unicode=True))
     get_db().audit(current_user(request), "template.save", "template",
                    str(path.relative_to(CAMPAIGNS_DIR.resolve())), {"subject": subject})
     return RedirectResponse(url="/email-templates?saved=1", status_code=303)
@@ -838,7 +844,7 @@ async def save_mail_template(
         existing.pop("subject", None)
         existing.pop("body", None)
 
-    path.write_text(yaml.dump(existing, default_flow_style=False, sort_keys=False, allow_unicode=True))
+    save_campaign_file(path, yaml.dump(existing, default_flow_style=False, sort_keys=False, allow_unicode=True))
     get_db().audit(current_user(request), "mail_template.save", "mail_template",
                    str(path.relative_to(CAMPAIGNS_DIR.resolve())), {"mail_type": mail_type})
     return RedirectResponse(url="/mail-templates?saved=1", status_code=303)
@@ -1218,7 +1224,7 @@ async def prospect_portal(request: Request, prospect_id: int, action: str = Form
         return _back(back, error="Unknown action.")
 
     def call_u9itus() -> dict:
-        # Runs in a worker thread (the API call can take seconds); SQLite
+        # Runs in a worker thread (the API call can take seconds); database
         # connections are per thread, so open one here.
         pipeline = Pipeline(get_db(), _plugin_registry())
         if action == "status":
@@ -1330,7 +1336,6 @@ async def update_prospect_info(
         sets.append("updated_at = CURRENT_TIMESTAMP")
         vals.append(prospect_id)
         c.execute(f"UPDATE prospects SET {', '.join(sets)} WHERE id = ?", vals)
-        c.commit()
         db.audit(current_user(request), "prospect.info", "prospect", prospect_id, updates)
 
     return RedirectResponse(url=f"/prospects/{prospect_id}", status_code=303)
@@ -1938,7 +1943,7 @@ async def admin_campaign_update(
             pass
 
     # Write back
-    yaml_path.write_text(_yaml.dump(raw, default_flow_style=False, sort_keys=False))
+    save_campaign_file(yaml_path, _yaml.dump(raw, default_flow_style=False, sort_keys=False))
 
     return _back("/admin/campaigns", msg=f"Updated campaign '{campaign.name}'.")
 
