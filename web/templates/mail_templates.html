@@ -9,11 +9,15 @@
             <h1>Mail Templates</h1>
             <p class="subtitle">{{ scripts|length }} direct mail templates · Postcards & letters via Lob</p>
         </div>
+        <a href="{{ lob_template_url() }}" target="_blank" rel="noopener" class="btn btn-sm btn-secondary">🎨 Design in Lob ↗</a>
     </div>
 </div>
 
 {% if request.query_params.get('saved') %}
 <div class="alert alert-success">✅ Mail template saved. New direct mail will use the updated content.</div>
+{% endif %}
+{% if request.query_params.get('error') %}
+<div class="alert alert-error">{{ request.query_params.get('error') }}</div>
 {% endif %}
 
 {# ── Variables reference ── #}
@@ -76,6 +80,30 @@
             <input type="hidden" name="file_path" value="{{ script.file_path }}">
             <input type="hidden" name="mail_type" value="{{ script.mail_type or 'postcard' }}">
 
+            {# ── Design: optional Lob HTML templates ── #}
+            <div class="form-row" style="margin-bottom: 12px;">
+                <label>Design (Lob HTML template)</label>
+                <p style="color: var(--muted-foreground); font-size: 12px; margin: 0 0 8px;">
+                    Design the card in Lob's template editor, then paste its ID (<code>tmpl_…</code>) here.
+                    Lob fills in the same <code>{{ '{{' }}variables{{ '}}' }}</code>. Leave blank to send the plain text below.
+                </p>
+                {% if script.mail_type == 'letter' %}
+                {% set designs = [('template_id', 'Letter')] %}
+                {% else %}
+                {% set designs = [('front_template_id', 'Front'), ('back_template_id', 'Back')] %}
+                {% endif %}
+                {% for field, label in designs %}
+                <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 6px;">
+                    <span style="width: 48px; font-size: 12px;">{{ label }}</span>
+                    <input type="text" name="{{ field }}" value="{{ script[field] or '' }}" class="filter-input"
+                           placeholder="tmpl_…" pattern="tmpl_[A-Za-z0-9]+" style="flex: 1; font-family: monospace;">
+                    <a href="{{ lob_template_url(script[field] or '') }}" target="_blank" rel="noopener" class="btn btn-sm btn-secondary">
+                        {{ '🎨 Edit design ↗' if script[field] else '＋ Create in Lob ↗' }}
+                    </a>
+                </div>
+                {% endfor %}
+            </div>
+
             {% if script.mail_type == 'letter' %}
             {# ── Letter editor ── #}
             <div class="form-row" style="margin-bottom: 12px;">
@@ -114,6 +142,9 @@
         {# Preview area — postcard or letter visual ── #}
         <div class="template-preview" id="preview-{{ loop.index0 }}" style="display: none;">
             <div class="preview-header">Preview</div>
+            {% if script.front_template_id or script.back_template_id or script.template_id %}
+            <p style="color: var(--muted-foreground); font-size: 12px;">Uses a Lob design; this preview shows the text only. Open the design in Lob to see it.</p>
+            {% endif %}
             <div id="preview-content-{{ loop.index0 }}"></div>
         </div>
     </div>

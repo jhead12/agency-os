@@ -171,6 +171,15 @@ class Pipeline:
                             "email": send_email,
                             "phone": send_phone,
                             "name": outreach.contact_name or "",
+                            # Mailing address, for direct mail channels. Left out
+                            # in test mode, which must not mail real prospects.
+                            **({} if test_email else {
+                                "company": prospect.name,
+                                "address": prospect.address,
+                                "city": prospect.city,
+                                "state": prospect.state,
+                                "zip": prospect.zip,
+                            }),
                         },
                         subject=subject,
                         body=body,
@@ -178,6 +187,13 @@ class Pipeline:
                             "campaign": campaign.db_name,
                             "outreach_id": outreach.id,
                             "template_key": script.get("key", step.script),
+                            "campaign_id": campaign_id,
+                            "variables": variables,
+                            # mail_*.yaml scripts: front/back etc. with variables filled in
+                            **({"mail_template": {
+                                k: self._render(v, variables) if isinstance(v, str) else v
+                                for k, v in script.items()
+                            }} if script.get("mail_type") else {}),
                         },
                     )
                 except Exception as exc:
