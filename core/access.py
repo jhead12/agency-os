@@ -118,6 +118,8 @@ ROUTE_RULES: dict[str, str] = {
     "POST /admin/jobs/{job_key}/run": OWNER,
     "GET /admin/campaigns": OWNER,
     "POST /admin/campaigns": OWNER,
+    "GET /admin/campaigns/{campaign_slug}": OWNER,
+    "POST /admin/campaigns/{campaign_slug}": OWNER,
     "POST /admin/campaigns/{campaign_id}/toggle": OWNER,
     "GET /plugins": "campaigns.view",
 }

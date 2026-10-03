@@ -1637,6 +1637,154 @@ async def admin_run_job(request: Request, job_key: str):
     return _back("/admin/jobs", error=f"{job_key} finished with a problem. See the latest run below.")
 
 
+# ── Campaign management (owners only) ───────────────────────────────
+
+
+def _get_registry_plugins():
+    """Return all plugins grouped by type, with metadata."""
+    from core.registry import PluginRegistry
+    registry = PluginRegistry()
+    registry.discover()
+
+    result = {}
+    for ptype in ["prospect_sources", "products", "channels", "enrichers", "schedulers"]:
+        plugins_list = []
+        for key in registry.list_plugins().get(ptype, []):
+            if ptype == "prospect_sources":
+                p = registry.get_source(key)
+            elif ptype == "products":
+                p = registry.get_product(key)
+            elif ptype == "channels":
+                p = registry.get_channel(key)
+            elif ptype == "enrichers":
+                p = registry.get_enricher(key)
+            else:
+                p = registry.get_scheduler(key)
+            if p is None:
+                continue
+            desc = (p.__doc__ or "").strip().split("\n")[0] if p.__doc__ else ""
+            configured = p.is_configured() if hasattr(p, "is_configured") else True
+            plugins_list.append({
+                "key": key,
+                "description": desc,
+                "configured": configured,
+            })
+        result[ptype] = plugins_list
+    return result
+
+
+@app.get("/admin/campaigns", response_class=HTMLResponse)
+async def admin_campaigns(request: Request, msg: str = Query(default=""), error: str = Query(default="")):
+    """Admin campaign management — list campaigns with YAML viewer and plugin association."""
+    campaigns = get_campaigns()
+    db = get_db()
+
+    campaign_data = []
+    for c in campaigns:
+        stats = db.get_pipeline_stats(c.db_name)
+        # Read the raw YAML for display
+        yaml_path = c.config_dir / "campaign.yaml"
+        yaml_content = yaml_path.read_text() if yaml_path.exists() else ""
+        campaign_data.append({
+            "config": c,
+            "stats": stats,
+            "yaml": yaml_content,
+        })
+
+    return templates.TemplateResponse(request, "admin_campaigns.html", {
+        "active": "admin",
+        "campaigns": campaign_data,
+        "plugins": _get_registry_plugins(),
+        "msg": msg,
+        "error": error,
+    })
+
+
+@app.get("/admin/campaigns/{campaign_slug}", response_class=HTMLResponse)
+async def admin_campaign_detail(request: Request, campaign_slug: str):
+    """Edit a single campaign's plugin associations and view its YAML."""
+    campaigns = get_campaigns()
+    campaign = None
+    for c in campaigns:
+        if c.db_name == campaign_slug:
+            campaign = c
+            break
+
+    if not campaign:
+        return templates.TemplateResponse(request, "error.html", {
+            "active": "admin",
+            "message": f"Campaign '{campaign_slug}' not found.",
+        }, status_code=404)
+
+    yaml_path = campaign.config_dir / "campaign.yaml"
+    yaml_content = yaml_path.read_text() if yaml_path.exists() else ""
+
+    return templates.TemplateResponse(request, "admin_campaign_detail.html", {
+        "active": "admin",
+        "campaign": campaign,
+        "yaml": yaml_content,
+        "plugins": _get_registry_plugins(),
+    })
+
+
+@app.post("/admin/campaigns/{campaign_slug}")
+async def admin_campaign_update(
+    request: Request,
+    campaign_slug: str,
+    prospect_sources: list[str] = Form(default=[]),
+    product: str = Form(default=""),
+    channels: list[str] = Form(default=[]),
+    enrichers: list[str] = Form(default=[]),
+    scheduler: str = Form(default=""),
+    sender_name: str = Form(default=""),
+    sender_email: str = Form(default=""),
+    stale_threshold_days: str = Form(default="14"),
+):
+    """Update a campaign's plugin associations by rewriting campaign.yaml."""
+    if not _same_origin(request):
+        return _back("/admin/campaigns", error="Cross-site request blocked.")
+
+    campaigns = get_campaigns()
+    campaign = None
+    for c in campaigns:
+        if c.db_name == campaign_slug:
+            campaign = c
+            break
+
+    if not campaign:
+        return _back("/admin/campaigns", error=f"Campaign '{campaign_slug}' not found.")
+
+    # Load existing YAML, update the plugin fields
+    import yaml as _yaml
+    yaml_path = campaign.config_dir / "campaign.yaml"
+    raw = _yaml.safe_load(yaml_path.read_text())
+
+    # Update plugin associations
+    raw["prospect_sources"] = prospect_sources if prospect_sources else raw.get("prospect_sources", [])
+    if product:
+        raw["product"] = product
+    raw["channels"] = channels if channels else raw.get("channels", [])
+    raw["enrichers"] = enrichers if enrichers else raw.get("enrichers", [])
+    if scheduler:
+        raw["scheduler"] = scheduler
+    elif "scheduler" in raw:
+        del raw["scheduler"]  # remove if empty
+    if sender_name:
+        raw["sender_name"] = sender_name
+    if sender_email:
+        raw["sender_email"] = sender_email
+    if stale_threshold_days:
+        try:
+            raw["stale_threshold_days"] = int(stale_threshold_days)
+        except ValueError:
+            pass
+
+    # Write back
+    yaml_path.write_text(_yaml.dump(raw, default_flow_style=False, sort_keys=False))
+
+    return _back("/admin/campaigns", msg=f"Updated campaign '{campaign.name}'.")
+
+
 @app.get("/healthz")
 async def healthz():
     return {"ok": True}

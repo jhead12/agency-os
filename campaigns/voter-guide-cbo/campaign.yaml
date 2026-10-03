@@ -1,71 +1,55 @@
-name: "Voter Guide — CBO Outreach (Los Angeles)"
-
-# What we're selling
+name: "Voter Guide \u2014 CBO Outreach (Los Angeles)"
 product: u9itus_voter_guide
-
-# Where prospects come from
 prospect_sources:
-  - irs_bmf
-  - sos_partners
-  - oia_grantees
-  - miv_partners
-
-# Contact enrichment (run in order, first hit wins)
+- irs_bmf
+- sos_partners
+- oia_grantees
+- miv_partners
 enrichers:
-  - local_scraper
-  - apollo
-  - hunter
-
-# Meeting booking — enables {{booking_link}} and `agency_os.py bookings`
-# scheduler: calendly
-
-# Delivery channels (first configured one that can reach the contact wins;
-# add sms_twilio to text contacts that have a phone number)
+- local_scraper
+- apollo
+- hunter
 channels:
-  - email_smartlead
-  - email_smtp
-  - manual
-
-# Prospect filters
+- email_smartlead
+- email_smtp
+- manual
+- lob_direct_mail
 filters:
   state: CA
-  county: "Los Angeles"
-  ntee_codes: [R, W, P, S]
+  county: Los Angeles
+  ntee_codes:
+  - R
+  - W
+  - P
+  - S
   min_revenue: 100000
-
-# Pipeline stages
 stages:
-  - cold
-  - contacted
-  - engaged
-  - demo_scheduled
-  - proposal_sent
-  - closed_won
-  - closed_lost
-  - nurture
-
-# Follow-up sequence cadence
+- cold
+- contacted
+- engaged
+- demo_scheduled
+- proposal_sent
+- closed_won
+- closed_lost
+- nurture
 cadence:
-  - touch: 0
-    delay_days: 0
-    script: 00_cold_outreach
-    next_stage: contacted
-  - touch: 1
-    delay_days: 3
-    script: 01_followup_impact
-    next_stage: contacted
-  - touch: 2
-    delay_days: 4
-    script: 02_followup_cobrand
-    next_stage: contacted
-  - touch: 3
-    delay_days: 5
-    script: 03_breakup
-    next_stage: nurture
-
-# Move to nurture if no contact in 14 days
+- touch: 0
+  delay_days: 0
+  script: 00_cold_outreach
+  next_stage: contacted
+- touch: 1
+  delay_days: 3
+  script: 01_followup_impact
+  next_stage: contacted
+- touch: 2
+  delay_days: 4
+  script: 02_followup_cobrand
+  next_stage: contacted
+- touch: 3
+  delay_days: 5
+  script: 03_breakup
+  next_stage: nurture
 stale_threshold_days: 14
-
-# Sender info (used in email templates)
-sender_name: "Joshua"
-sender_email: "joshua@u9itus.com"
+sender_name: Joshua
+sender_email: joshua@u9itus.com
+scheduler: calendly

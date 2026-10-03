@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Campaigns — Admin — agency-os{% endblock %}
+{% block content %}
+
+<div class="page-header">
+    <div>
+        <h1>Campaigns</h1>
+        <p class="subtitle">View campaign configs and manage plugin associations</p>
+    </div>
+</div>
+
+{% if msg %}
+<div class="alert alert-success">{{ msg }}</div>
+{% endif %}
+{% if error %}
+<div class="alert alert-error">{{ error }}</div>
+{% endif %}
+
+{% for c in campaigns %}
+<div class="campaign-section">
+    <div class="campaign-header">
+        <h2>{{ c.config.name }}</h2>
+        <a href="/admin/campaigns/{{ c.config.db_name }}" class="btn btn-sm">Edit Plugins →</a>
+    </div>
+
+    <div class="campaign-grid">
+        <div class="campaign-col">
+            <h4>Product</h4>
+            <span class="badge badge-product">{{ c.config.product }}</span>
+        </div>
+        <div class="campaign-col">
+            <h4>Prospect Sources ({{ c.config.prospect_sources|length }})</h4>
+            <ul class="plugin-list">
+                {% for s in c.config.prospect_sources %}<li>{{ s }}</li>{% endfor %}
+            </ul>
+        </div>
+        <div class="campaign-col">
+            <h4>Channels ({{ c.config.channels|length }})</h4>
+            <ul class="plugin-list">
+                {% for ch in c.config.channels %}<li>{{ ch }}</li>{% endfor %}
+            </ul>
+        </div>
+        <div class="campaign-col">
+            <h4>Enrichers ({{ c.config.enrichers|length }})</h4>
+            <ul class="plugin-list">
+                {% for e in c.config.enrichers %}<li>{{ e }}</li>{% endfor %}
+            </ul>
+        </div>
+        <div class="campaign-col">
+            <h4>Scheduler</h4>
+            {% if c.config.scheduler %}
+            <span class="badge badge-product">{{ c.config.scheduler }}</span>
+            {% else %}
+            <span style="color: var(--muted-foreground);">None</span>
+            {% endif %}
+        </div>
+        <div class="campaign-col">
+            <h4>Sender</h4>
+            <p>{{ c.config.sender_name }} &lt;{{ c.config.sender_email }}&gt;</p>
+        </div>
+    </div>
+
+    <details class="yaml-viewer">
+        <summary>View campaign.yaml</summary>
+        <pre><code>{{ c.yaml }}</code></pre>
+    </details>
+</div>
+{% endfor %}
+
+{% endblock %}

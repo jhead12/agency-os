@@ -1058,6 +1058,34 @@ table.sortable th {
 .table-scroll { overflow-x: auto; }
 .audit-details { font-family: ui-monospace, monospace; font-size: 11px; word-break: break-word; max-width: 420px; }
 
+/* ── Admin campaign plugin cards ── */
+.plugin-checkbox-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-top: 1rem; }
+.plugin-card { display: flex; gap: 10px; align-items: flex-start; padding: 14px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; transition: border-color 0.15s, background 0.15s; }
+.plugin-card:hover { border-color: var(--accent); }
+.plugin-card:has(input:checked) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.plugin-card-warning { border-color: #d97706; }
+.plugin-card input { margin-top: 3px; }
+.plugin-card-body { flex: 1; }
+.plugin-card-body strong { font-size: 14px; }
+.plugin-card-body p { font-size: 12px; color: var(--muted-foreground); margin: 4px 0 6px 0; }
+
+/* ── Form grid ── */
+.form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; margin-top: 1rem; }
+.form-field { display: flex; flex-direction: column; gap: 4px; }
+.form-field label { font-size: 13px; font-weight: 600; color: var(--muted-foreground); }
+.form-field input { padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; background: var(--card); color: var(--foreground); }
+
+/* ── YAML viewer ── */
+.yaml-viewer { margin-top: 1rem; }
+.yaml-viewer summary { cursor: pointer; font-weight: 600; font-size: 14px; padding: 8px 0; color: var(--accent); }
+.yaml-viewer pre { background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 16px; overflow-x: auto; font-size: 13px; line-height: 1.5; }
+.yaml-viewer code { font-family: ui-monospace, 'SF Mono', monospace; }
+
+/* ── Alerts ── */
+.alert { padding: 12px 16px; border-radius: 6px; margin: 1rem 0; font-size: 14px; }
+.alert-success { background: color-mix(in srgb, #16a34a 15%, transparent); border: 1px solid #16a34a; color: #16a34a; }
+.alert-error { background: color-mix(in srgb, #dc2626 15%, transparent); border: 1px solid #dc2626; color: #dc2626; }
+
 @media (max-width: 640px) {
     .auth-card { margin: 16px auto; }
     .admin-row-head { flex-direction: column; }

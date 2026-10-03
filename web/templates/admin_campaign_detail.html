@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% block title %}{{ campaign.name }} — Admin — agency-os{% endblock %}
+{% block content %}
+
+<div class="page-header">
+    <div>
+        <h1>{{ campaign.name }}</h1>
+        <p class="subtitle">Associate plugins to this campaign</p>
+    </div>
+    <div>
+        <a href="/admin/campaigns" class="btn btn-sm btn-secondary">← Back to Campaigns</a>
+    </div>
+</div>
+
+<form method="post" action="/admin/campaigns/{{ campaign.db_name }}">
+
+{# ── Product (single select) ── #}
+<div class="campaign-section">
+    <div class="campaign-header">
+        <h2>Product</h2>
+        <span class="badge badge-product">What you're selling</span>
+    </div>
+    <p style="color: var(--muted-foreground); font-size: 0.875rem;">Select one product plugin for this campaign.</p>
+    <div class="plugin-checkbox-grid">
+        {% for p in plugins.products %}
+        <label class="plugin-card{% if not p.configured %} plugin-card-warning{% endif %}">
+            <input type="radio" name="product" value="{{ p.key }}" {% if campaign.product == p.key %}checked{% endif %}>
+            <div class="plugin-card-body">
+                <strong>{{ p.key }}</strong>
+                <p>{{ p.description }}</p>
+                {% if not p.configured %}<span class="badge badge-warning">⚠ Not configured</span>{% endif %}
+            </div>
+        </label>
+        {% endfor %}
+    </div>
+</div>
+
+{# ── Prospect Sources (multi-select) ── #}
+<div class="campaign-section">
+    <div class="campaign-header">
+        <h2>Prospect Sources</h2>
+        <span class="badge badge-product">Where prospects come from</span>
+    </div>
+    <p style="color: var(--muted-foreground); font-size: 0.875rem;">Select one or more data sources. Prospects from all selected sources will be synced into this campaign.</p>
+    <div class="plugin-checkbox-grid">
+        {% for p in plugins.prospect_sources %}
+        <label class="plugin-card{% if not p.configured %} plugin-card-warning{% endif %}">
+            <input type="checkbox" name="prospect_sources" value="{{ p.key }}" {% if p.key in campaign.prospect_sources %}checked{% endif %}>
+            <div class="plugin-card-body">
+                <strong>{{ p.key }}</strong>
+                <p>{{ p.description }}</p>
+                {% if not p.configured %}<span class="badge badge-warning">⚠ Not configured</span>{% endif %}
+            </div>
+        </label>
+        {% endfor %}
+    </div>
+</div>
+
+{# ── Channels (multi-select, ordered) ── #}
+<div class="campaign-section">
+    <div class="campaign-header">
+        <h2>Channels</h2>
+        <span class="badge badge-product">How outreach is delivered</span>
+    </div>
+    <p style="color: var(--muted-foreground); font-size: 0.875rem;">Select channels in priority order. The first configured channel that can reach the contact wins.</p>
+    <div class="plugin-checkbox-grid">
+        {% for p in plugins.channels %}
+        <label class="plugin-card{% if not p.configured %} plugin-card-warning{% endif %}">
+            <input type="checkbox" name="channels" value="{{ p.key }}" {% if p.key in campaign.channels %}checked{% endif %}>
+            <div class="plugin-card-body">
+                <strong>{{ p.key }}</strong>
+                <p>{{ p.description }}</p>
+                {% if not p.configured %}<span class="badge badge-warning">⚠ Not configured</span>{% endif %}
+            </div>
+        </label>
+        {% endfor %}
+    </div>
+</div>
+
+{# ── Enrichers (multi-select, ordered) ── #}
+<div class="campaign-section">
+    <div class="campaign-header">
+        <h2>Enrichers</h2>
+        <span class="badge badge-product">Find contact names, emails, phones</span>
+    </div>
+    <p style="color: var(--muted-foreground); font-size: 0.875rem;">Select enrichers in order. First hit wins — put your best free enricher first.</p>
+    <div class="plugin-checkbox-grid">
+        {% for p in plugins.enrichers %}
+        <label class="plugin-card{% if not p.configured %} plugin-card-warning{% endif %}">
+            <input type="checkbox" name="enrichers" value="{{ p.key }}" {% if p.key in campaign.enrichers %}checked{% endif %}>
+            <div class="plugin-card-body">
+                <strong>{{ p.key }}</strong>
+                <p>{{ p.description }}</p>
+                {% if not p.configured %}<span class="badge badge-warning">⚠ Not configured</span>{% endif %}
+            </div>
+        </label>
+        {% endfor %}
+    </div>
+</div>
+
+{# ── Scheduler (single select) ── #}
+<div class="campaign-section">
+    <div class="campaign-header">
+        <h2>Scheduler</h2>
+        <span class="badge badge-product">Meeting booking service</span>
+    </div>
+    <p style="color: var(--muted-foreground); font-size: 0.875rem;">Select a scheduler for {{ '{{booking_link}}' }} variable and booking sync. Leave unchecked for none.</p>
+    <div class="plugin-checkbox-grid">
+        <label class="plugin-card">
+            <input type="radio" name="scheduler" value="" {% if not campaign.scheduler %}checked{% endif %}>
+            <div class="plugin-card-body">
+                <strong>None</strong>
+                <p>No automated meeting scheduling</p>
+            </div>
+        </label>
+        {% for p in plugins.schedulers %}
+        <label class="plugin-card{% if not p.configured %} plugin-card-warning{% endif %}">
+            <input type="radio" name="scheduler" value="{{ p.key }}" {% if campaign.scheduler == p.key %}checked{% endif %}>
+            <div class="plugin-card-body">
+                <strong>{{ p.key }}</strong>
+                <p>{{ p.description }}</p>
+                {% if not p.configured %}<span class="badge badge-warning">⚠ Not configured</span>{% endif %}
+            </div>
+        </label>
+        {% endfor %}
+    </div>
+</div>
+
+{# ── Campaign Settings ── #}
+<div class="campaign-section">
+    <div class="campaign-header">
+        <h2>Campaign Settings</h2>
+    </div>
+    <div class="form-grid">
+        <div class="form-field">
+            <label>Sender Name</label>
+            <input type="text" name="sender_name" value="{{ campaign.sender_name }}">
+        </div>
+        <div class="form-field">
+            <label>Sender Email</label>
+            <input type="email" name="sender_email" value="{{ campaign.sender_email }}">
+        </div>
+        <div class="form-field">
+            <label>Stale Threshold (days)</label>
+            <input type="number" name="stale_threshold_days" value="{{ campaign.stale_threshold_days }}" min="1" max="90">
+        </div>
+    </div>
+</div>
+
+{# ── Current YAML ── #}
+<div class="campaign-section">
+    <details class="yaml-viewer">
+        <summary>View current campaign.yaml</summary>
+        <pre><code>{{ yaml }}</code></pre>
+    </details>
+</div>
+
+<div style="margin: 1.5rem 0;">
+    <button type="submit" class="btn">Save Campaign</button>
+    <a href="/admin/campaigns" class="btn btn-secondary">Cancel</a>
+</div>
+
+</form>
+
+{% endblock %}

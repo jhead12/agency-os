@@ -28,6 +28,7 @@
             {% if user.can('templates.view') %}<a href="/email-templates" class="{% if active == 'email-templates' %}active{% endif %}">Templates</a>{% endif %}
             {% if user.can('emails.view') %}<a href="/emails" class="{% if active == 'emails' %}active{% endif %}">Emails</a>{% endif %}
             {% if user.is_owner %}<a href="/admin/users" class="{% if active == 'admin' %}active{% endif %}">Team</a>{% endif %}
+            {% if user.is_owner %}<a href="/admin/campaigns" class="{% if active == 'admin-campaigns' %}active{% endif %}">Campaigns Admin</a>{% endif %}
             <a href="/account" class="{% if active == 'account' %}active{% endif %}">{{ user.name }}</a>
             <form method="post" action="/logout" class="nav-logout">
                 <button type="submit">Sign out</button>
