@@ -269,7 +269,10 @@ class Pipeline:
             updates: dict = {"activity_log": log}
 
             if booking.status == "canceled":
-                if outreach.stage == "demo_scheduled":
+                # A prospect who claimed their u9itus portal is still in the
+                # product, so a canceled meeting doesn't move them back (A10).
+                claimed = any(e.get("type") == "portal.claimed" for e in log)
+                if outreach.stage == "demo_scheduled" and not claimed:
                     updates["stage"] = "engaged"
                     updates["next_follow_up_at"] = datetime.now().isoformat()
                 stats["canceled"] += 1
@@ -331,7 +334,9 @@ class Pipeline:
         product = self.registry.get_product(campaign.product)
         if product:
             variables["value_prop"] = product.describe_value(prospect)
-            demo_link = product.generate_demo_link(prospect)
+            # Pass the provisioned portal link; without it the product falls
+            # back to the generic /compare page.
+            demo_link = product.generate_demo_link(prospect, demo_link=getattr(outreach, "demo_link", None))
             if demo_link:
                 variables["demo_link"] = demo_link
 
@@ -404,22 +409,7 @@ class Pipeline:
 
                 demo_url = result.get("demo_url", "")
                 if demo_url:
-                    self.db.update_outreach(row["id"], {"demo_link": demo_url})
-                    # Store portal metadata on the prospect
-                    prospect.metadata = prospect.metadata or {}
-                    prospect.metadata["u9itus"] = {
-                        "slug": result.get("slug"),
-                        "claim_url": result.get("claim_url"),
-                        "status": result.get("status"),
-                        "expires_at": result.get("expires_at"),
-                    }
-                    # Save metadata back
-                    self.db.conn.execute(
-                        "UPDATE prospects SET metadata = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                        (json.dumps(prospect.metadata), prospect.id),
-                    )
-                    self.db.conn.commit()
-
+                    self._store_portal(prospect, result, [row["id"]])
                     print(f"    ✓ {prospect.name} → {demo_url[:60]}...")
                     stats["provisioned"] += 1
                 else:
@@ -430,6 +420,82 @@ class Pipeline:
                 stats["failed"] += 1
 
         return stats
+
+    def provision_prospect(self, campaign: CampaignConfig, prospect_id: int, refresh: bool = False) -> dict:
+        """Provision (or, with refresh, renew) one prospect's demo portal — the
+        dashboard's "Create demo page" button. Unlike provision_demos() it ignores
+        the stage filter: a person chose this prospect on purpose.
+
+        Returns the API result, or {"error": True, "detail": ...}.
+        """
+        product = self.registry.get_product(campaign.product)
+        if not product or not hasattr(product, "provision_demo"):
+            return {"error": True, "detail": "This campaign's product can't create demo pages."}
+        if hasattr(product, "client") and not product.client.is_configured():
+            return {"error": True, "detail": "The u9itus API isn't configured (U9ITUS_BASE_URL, U9ITUS_AGENCY_TOKEN)."}
+
+        prospect = self.db.get_prospect(prospect_id)
+        if not prospect:
+            return {"error": True, "detail": "Prospect not found."}
+
+        rows = self.db.conn.execute(
+            "SELECT id, contact_email FROM outreach WHERE prospect_id = ?", (prospect_id,),
+        ).fetchall()
+        contact_email = next((r["contact_email"] for r in rows if r["contact_email"]), "")
+
+        result = product.provision_demo(prospect, contact_email=contact_email, refresh=refresh)
+        if result.get("error"):
+            return result
+        if result.get("demo_url"):
+            self._store_portal(prospect, result, [r["id"] for r in rows])
+        else:
+            self._merge_portal_metadata(prospect_id, {"status": result.get("status")})
+        return result
+
+    def refresh_portal_status(self, campaign: CampaignConfig, prospect_id: int) -> dict:
+        """Fetch a prospect's portal status and 30-day views from u9itus and keep them on the prospect."""
+        product = self.registry.get_product(campaign.product)
+        prospect = self.db.get_prospect(prospect_id)
+        if not product or not hasattr(product, "get_portal_status") or not prospect:
+            return {"error": True, "detail": "Status isn't available for this prospect."}
+
+        result = product.get_portal_status(prospect)
+        if result.get("error"):
+            return result
+
+        traffic = result.get("traffic") or {}
+        self._merge_portal_metadata(prospect_id, {
+            "status": result.get("status"),
+            "expires_at": result.get("expires_at"),
+            "views_30d": traffic.get("views_30d"),
+            "last_viewed_on": traffic.get("last_viewed_on"),
+            "checked_at": datetime.now().isoformat(timespec="seconds"),
+        })
+        return result
+
+    def _store_portal(self, prospect: Prospect, result: dict, outreach_ids: list[int]) -> None:
+        """Save a provisioned portal: the demo link on the outreach rows, details on the prospect."""
+        for outreach_id in outreach_ids:
+            self.db.update_outreach(outreach_id, {"demo_link": result.get("demo_url")})
+        self._merge_portal_metadata(prospect.id, {
+            "slug": result.get("slug"),
+            "claim_url": result.get("claim_url"),
+            "status": result.get("status"),
+            "expires_at": result.get("expires_at"),
+        })
+
+    def _merge_portal_metadata(self, prospect_id: int, values: dict) -> None:
+        """Update prospect.metadata["u9itus"], keeping keys not in `values`."""
+        row = self.db.conn.execute("SELECT metadata FROM prospects WHERE id = ?", (prospect_id,)).fetchone()
+        if not row:
+            return
+        metadata = json.loads(row["metadata"] or "{}")
+        metadata["u9itus"] = {**(metadata.get("u9itus") or {}), **values}
+        self.db.conn.execute(
+            "UPDATE prospects SET metadata = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (json.dumps(metadata), prospect_id),
+        )
+        self.db.conn.commit()
 
     # ── Pull Product Events (A4) ──────────────────────────────────────
 
@@ -521,65 +587,30 @@ class Pipeline:
             # Record the event
             self._record_event(campaign.product, event_id, event)
 
-            # Map event to stage change
-            target_stage = self.EVENT_STAGE_MAP.get(event_type)
-            if not target_stage:
-                stats["events_pulled"] += 1
-                continue
+            # Keep the portal's status on the prospect current for the dashboard.
+            status = {"portal.claimed": "claimed", "portal.published": "published",
+                      "portal.expired": "expired"}.get(event_type)
+            if status:
+                self._merge_portal_metadata(prospect_id, {"status": status})
+            if event_type == "portal.expired":
+                # The link no longer works; clearing it lets provisioning issue a new one.
+                self.db.conn.execute(
+                    "UPDATE outreach SET demo_link = NULL WHERE prospect_id = ?", (prospect_id,),
+                )
+                self.db.conn.commit()
 
-            # Find the outreach row for this prospect
-            outreach_row = self.db.conn.execute(
-                """SELECT o.id, o.stage, o.activity_log FROM outreach o
-                   WHERE o.prospect_id = ? AND o.campaign_id = ?""",
-                (prospect_id, campaign_id),
-            ).fetchone()
-
-            if not outreach_row:
-                stats["events_pulled"] += 1
-                continue
-
-            current_stage = outreach_row["stage"]
-            current_rank = self.STAGE_ORDER.get(current_stage, 0)
-            target_rank = self.STAGE_ORDER.get(target_stage, 0)
-
-            # Only move forward. portal.published is a flag, not a stage change.
-            if target_rank > current_rank and event_type != "portal.published":
-                # Check activity_log for the event ref to avoid double-processing
-                activity = json.loads(outreach_row["activity_log"] or "[]")
-                event_ref = f"u9itus:{event_id}"
-                if any(a.get("ref") == event_ref for a in activity):
-                    stats["already_processed"] += 1
-                    continue
-
-                # Apply the stage change
-                self.db.update_outreach(outreach_row["id"], {"stage": target_stage})
-
-                # Append to activity_log
-                activity.append({
-                    "type": event_type,
-                    "ref": event_ref,
-                    "stage": target_stage,
-                    "timestamp": event.get("occurred_at", ""),
-                })
-                self.db.update_outreach(outreach_row["id"], {
-                    "activity_log": json.dumps(activity),
-                })
-
-                print(f"    ✓ Prospect {prospect_id}: {current_stage} → {target_stage} ({event_type})")
-                stats["stage_changes"] += 1
-
-            # portal.published → flag "ready_to_close" in activity_log
-            if event_type == "portal.published":
-                activity = json.loads(outreach_row["activity_log"] or "[]")
-                activity.append({
-                    "type": "portal_published",
-                    "ref": f"u9itus:{event_id}",
-                    "flag": "ready_to_close",
-                    "timestamp": event.get("occurred_at", ""),
-                })
-                self.db.update_outreach(outreach_row["id"], {
-                    "activity_log": json.dumps(activity),
-                })
+            # A demo portal belongs to the prospect, not to one campaign, and the
+            # event cursor is shared by every campaign using this product, so the
+            # event applies to all of the prospect's outreach rows.
+            outreach_rows = self.db.conn.execute(
+                "SELECT id, stage, activity_log FROM outreach WHERE prospect_id = ?",
+                (prospect_id,),
+            ).fetchall()
+            for outreach_row in outreach_rows:
+                if self._apply_portal_event(outreach_row, event):
+                    print(f"    ✓ Prospect {prospect_id}: {outreach_row['stage']} → "
+                          f"{self.EVENT_STAGE_MAP[event_type]} ({event_type})")
+                    stats["stage_changes"] += 1
 
             stats["events_pulled"] += 1
 
@@ -588,6 +619,42 @@ class Pipeline:
             self._save_cursor(campaign.product, cursor)
 
         return stats
+
+    def _apply_portal_event(self, outreach_row, event: dict) -> bool:
+        """Log one portal event on one outreach row and move its stage forward.
+
+        Viewed and claimed events are always logged (A10 relies on the
+        portal.claimed entry even when the stage doesn't change); published adds
+        the ready_to_close flag and never changes the stage. Returns True when
+        the stage changed.
+        """
+        event_type = event.get("type")
+        target_stage = self.EVENT_STAGE_MAP.get(event_type)
+        if not target_stage:
+            return False
+
+        event_ref = f"u9itus:{event.get('id')}"
+        activity = json.loads(outreach_row["activity_log"] or "[]")
+        if any(a.get("ref") == event_ref for a in activity):
+            return False
+
+        current_stage = outreach_row["stage"]
+        # nurture ranks with the closed stages for the email sequence, but a
+        # parked prospect who opens or claims their demo is active again.
+        current_rank = 1 if current_stage == "nurture" else self.STAGE_ORDER.get(current_stage, 0)
+        moves = event_type != "portal.published" and self.STAGE_ORDER.get(target_stage, 0) > current_rank
+
+        if event_type == "portal.published":
+            entry = {"type": "portal_published", "ref": event_ref, "flag": "ready_to_close"}
+        else:
+            entry = {"type": event_type, "ref": event_ref, "stage": target_stage if moves else current_stage}
+        activity.append({**entry, "timestamp": event.get("occurred_at", "")})
+
+        updates = {"activity_log": json.dumps(activity)}
+        if moves:
+            updates["stage"] = target_stage
+        self.db.update_outreach(outreach_row["id"], updates)
+        return moves
 
     def _get_cursor(self, product_key: str) -> int:
         """Get the last event cursor for a product."""

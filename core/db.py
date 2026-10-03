@@ -133,6 +133,19 @@ CREATE TABLE IF NOT EXISTS product_events (
 
 CREATE INDEX IF NOT EXISTS idx_product_events_key ON product_events(product_key);
 
+-- Background job runs (core/jobs.py): what ran, when, and the result.
+CREATE TABLE IF NOT EXISTS job_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job TEXT NOT NULL,
+    trigger TEXT NOT NULL,
+    started_at TIMESTAMP NOT NULL,
+    finished_at TIMESTAMP,
+    ok INTEGER,
+    summary TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_job_runs_job ON job_runs(job, started_at);
+
 CREATE TABLE IF NOT EXISTS sync_cursors (
     product_key TEXT PRIMARY KEY,
     cursor_value INTEGER DEFAULT 0,

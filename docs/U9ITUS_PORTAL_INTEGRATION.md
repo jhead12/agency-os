@@ -11,8 +11,8 @@ Status (2026-10-02):
 - **u9itus side built** (U1–U10, tests in `tests/Feature/Portal/AgencyApiTest.php`),
   on branch `feature/white-label-portal-builder`. **Not deployed yet**: production
   returns 404 for `/api/v1/agency/*` until the branch is merged.
-- **agency-os A1–A5, A8, A9 built** (agency-os commit `5c3905a`); A6, A10 and job
-  scheduling on Railway are still open (section 9).
+- **agency-os A1–A10 built** (A1–A5, A8, A9 in agency-os commit `5c3905a`; A6, A7,
+  A10 and follow-up fixes added 2026-10-02, see section 9).
 - **End-to-end tested locally** against the real agency-os code (section 9).
 
 Owner decisions are in section 8. Deployment and setup are in section 9.
@@ -307,8 +307,8 @@ controller alone.
 | A9 | Cold cadence only runs for `cold`/`contacted`; a send never moves the stage backward (keep a stage order list; take the later of current and `next_stage`) | `core/db.py` `get_due_outreach`, `core/pipeline.py` `enqueue_outreach` | an `engaged` prospect gets no cold touch and keeps its stage |
 | A10 | `sync_bookings()`: a cancellation doesn't move a prospect back to `engaged` if `activity_log` has an entry of type `portal.claimed` (the type A4 writes) | `core/pipeline.py` | test: claimed + canceled stays `demo_scheduled` |
 
-agency-os status (2026-10-02): A1, A2, A3, A4, A5, A8, A9 **done**; A6, A7, A10 **open**.
-Remaining order: A7 (jobs on Railway) → A10 → A6.
+agency-os status (2026-10-02): **all of A1–A10 done.** To turn on the scheduled jobs
+on Railway, set `AGENCY_OS_RUN_JOBS=1` (section 9).
 
 ## 7. Guardrails
 
@@ -372,20 +372,27 @@ Also set `U9ITUS_BASE_URL=https://www.u9itus.com` on agency-os. To rotate the to
 the command again and replace both values; the old token stops working immediately.
 Until the hash is set, the API answers `503 service_not_configured`.
 
-### Running the jobs on Railway (A7, open)
+### Running the jobs on Railway (A7, done)
 
-The deployed agency-os runs only `uvicorn web.app:app`. Nothing on Railway runs
-`provision`, `pull-events` (or `sync`, `enqueue`, `bookings`) yet. Its SQLite file
-sits on a volume attached to the web service, and a Railway volume can only be
-attached to one service, so a separate Railway cron service can't use the same
-database. Two workable options:
+agency-os's SQLite file sits on a volume attached to the web service, and a
+Railway volume can only be attached to one service, so a separate cron service
+can't reach the database. The web app runs the jobs itself (`core/jobs.py`): a
+background loop started with the app wakes every 5 minutes and runs any job whose
+interval has passed since its last run. Runs are recorded in the `job_runs` table,
+so a redeploy doesn't re-run a job that just ran.
 
-1. **A background loop in the web app** (FastAPI lifespan task): `pull-events`
-   hourly and `provision` daily, each wrapped so one failure doesn't stop the loop.
-2. **A protected run endpoint** (for example `POST /internal/jobs/pull-events`,
-   checked against a secret header) called by a small Railway cron service with `curl`.
+| Job | Default interval | Setting |
+|---|---|---|
+| `pull-events` (once per product, all active campaigns) | 60 min | `AGENCY_OS_PULL_EVENTS_MINUTES` |
+| `provision` (each active campaign) | 24 h | `AGENCY_OS_PROVISION_MINUTES` |
 
-Either way, the CLI's `--db` defaults to `./db.sqlite`, not the volume. When
+- **Off by default.** Set `AGENCY_OS_RUN_JOBS=1` on the Railway service to turn it
+  on. Local runs and tests never call u9itus.
+- Owners see **Team → Jobs** (`/admin/jobs`): last run, result, recent runs, and a
+  **Run now** button for each job. A run with the u9itus API unconfigured shows as a problem.
+- Sending email (`enqueue`) is deliberately not scheduled; it stays a manual step.
+
+The CLI's `--db` defaults to `./db.sqlite`, not the volume. When
 running the CLI on the Railway service (`railway run` or a shell), set
 `AGENCY_OS_DB=$RAILWAY_VOLUME_MOUNT_PATH/db.sqlite`, or it will create an empty
 database instead of using the real one.
@@ -416,6 +423,34 @@ Fixes made to agency-os during the test (uncommitted in that repo):
 - `tests/test_u9itus_events.py`: 6 tests covering the stage mapping, the crash,
   idempotency and unknown prospects. They fail on the old code and pass on the fix.
   All 45 agency-os tests pass.
+
+### A6, A7, A10 and follow-up fixes (2026-10-02, agency-os, uncommitted)
+
+- **A6, prospect page:** a "u9itus demo page" card with status (Demo live, Expired,
+  Claimed, Published), Open/Copy link, link expiry, 30-day views, and the portal
+  events (viewed, claimed, published). It has **Create demo page**, **Renew demo
+  page** (expired) and **Refresh status** buttons, and a **ready to close** badge
+  next to the stage. The buttons need the new `portals.manage` permission. It's in
+  the Sales Rep starter role for new installs; **owners must add it to existing
+  roles under Team → Roles.**
+- **A7:** see above.
+- **A10:** a canceled Calendly meeting no longer moves a prospect who claimed their
+  page back to `engaged`.
+- **Emails now use the demo link.** `_build_variables()` never passed the
+  provisioned link to the product, so every email used the generic `/compare` page.
+- **Events reach the prospect in every campaign.** The event cursor is per product,
+  but events were only applied to the campaign being pulled. With two campaigns on
+  the same product, the second campaign's events were consumed and lost.
+- **A claim is always logged**, even when the prospect is already
+  `demo_scheduled` from a booking. A10 depends on that entry.
+- **A view or claim revives a `nurture` prospect**, as section 3 specifies.
+- **`portal.expired` clears the dead demo link** and marks the status expired, so the
+  next `provision` run issues a new link.
+- Tests: `tests/test_u9itus_events.py` (12), `tests/test_portal_dashboard.py` (10),
+  and an A10 test in `tests/test_twilio_calendly.py`. 61 pass. The one failure,
+  `test_every_route_has_a_rule_and_no_rule_is_stale`, already fails on `main`: the
+  permissions map lists `/admin/campaigns` routes that the app doesn't define yet
+  (campaign segmentation work in progress).
 
 Production check (read-only): agency-os `/healthz` is ok, pages redirect to
 `/login`, and `/api/stats` returns 401 without a session. u9itus production returns

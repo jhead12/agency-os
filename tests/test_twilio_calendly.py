@@ -268,3 +268,15 @@ def test_sync_bookings_matches_by_outreach_id_and_keeps_later_stage(env):
     stats = pipeline.sync_bookings(campaign)
     assert stats["booked"] == 1 and stats["unmatched"] == 1
     assert db.get_outreach(oid).stage == "proposal_sent"
+
+
+def test_canceled_meeting_keeps_a_prospect_who_claimed_their_portal(env):
+    # A10: claiming the u9itus page put them in the product; a canceled call doesn't undo that.
+    db, pipeline, registry, campaign, add = env
+    oid = add(email="ana@org.org", stage="demo_scheduled")
+    db.update_outreach(oid, {"activity_log": '[{"type": "portal.claimed", "ref": "u9itus:5"}]'})
+    sched = registry.schedulers["fake_sched"]
+    sched.bookings = [Booking(external_id="inv9", invitee_email="ana@org.org", status="canceled")]
+
+    assert pipeline.sync_bookings(campaign)["canceled"] == 1
+    assert db.get_outreach(oid).stage == "demo_scheduled"

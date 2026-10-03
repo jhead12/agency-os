@@ -41,6 +41,7 @@ CATALOG: dict[str, str] = {
     "emails.view": "View sent emails, including full bodies",
     "templates.view": "View and preview email templates",
     "templates.edit": "Edit email templates",
+    "portals.manage": "Create, renew and check prospects' u9itus demo pages",
 }
 
 # Starter roles are created once if missing. Owners may edit or delete them
@@ -55,7 +56,7 @@ STARTER_ROLES: dict[str, tuple[str, list[str]]] = {
         "Caller access plus editing prospects and reading sent email",
         ["dashboard.view", "prospects.view", "prospects.export", "prospects.edit",
          "pipeline.edit", "calls.view", "calls.log", "calendar.view",
-         "campaigns.view", "emails.view", "templates.view"],
+         "campaigns.view", "emails.view", "templates.view", "portals.manage"],
     ),
     "Template Editor": (
         "Writes and edits outreach email templates",
@@ -93,6 +94,7 @@ ROUTE_RULES: dict[str, str] = {
     "POST /prospects/{prospect_id}/stage": "pipeline.edit",
     "POST /prospects/{prospect_id}/contact": "prospects.edit",
     "POST /prospects/{prospect_id}/info": "prospects.edit",
+    "POST /prospects/{prospect_id}/portal": "portals.manage",
     "GET /calendar": "calendar.view",
     "GET /calendar.ics": "calendar.view",
     "GET /email-templates": "templates.view",
@@ -112,6 +114,8 @@ ROUTE_RULES: dict[str, str] = {
     "POST /admin/roles/{role_id}": OWNER,
     "POST /admin/roles/{role_id}/delete": OWNER,
     "GET /admin/audit": OWNER,
+    "GET /admin/jobs": OWNER,
+    "POST /admin/jobs/{job_key}/run": OWNER,
     "GET /admin/campaigns": OWNER,
     "POST /admin/campaigns": OWNER,
     "POST /admin/campaigns/{campaign_id}/toggle": OWNER,

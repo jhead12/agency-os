@@ -25,17 +25,33 @@ class FakeClient:
 
 
 class FakeU9itus:
-    """Stands in for the product plugin; serves a scripted event feed."""
+    """Stands in for the product plugin; serves a scripted event feed and fake portals."""
 
     key = "fake_u9itus"
     client = FakeClient()
 
     def __init__(self):
         self.events = []
+        self.provisioned = []
 
     def pull_events(self, after=0, limit=100):
         page = [e for e in self.events if e["id"] > after][:limit]
         return {"events": page, "next_cursor": page[-1]["id"] if page else after}
+
+    def provision_demo(self, prospect, contact_email="", demo_link="", refresh=False):
+        self.provisioned.append((prospect.id, contact_email, refresh))
+        return {"slug": f"org-{prospect.id}", "demo_url": f"https://u9.example/portal/org-{prospect.id}?t={len(self.provisioned)}",
+                "claim_url": "https://u9.example/claim", "status": "demo", "expires_at": "2026-12-01T00:00:00+00:00"}
+
+    def get_portal_status(self, prospect):
+        return {"slug": f"org-{prospect.id}", "status": "demo", "expires_at": "2026-12-01T00:00:00+00:00",
+                "traffic": {"views_30d": 4, "last_viewed_on": "2026-10-02"}}
+
+    def describe_value(self, prospect):
+        return "a voter guide"
+
+    def generate_demo_link(self, prospect, **kwargs):
+        return kwargs.get("demo_link") or "https://u9.example/compare"
 
 
 def event(event_id, event_type, prospect_id):
@@ -57,11 +73,12 @@ def world(tmp_path):
     registry.products["fake_u9itus"] = product
     pipeline = Pipeline(db, registry)
 
-    def add_prospect(stage):
-        pid = db.upsert_prospect(Prospect(name=f"Org {stage}", state="CA", source="test"))
+    def add_prospect(stage, email=None):
+        pid = db.upsert_prospect(Prospect(name=f"Org {stage}", state="CA", source="test", ein=email or stage))
         oid = db.upsert_outreach(pid, campaign_id)
-        db.update_outreach(oid, {"stage": stage})
+        db.update_outreach(oid, {"stage": stage, "contact_email": email})
         return pid, oid
+
 
     def row(oid):
         r = db.conn.execute("SELECT stage, activity_log FROM outreach WHERE id = ?", (oid,)).fetchone()
@@ -136,3 +153,79 @@ def test_events_for_unknown_prospects_are_ignored(world):
     stats = pipeline.pull_product_events(campaign)
 
     assert stats["stage_changes"] == 0
+
+
+def test_a_claim_is_logged_even_when_the_stage_does_not_change(world):
+    # A10 relies on the portal.claimed entry when a Calendly booking already set demo_scheduled.
+    pipeline, campaign, product, add_prospect, row = world
+    pid, oid = add_prospect("demo_scheduled")
+    product.events = [event(1, "portal.claimed", pid)]
+
+    pipeline.pull_product_events(campaign)
+
+    stage, log = row(oid)
+    assert stage == "demo_scheduled"
+    assert [a["type"] for a in log] == ["portal.claimed"]
+
+
+def test_a_view_revives_a_nurture_prospect(world):
+    pipeline, campaign, product, add_prospect, row = world
+    pid, oid = add_prospect("nurture")
+    product.events = [event(1, "portal.viewed", pid)]
+
+    pipeline.pull_product_events(campaign)
+
+    assert row(oid)[0] == "engaged"
+
+
+def test_an_event_reaches_the_prospect_in_every_campaign(world, tmp_path):
+    # The cursor is per product; a second campaign's rows must not be skipped.
+    pipeline, campaign, product, add_prospect, row = world
+    pid, oid = add_prospect("contacted")
+    db = pipeline.db
+    other_campaign_id = db.upsert_campaign("other-campaign", str(tmp_path / "other"))
+    other_oid = db.upsert_outreach(pid, other_campaign_id)
+    db.update_outreach(other_oid, {"stage": "contacted"})
+    product.events = [event(1, "portal.viewed", pid)]
+
+    pipeline.pull_product_events(campaign)
+
+    assert row(oid)[0] == "engaged" and row(other_oid)[0] == "engaged"
+
+
+def test_an_expired_demo_clears_the_link_so_it_can_be_renewed(world):
+    pipeline, campaign, product, add_prospect, row = world
+    pid, oid = add_prospect("contacted")
+    pipeline.db.update_outreach(oid, {"demo_link": "https://u9.example/portal/old"})
+    product.events = [event(1, "portal.expired", pid)]
+
+    pipeline.pull_product_events(campaign)
+
+    assert pipeline.db.get_outreach(oid).demo_link is None
+    assert pipeline.db.get_prospect(pid).metadata["u9itus"]["status"] == "expired"
+
+
+def test_provisioning_one_prospect_stores_the_link_and_status(world):
+    pipeline, campaign, product, add_prospect, row = world
+    pid, oid = add_prospect("engaged", email="ed@org.example")
+
+    result = pipeline.provision_prospect(campaign, pid)
+
+    assert result["status"] == "demo"
+    assert product.provisioned == [(pid, "ed@org.example", False)]
+    assert pipeline.db.get_outreach(oid).demo_link.startswith("https://u9.example/portal/")
+    assert pipeline.db.get_prospect(pid).metadata["u9itus"]["slug"] == f"org-{pid}"
+
+    pipeline.refresh_portal_status(campaign, pid)
+    meta = pipeline.db.get_prospect(pid).metadata["u9itus"]
+    assert meta["views_30d"] == 4 and meta["slug"] == f"org-{pid}"
+
+
+def test_emails_use_the_provisioned_demo_link(world):
+    pipeline, campaign, product, add_prospect, row = world
+    pid, oid = add_prospect("contacted", email="ed@org.example")
+    pipeline.db.update_outreach(oid, {"demo_link": "https://u9.example/portal/org-x?t=abc"})
+
+    variables = pipeline._build_variables(campaign, pipeline.db.get_prospect(pid), pipeline.db.get_outreach(oid))
+
+    assert variables["demo_link"] == "https://u9.example/portal/org-x?t=abc"

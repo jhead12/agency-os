@@ -73,6 +73,7 @@ class U9itusVoterGuideProduct:
         prospect: Prospect,
         contact_email: str = "",
         demo_link: str = "",
+        refresh: bool = False,
     ) -> dict:
         """Provision a personal demo portal on u9itus for this prospect.
 
@@ -93,6 +94,7 @@ class U9itusVoterGuideProduct:
             website_url=prospect.website_url or "",
             ein=prospect.ein or "",
             contact_email=contact_email,
+            refresh=refresh,
         )
 
     def get_portal_status(self, prospect: Prospect) -> dict:

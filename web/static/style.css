@@ -1063,3 +1063,11 @@ table.sortable th {
     .admin-row-head { flex-direction: column; }
     .nav-logout button { width: 100%; text-align: left; }
 }
+
+/* u9itus demo page card (prospect detail) */
+.portal-card .portal-link { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.portal-events { list-style: none; padding: 0; margin: 12px 0 0; display: grid; gap: 6px; }
+.portal-events li { display: flex; justify-content: space-between; gap: 12px; border-top: 1px solid var(--border); padding-top: 6px; }
+.portal-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.portal-card a { color: var(--accent); }
+.stage-badges { display: inline-flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }

@@ -19,6 +19,7 @@ Features:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import secrets
@@ -46,6 +47,7 @@ from core.db import Database
 from core.campaign import discover_campaigns
 from core.registry import PluginRegistry
 from core.pipeline import Pipeline
+from core.jobs import JobRunner, configured_jobs, jobs_enabled
 
 # ── Init ────────────────────────────────────────────────────────────
 
@@ -70,10 +72,18 @@ def get_campaigns():
     return discover_campaigns(str(CAMPAIGNS_DIR))
 
 
+def get_job_runner() -> JobRunner:
+    return JobRunner(DB_PATH, str(PROJECT_ROOT / "plugins"), get_campaigns)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     bootstrap_access()
+    # Background jobs (core/jobs.py): on for the deployed service only.
+    task = asyncio.create_task(get_job_runner().loop()) if jobs_enabled() else None
     yield
+    if task:
+        task.cancel()
 
 
 app = FastAPI(title="agency-os", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
@@ -992,13 +1002,80 @@ async def prospect_detail(request: Request, prospect_id: int):
     # Get call history for this prospect
     call_history = db.get_calls_for_prospect(prospect_id)
 
+    # u9itus demo page (A6): status kept on the prospect by provisioning and
+    # pull-events, plus the portal events logged on the outreach rows.
+    activity_logs = {r["id"]: json.loads(r["activity_log"] or "[]") for r in outreach_rows}
+    portal_events = sorted(
+        (e for log in activity_logs.values() for e in log if str(e.get("ref", "")).startswith("u9itus:")),
+        key=lambda e: e.get("timestamp", ""), reverse=True,
+    )
+
     return templates.TemplateResponse(request, "prospect_detail.html", {
+        "portal": (prospect.metadata or {}).get("u9itus") or {},
+        "portal_link": next((r["demo_link"] for r in outreach_rows if r["demo_link"]), None),
+        "portal_events": portal_events,
+        "ready_to_close": any(e.get("flag") == "ready_to_close" for e in portal_events),
+        "portal_available": _portal_campaign(outreach_rows) is not None,
+        "msg": request.query_params.get("msg", ""),
+        "error": request.query_params.get("error", ""),
         "prospect": prospect,
         "outreach_rows": outreach_rows,
         "email_logs": email_logs,
         "call_history": call_history,
-        "activity_logs": {r["id"]: json.loads(r["activity_log"] or "[]") for r in outreach_rows},
+        "activity_logs": activity_logs,
     })
+
+
+def _plugin_registry() -> PluginRegistry:
+    registry = PluginRegistry()
+    registry.discover(str(PROJECT_ROOT / "plugins"))
+    return registry
+
+
+def _portal_campaign(outreach_rows):
+    """The first of the prospect's campaigns whose product makes u9itus demo pages."""
+    names = {r["campaign_name"] for r in outreach_rows}
+    registry = _plugin_registry()
+    for campaign in get_campaigns():
+        if campaign.db_name in names and hasattr(registry.get_product(campaign.product), "provision_demo"):
+            return campaign
+    return None
+
+
+@app.post("/prospects/{prospect_id}/portal")
+async def prospect_portal(request: Request, prospect_id: int, action: str = Form(...)):
+    """Create, renew, or check a prospect's u9itus demo page (A6)."""
+    db = get_db()
+    rows = db.conn.execute(
+        """SELECT o.*, c.name as campaign_name FROM outreach o
+           JOIN campaigns c ON o.campaign_id = c.id WHERE o.prospect_id = ?""",
+        (prospect_id,),
+    ).fetchall()
+    campaign = _portal_campaign(rows)
+    back = f"/prospects/{prospect_id}"
+    if campaign is None:
+        return _back(back, error="None of this prospect's campaigns make u9itus demo pages.")
+
+    if action not in ("provision", "renew", "status"):
+        return _back(back, error="Unknown action.")
+
+    def call_u9itus() -> dict:
+        # Runs in a worker thread (the API call can take seconds); SQLite
+        # connections are per thread, so open one here.
+        pipeline = Pipeline(get_db(), _plugin_registry())
+        if action == "status":
+            return pipeline.refresh_portal_status(campaign, prospect_id)
+        return pipeline.provision_prospect(campaign, prospect_id, refresh=action == "renew")
+
+    result = await asyncio.to_thread(call_u9itus)
+    done = {"provision": "Demo page ready.", "renew": "Demo page renewed with a new link.",
+            "status": "Status updated."}[action]
+
+    if result.get("error"):
+        return _back(back, error=f"u9itus: {result.get('detail') or 'request failed'}")
+    db.audit(current_user(request), f"prospect.portal.{action}", "prospect", prospect_id,
+             {"status": result.get("status"), "slug": result.get("slug")})
+    return _back(back, msg=done)
 
 
 @app.post("/prospects/{prospect_id}/stage")
@@ -1205,6 +1282,7 @@ def _get_plugin_env_vars(plugin_key: str) -> list[str]:
         "email_smartlead": ["SMARTLEAD_API_KEY"],
         "email_smtp": ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "SMTP_FROM"],
         "sms_twilio": ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER"],
+        "lob_direct_mail": ["LOB_API_KEY", "LOB_FROM_NAME", "LOB_FROM_ADDRESS_LINE1", "LOB_FROM_ADDRESS_CITY", "LOB_FROM_ADDRESS_STATE", "LOB_FROM_ADDRESS_ZIP"],
         "apollo": ["APOLLO_API_KEY"],
         "hunter": ["HUNTER_API_KEY"],
         "calendly": ["CALENDLY_SCHEDULING_URL", "CALENDLY_API_TOKEN"],
@@ -1530,6 +1608,33 @@ async def admin_audit(request: Request):
         "active": "admin",
         "entries": get_db().list_audit(),
     })
+
+
+@app.get("/admin/jobs", response_class=HTMLResponse)
+async def admin_jobs(request: Request, msg: str = Query(default=""), error: str = Query(default="")):
+    runner = get_job_runner()
+    last = runner.last_runs()
+    due = {job.key for job in runner.due_jobs()}
+    return templates.TemplateResponse(request, "admin_jobs.html", {
+        "active": "admin",
+        "jobs": [{"job": job, "last": last.get(job.key), "due": job.key in due} for job in configured_jobs()],
+        "runs": runner.recent_runs(),
+        "enabled": jobs_enabled(),
+        "api_configured": bool(os.environ.get("U9ITUS_BASE_URL") and os.environ.get("U9ITUS_AGENCY_TOKEN")),
+        "msg": msg,
+        "error": error,
+    })
+
+
+@app.post("/admin/jobs/{job_key}/run")
+async def admin_run_job(request: Request, job_key: str):
+    if job_key not in {job.key for job in configured_jobs()}:
+        return _back("/admin/jobs", error="Unknown job.")
+    result = await asyncio.to_thread(get_job_runner().run, job_key, "manual")
+    get_db().audit(current_user(request), "job.run", "job", job_key, {"ok": result["ok"]})
+    if result["ok"]:
+        return _back("/admin/jobs", msg=f"Ran {job_key}.")
+    return _back("/admin/jobs", error=f"{job_key} finished with a problem. See the latest run below.")
 
 
 @app.get("/healthz")

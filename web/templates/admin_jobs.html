@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Jobs — agency-os{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Jobs</h1>
+    <p class="subtitle">Background work this server runs on a schedule. Both jobs are safe to repeat; sending email stays manual.</p>
+</div>
+{% set tab = 'jobs' %}{% include "_admin_tabs.html" %}
+
+{% if not enabled %}
+<div class="form-error">Scheduled runs are off on this server. Set <code>AGENCY_OS_RUN_JOBS=1</code> to turn them on. You can still run a job by hand below.</div>
+{% endif %}
+{% if not api_configured %}
+<div class="form-error">The u9itus API isn't configured. Set <code>U9ITUS_BASE_URL</code> and <code>U9ITUS_AGENCY_TOKEN</code>, or every run will report a problem.</div>
+{% endif %}
+
+<div class="table-scroll">
+<table class="data-table">
+    <thead><tr><th>Job</th><th>Runs every</th><th>Last run</th><th>Result</th><th></th></tr></thead>
+    <tbody>
+    {% for j in jobs %}
+    <tr>
+        <td><strong>{{ j.job.key }}</strong><br><span class="subtitle">{{ j.job.label }}</span></td>
+        <td>{% if j.job.every_minutes % 60 == 0 %}{{ (j.job.every_minutes // 60) }} h{% else %}{{ j.job.every_minutes }} min{% endif %}</td>
+        <td style="white-space: nowrap;">{{ j.last.started_at|replace('T', ' ') if j.last else 'Never' }}{% if j.due and enabled %}<br><span class="subtitle">due now</span>{% endif %}</td>
+        <td>
+            {% if not j.last %}—
+            {% elif j.last.finished_at is none %}<span class="stage-badge stage-contacted">running</span>
+            {% elif j.last.ok %}<span class="stage-badge stage-closed_won">ok</span>
+            {% else %}<span class="stage-badge stage-closed_lost">problem</span>{% endif %}
+        </td>
+        <td>
+            <form method="post" action="/admin/jobs/{{ j.job.key }}/run" class="inline-form">
+                <button type="submit" class="btn btn-sm">Run now</button>
+            </form>
+        </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+</div>
+
+<h3 style="margin-top: 2rem;">Recent runs</h3>
+{% if runs %}
+<div class="table-scroll">
+<table class="data-table">
+    <thead><tr><th>Started</th><th>Job</th><th>Trigger</th><th>Result</th><th>Details</th></tr></thead>
+    <tbody>
+    {% for r in runs %}
+    <tr>
+        <td style="white-space: nowrap;">{{ r.started_at|replace('T', ' ') }}</td>
+        <td><code>{{ r.job }}</code></td>
+        <td>{{ r.trigger }}</td>
+        <td>{% if r.finished_at is none %}running{% elif r.ok %}ok{% else %}problem{% endif %}</td>
+        <td class="audit-details">{{ r.summary or '' }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<div class="empty-state">No runs yet.</div>
+{% endif %}
+{% endblock %}

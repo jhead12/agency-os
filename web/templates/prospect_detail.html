@@ -21,6 +21,9 @@
     </div>
 </div>
 
+{% if msg %}<div class="save-notice">{{ msg }}</div>{% endif %}
+{% if error %}<div class="form-error">{{ error }}</div>{% endif %}
+
 <div class="detail-grid">
     <div class="detail-card">
         <h3>Organization Info {% if user.can('prospects.edit') %}<button class="btn btn-sm btn-secondary" style="float: right; margin-top: -4px;" onclick="toggleEditInfo()">✎ Edit</button>{% endif %}</h3>
@@ -92,7 +95,8 @@
         <div class="outreach-block">
             <div class="detail-row"><span>Campaign</span><strong>{{ o.campaign_name }}</strong></div>
             <div class="detail-row"><span>Stage</span>
-                <span class="stage-badge stage-{{ o.stage }}">{{ o.stage }}</span>
+                <span class="stage-badges"><span class="stage-badge stage-{{ o.stage }}">{{ o.stage }}</span>
+                {% if ready_to_close %}<span class="stage-badge stage-closed_won" title="They published their u9itus page">ready to close</span>{% endif %}</span>
             </div>
             <div class="detail-row"><span>Touches</span><span>{{ o.touch_count }}</span></div>
             <div class="detail-row"><span>Last Contacted</span><span>{{ o.last_contacted_at|fmt_date }}</span></div>
@@ -145,6 +149,58 @@
         {% endfor %}
     </div>
 </div>
+
+{% if portal_available or portal %}
+{% set status_labels = {
+    'demo': 'Demo live', 'expired': 'Expired', 'claimed': 'Claimed', 'published': 'Published'} %}
+{% set event_labels = {
+    'portal.viewed': 'Viewed the demo', 'portal.claimed': 'Claimed the page',
+    'portal_published': 'Published the page'} %}
+<div class="detail-card full-width portal-card">
+    <h3>u9itus demo page
+        {% if portal.status %}<span class="stage-badge stage-{{ {'demo': 'contacted', 'expired': 'closed_lost', 'claimed': 'demo_scheduled', 'published': 'closed_won'}[portal.status] or 'cold' }}">{{ status_labels[portal.status] or portal.status }}</span>{% endif %}
+    </h3>
+
+    {% if not portal.status and not portal_link %}
+    <p class="subtitle">No demo page yet. Creating one makes a private sample voter guide with this organization's name and state, and a link to send them.</p>
+    {% else %}
+    {% if portal_link %}
+    <div class="detail-row"><span>Demo link</span>
+        <span class="portal-link"><a href="{{ portal_link }}" target="_blank" rel="noopener noreferrer">Open demo</a>
+        <button type="button" class="btn btn-sm btn-secondary" data-copy="{{ portal_link }}">Copy link</button></span>
+    </div>
+    {% endif %}
+    {% if portal.expires_at and portal.status in ('demo', 'expired') %}<div class="detail-row"><span>Link expires</span><span>{{ portal.expires_at|fmt_date }}</span></div>{% endif %}
+    {% if portal.views_30d is not none and portal.views_30d is defined %}<div class="detail-row"><span>Views (30 days)</span><span>{{ portal.views_30d }}{% if portal.last_viewed_on %} · last {{ portal.last_viewed_on|fmt_date }}{% endif %}</span></div>{% endif %}
+    {% if portal.checked_at %}<div class="detail-row"><span>Checked</span><span>{{ portal.checked_at|fmt_date }}</span></div>{% endif %}
+    {% endif %}
+
+    {% if portal_events %}
+    <ul class="portal-events">
+        {% for e in portal_events %}
+        <li><span>{{ event_labels[e.type] or e.type }}</span><span class="subtitle">{{ e.timestamp|fmt_date }}</span></li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+
+    {% if user.can('portals.manage') and portal_available %}
+    <div class="portal-actions">
+        {% if not portal_link and portal.status not in ('claimed', 'published') %}
+        <form method="post" action="/prospects/{{ prospect.id }}/portal" class="inline-form">
+            <input type="hidden" name="action" value="{{ 'renew' if portal.status == 'expired' else 'provision' }}">
+            <button type="submit" class="btn btn-sm">{{ 'Renew demo page' if portal.status == 'expired' else 'Create demo page' }}</button>
+        </form>
+        {% endif %}
+        {% if portal.status or portal_link %}
+        <form method="post" action="/prospects/{{ prospect.id }}/portal" class="inline-form">
+            <input type="hidden" name="action" value="status">
+            <button type="submit" class="btn btn-sm btn-secondary">Refresh status</button>
+        </form>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+{% endif %}
 
 {% if email_logs %}
 <div class="detail-card full-width">
@@ -333,4 +389,13 @@ function toggleEditInfo() {
 }
 </script>
 
+<script>
+document.querySelectorAll('[data-copy]').forEach(function (button) {
+    button.addEventListener('click', function () {
+        var done = function (label) { button.textContent = label; setTimeout(function () { button.textContent = 'Copy link'; }, 1500); };
+        try { navigator.clipboard.writeText(button.dataset.copy).then(function () { done('Copied'); }, function () { done('Copy failed'); }); }
+        catch (e) { done('Copy failed'); }
+    });
+});
+</script>
 {% endblock %}
