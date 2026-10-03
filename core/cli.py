@@ -125,9 +125,14 @@ def enrich(ctx, campaign_name, enrich_all, limit):
 @click.option("--all", "all_campaigns", is_flag=True, help="Enqueue all campaigns")
 @click.option("--limit", default=50, help="Max outreach emails per campaign")
 @click.option("--dry-run", is_flag=True, help="Don't send, just print what would go out")
+@click.option("--test-email", default="", help="Redirect ALL emails to this address instead of prospects' real emails")
 @click.pass_context
-def enqueue(ctx, campaign_name, all_campaigns, limit, dry_run):
-    """Enqueue and send due follow-up emails."""
+def enqueue(ctx, campaign_name, all_campaigns, limit, dry_run, test_email):
+    """Enqueue and send due follow-up emails.
+
+    Use --test-email to redirect all outbound emails to a single address
+    for testing the full pipeline without emailing real prospects.
+    """
     if not campaign_name and not all_campaigns:
         click.echo("Error: specify --campaign <name> or --all")
         sys.exit(1)
@@ -135,16 +140,180 @@ def enqueue(ctx, campaign_name, all_campaigns, limit, dry_run):
     registry, db, campaigns = _setup(db_path=ctx.obj["db_path"])
     pipeline = Pipeline(db, registry)
 
+    if test_email:
+        click.echo(f"\n  ⚠ TEST MODE — all emails redirected to: {test_email}")
+
     targets = campaigns if all_campaigns else [c for c in campaigns if c.db_name == campaign_name]
     for campaign in targets:
         click.echo(f"\n{'='*60}")
         click.echo(f"Outreach: {campaign.name}")
         click.echo(f"{'='*60}")
-        stats = pipeline.enqueue_outreach(campaign, limit=limit, dry_run=dry_run)
+        stats = pipeline.enqueue_outreach(campaign, limit=limit, dry_run=dry_run, test_email=test_email)
         click.echo(f"  Sent:       {stats['sent']}")
         click.echo(f"  Skipped:    {stats['skipped']}")
         click.echo(f"  Failed:     {stats['failed']}")
         click.echo(f"  No contact: {stats['no_contact']}")
+
+
+@cli.command()
+@click.option("--campaign", "campaign_name", required=True, help="Campaign slug")
+@click.option("--to", "to_email", required=True, help="Email address to send the test to")
+@click.option("--script", "script_name", default="00_cold_outreach", help="Script stem (e.g. 00_cold_outreach)")
+@click.option("--prospect-id", type=int, default=0, help="Use a real prospect's data for personalization (0 = test data)")
+@click.pass_context
+def test_send(ctx, campaign_name, to_email, script_name, prospect_id):
+    """Send a single test email to verify scripts and personalization.
+
+    Uses real campaign scripts with either a real prospect's data (--prospect-id)
+    or test placeholder data. The email goes to --to, not to the prospect.
+
+    Examples:
+      agency_os.py test-send --campaign voter-guide--cbo-outreach-los-angeles --to joshua@u9itus.com
+      agency_os.py test-send --campaign voter-guide--cbo-outreach-los-angeles --to joshua@u9itus.com --script 01_followup_impact --prospect-id 1
+    """
+    registry, db, campaigns = _setup(db_path=ctx.obj["db_path"])
+    pipeline = Pipeline(db, registry)
+
+    campaign = next((c for c in campaigns if c.db_name == campaign_name), None)
+    if not campaign:
+        click.echo(f"Error: campaign '{campaign_name}' not found")
+        sys.exit(1)
+
+    # Load the script
+    try:
+        script = campaign.load_script(script_name)
+    except FileNotFoundError:
+        click.echo(f"Error: script '{script_name}' not found in {campaign_name}")
+        sys.exit(1)
+
+    # Use a real prospect or create test data
+    if prospect_id:
+        prospect = db.get_prospect(prospect_id)
+        if not prospect:
+            click.echo(f"Error: prospect {prospect_id} not found")
+            sys.exit(1)
+        # Get outreach row for this prospect
+        rows = db.conn.execute(
+            "SELECT * FROM outreach WHERE prospect_id = ? AND campaign_id = (SELECT id FROM campaigns WHERE name = ?)",
+            (prospect_id, campaign_name),
+        ).fetchall()
+        from core.models import Outreach as OutreachModel
+        if rows:
+            r = rows[0]
+            outreach = OutreachModel(
+                id=r["id"], prospect_id=r["prospect_id"], campaign_id=r["campaign_id"],
+                stage=r["stage"], touch_count=r["touch_count"],
+                contact_name=r["contact_name"], contact_email=r["contact_email"],
+                contact_phone=r["contact_phone"], contact_title=r["contact_title"],
+                script_variant=r["script_variant"],
+                last_contacted_at=r["last_contacted_at"],
+                next_follow_up_at=r["next_follow_up_at"],
+                demo_link=r["demo_link"], notes=r["notes"],
+                activity_log=[], assigned_to=r["assigned_to"],
+                closed_at=r["closed_at"], close_reason=r["close_reason"],
+            )
+        else:
+            outreach = None
+        click.echo(f"  Using real prospect: {prospect.name} ({prospect.city}, {prospect.state})")
+    else:
+        from core.models import Prospect, Outreach
+        prospect = Prospect(
+            id=0,
+            name="Test Community Organization",
+            ein="",
+            ntee_code="R",
+            website_url="https://example.org",
+            address="123 Main St",
+            city="Los Angeles",
+            state="CA",
+            zip="90001",
+            county="Los Angeles",
+            focus_area="civic_engagement",
+            annual_revenue=500000,
+            voter_engagement=1,
+            source="test",
+            source_url="",
+            metadata={},
+        )
+        from datetime import datetime
+        outreach = Outreach(
+            id=0,
+            prospect_id=0,
+            campaign_id=0,
+            stage="cold",
+            touch_count=0,
+            contact_name="Test Contact",
+            contact_email=to_email,
+            contact_phone="",
+            contact_title="Executive Director",
+            script_variant="",
+            last_contacted_at=None,
+            next_follow_up_at=None,
+            demo_link="https://www.u9itus.com/compare?state=ca",
+            notes="",
+            activity_log="[]",
+            assigned_to="",
+            closed_at=None,
+            close_reason="",
+        )
+        click.echo(f"  Using test prospect: {prospect.name}")
+
+    # Build variables and render
+    if outreach is None:
+        from core.models import Outreach as OutreachModel
+        from datetime import datetime
+        outreach = OutreachModel(
+            id=0, prospect_id=prospect.id, campaign_id=0,
+            stage="cold", touch_count=0,
+            contact_name="", contact_email=to_email,
+            contact_phone="", contact_title="",
+            script_variant="",
+            last_contacted_at=None, next_follow_up_at=None,
+            demo_link="https://www.u9itus.com/compare?state=ca",
+            notes="", activity_log=[], assigned_to="",
+            closed_at=None, close_reason="",
+        )
+
+    variables = pipeline._build_variables(campaign, prospect, outreach)
+    subject = pipeline._render(script.get("subject", ""), variables)
+    body = pipeline._render(script.get("body", ""), variables)
+
+    click.echo(f"\n  Script: {script_name}")
+    click.echo(f"  Subject: {subject}")
+    click.echo(f"  To: {to_email}")
+    click.echo(f"\n  Body preview:\n  {body[:300]}...")
+
+    # Send via the first configured channel
+    sent = False
+    for ch_key in campaign.channels:
+        channel = registry.get_channel(ch_key)
+        if not channel or not channel.is_configured():
+            continue
+        try:
+            result = channel.send(
+                recipient={"email": to_email, "phone": "", "name": outreach.contact_name or ""},
+                subject=subject,
+                body=body,
+                metadata={
+                    "campaign": campaign.db_name,
+                    "outreach_id": 0,
+                    "template_key": script.get("key", script_name),
+                    "test": True,
+                },
+            )
+            if result.status == "sent":
+                click.echo(f"\n  ✓ Sent via {ch_key} (ID: {result.provider_message_id or 'n/a'})")
+                sent = True
+                break
+            elif result.status == "skipped":
+                click.echo(f"  · {ch_key} skipped: {result.error}")
+            else:
+                click.echo(f"  ✗ {ch_key} failed: {result.error}")
+        except Exception as exc:
+            click.echo(f"  ✗ {ch_key} error: {exc}")
+
+    if not sent:
+        click.echo(f"\n  ✗ No channel could send. Configure SMTP or Smartlead in .env")
 
 
 @cli.command()

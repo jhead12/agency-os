@@ -98,8 +98,13 @@ class Pipeline:
 
     # ── Enqueue Outreach ───────────────────────────────────────────────
 
-    def enqueue_outreach(self, campaign: CampaignConfig, limit: int = 50, dry_run: bool = False) -> dict:
-        """Find due follow-ups, draft personalized emails, send via channel."""
+    def enqueue_outreach(self, campaign: CampaignConfig, limit: int = 50, dry_run: bool = False, test_email: str = "") -> dict:
+        """Find due follow-ups, draft personalized emails, send via channel.
+
+        If test_email is set, ALL outbound emails are redirected to that address
+        instead of the prospect's real email. This lets you test the full pipeline
+        (scripts, personalization, sending) without emailing real prospects.
+        """
         stats = {"sent": 0, "skipped": 0, "failed": 0, "no_contact": 0}
         campaign_id = self.db.get_campaign_id(campaign.db_name)
         if not campaign_id:
@@ -113,6 +118,13 @@ class Pipeline:
             if not (outreach.contact_email or outreach.contact_phone):
                 stats["no_contact"] += 1
                 continue
+
+            # In test mode, redirect all emails to the test address
+            send_email = outreach.contact_email or ""
+            send_phone = outreach.contact_phone or ""
+            if test_email:
+                send_email = test_email
+                send_phone = ""  # don't send SMS in test mode
 
             # Find the cadence step for this touch
             step = self._get_cadence_step(campaign, outreach.touch_count)
@@ -140,7 +152,7 @@ class Pipeline:
             body = self._render(script.get("body", ""), variables)
 
             if dry_run:
-                print(f"\n    [dry-run] To: {outreach.contact_email or outreach.contact_phone}")
+                print(f"\n    [dry-run] To: {send_email or send_phone}")
                 print(f"    Subject: {subject}")
                 print(f"    Body: {body[:120]}...")
                 stats["sent"] += 1
@@ -156,8 +168,8 @@ class Pipeline:
                 try:
                     result = channel.send(
                         recipient={
-                            "email": outreach.contact_email or "",
-                            "phone": outreach.contact_phone or "",
+                            "email": send_email,
+                            "phone": send_phone,
                             "name": outreach.contact_name or "",
                         },
                         subject=subject,
