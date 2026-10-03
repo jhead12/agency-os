@@ -9,6 +9,19 @@
     </div>
 </div>
 
+{% if msg %}<div class="save-notice">{{ msg }}</div>{% endif %}
+{% if error %}<div class="form-error">{{ error }}</div>{% endif %}
+{% if test_portal %}
+<div class="campaign-section">
+    <div class="campaign-header"><h2>Test portal</h2><code>{{ test_portal.slug }}</code></div>
+    <p style="color: var(--muted-foreground); font-size: 0.875rem; margin: 0 0 1rem 0;">
+        A blank, unclaimed demo on u9itus. It isn't tied to a prospect and expires on its own after 60 days.
+    </p>
+    {% if test_portal.demo_url %}<p><a href="{{ test_portal.demo_url }}" target="_blank" rel="noopener noreferrer">Open demo page</a></p>{% endif %}
+    {% if test_portal.claim_url %}<p><a href="{{ test_portal.claim_url }}" target="_blank" rel="noopener noreferrer">Open claim page</a> (creates the account)</p>{% endif %}
+</div>
+{% endif %}
+
 <div class="stats-grid">
     {% set ns = namespace(total=0, configured=0) %}
     {% for ptype, ptype_data in all_plugins.items() %}
@@ -50,6 +63,7 @@
                 <th>Status</th>
                 <th>Required Env Vars</th>
                 <th>Used By Campaigns</th>
+                {% if ptype_key == 'products' and user.can('portals.manage') %}<th>Test</th>{% endif %}
             </tr>
         </thead>
         <tbody>
@@ -83,6 +97,20 @@
                     <span style="color: var(--muted-foreground);">Not used</span>
                     {% endif %}
                 </td>
+                {% if ptype_key == 'products' and user.can('portals.manage') %}
+                <td>
+                    {% if p.key == 'u9itus_voter_guide' and p.configured %}
+                    <form method="post" action="/plugins/u9itus_voter_guide/test" class="inline-form">
+                        <input type="hidden" name="action" value="check">
+                        <button type="submit" class="btn btn-sm btn-secondary">Check connection</button>
+                    </form>
+                    <form method="post" action="/plugins/u9itus_voter_guide/test" class="inline-form">
+                        <input type="hidden" name="action" value="create">
+                        <button type="submit" class="btn btn-sm">Create test portal</button>
+                    </form>
+                    {% endif %}
+                </td>
+                {% endif %}
             </tr>
             {% endfor %}
         </tbody>

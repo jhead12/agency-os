@@ -29,7 +29,7 @@ import time
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from urllib.parse import quote, urlsplit, urlencode
 
 # Ensure project root is on path
@@ -1435,7 +1435,9 @@ async def campaign_list(request: Request):
 
 
 @app.get("/plugins", response_class=HTMLResponse)
-async def plugins_page(request: Request):
+async def plugins_page(request: Request, msg: str = Query(default=""), error: str = Query(default=""),
+                       test_slug: str = Query(default=""), test_demo: str = Query(default=""),
+                       test_claim: str = Query(default="")):
     """Plugin management — view all plugins, their type, status, and config requirements."""
     from core.registry import PluginRegistry
 
@@ -1510,7 +1512,61 @@ async def plugins_page(request: Request):
     return templates.TemplateResponse(request, "plugins.html", {
         "active": "plugins",
         "all_plugins": all_plugins,
+        "msg": msg,
+        "error": error,
+        "test_portal": {"slug": test_slug, "demo_url": test_demo, "claim_url": test_claim}
+                       if test_slug else None,
     })
+
+
+@app.post("/plugins/u9itus_voter_guide/test")
+async def test_u9itus_plugin(request: Request, action: str = Form(...)):
+    """Exercise the u9itus agency API from the Plugins page.
+
+    "check" reads one event (no side effects) to confirm the URL and token.
+    "create" makes a blank demo portal with a throwaway external_ref; it
+    expires on its own after 60 days like any unclaimed demo.
+    """
+    from plugins.products.u9itus_client import U9itusClient
+
+    if action not in ("check", "create"):
+        return _back("/plugins", error="Unknown action.")
+    client = U9itusClient()
+    if not client.is_configured():
+        return _back("/plugins", error="u9itus: set U9ITUS_BASE_URL and U9ITUS_AGENCY_TOKEN first.")
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S") + "-" + secrets.token_hex(2)
+
+    def call_u9itus() -> dict:
+        try:
+            if action == "check":
+                return client.pull_events(after=0, limit=1)
+            return client.provision_demo(
+                external_ref=f"agency-os:test:{stamp}",
+                name=f"Test Portal {stamp}",
+                state="CA",
+            )
+        finally:
+            client.close()
+
+    result = await asyncio.to_thread(call_u9itus)
+    if result.get("error"):
+        status = result.get("status")
+        hint = {401: "token rejected", 404: "agency API not deployed at this URL",
+                503: "AGENCY_OS_TOKEN_HASH not set on u9itus"}.get(status, "")
+        detail = hint or result.get("detail") or "request failed"
+        return _back("/plugins", error=f"u9itus test failed ({status or 'no response'}): {detail}")
+
+    db = get_db()
+    db.audit(current_user(request), f"plugin.u9itus.{action}", "plugin", None,
+             {"slug": result.get("slug")} if action == "create" else {})
+    if action == "check":
+        return _back("/plugins", msg="u9itus connection OK: token accepted.")
+    qs = urlencode({"msg": f"Test portal created ({result.get('status')}).",
+                    "test_slug": result.get("slug") or "",
+                    "test_demo": result.get("demo_url") or "",
+                    "test_claim": result.get("claim_url") or ""})
+    return RedirectResponse(url=f"/plugins?{qs}", status_code=303)
 
 
 def _get_plugin_env_vars(plugin_key: str) -> list[str]:
