@@ -1,0 +1,28 @@
+key: cbo_letter_cold
+stage: cold
+mail_type: letter
+subject: A voter guide your community will actually use
+body: |
+  Hi {{contact_first}},
+
+  I'm {{your_name}}, founder of U9itus. We build digital voter guides
+  that help communities research candidates and ballot measures in under
+  60 seconds.
+
+  I'm reaching out to {{org_name}} because of your work in
+  {{focus_area}} in {{city}}, {{state}}.
+
+  Here's what U9itus offers:
+  - Co-branded voter guide with your logo
+  - Verified candidate profiles from public records
+  - Ballot measures explained in plain language
+  - Available in English, Spanish, Chinese, Korean, and Tagalog
+  - No account required for your community members
+  - Embed on your website or share via email and social media
+
+  See it live: {{demo_link}}
+
+  Would you be open to a 15-minute call this week?
+
+  {{your_name}}
+  {{your_email}}

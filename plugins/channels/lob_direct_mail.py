@@ -50,15 +50,21 @@ class LobDirectMailChannel:
         )
 
     def send(self, recipient: dict, subject: str, body: str, metadata: dict) -> SendResult:
-        """Send a postcard to the recipient's mailing address.
+        """Send a postcard or letter to the recipient's mailing address.
 
         Never raises — returns a failed SendResult on error.
 
+        For postcards: subject → front headline, body → back message (500 char max)
+        For letters: subject → letter heading, body → letter content
+
+        If metadata contains 'mail_template' (a dict with front/back or subject/body
+        and mail_type), uses that instead of the generic subject/body. This lets
+        campaigns define dedicated mail templates in scripts/mail_*.yaml.
+
         recipient should have: name, address, city, state, zip
-        body is used as the back-side message (plain text, max 500 chars for postcards)
-        subject is used as the front-side headline (max 100 chars)
         metadata can include:
           - mail_type: "postcard" (default) or "letter"
+          - mail_template: dict from a mail_*.yaml script
           - campaign_id: for tracking
         """
         if not self.is_configured():
@@ -75,6 +81,17 @@ class LobDirectMailChannel:
             return SendResult(status="skipped", error="No mailing address for prospect")
 
         mail_type = metadata.get("mail_type", "postcard")
+        mail_template = metadata.get("mail_template")
+
+        # If a mail template is provided, use its content instead of subject/body
+        if mail_template:
+            mail_type = mail_template.get("mail_type", mail_type)
+            if mail_type == "letter":
+                subject = mail_template.get("subject", subject)
+                body = mail_template.get("body", body)
+            else:
+                subject = mail_template.get("front", subject)
+                body = mail_template.get("back", body)
 
         try:
             if mail_type == "letter":

@@ -26,6 +26,7 @@
             {% if user.can('campaigns.view') %}<a href="/campaigns" class="{% if active == 'campaigns' %}active{% endif %}">Campaigns</a>{% endif %}
             {% if user.can('campaigns.view') %}<a href="/plugins" class="{% if active == 'plugins' %}active{% endif %}">Plugins</a>{% endif %}
             {% if user.can('templates.view') %}<a href="/email-templates" class="{% if active == 'email-templates' %}active{% endif %}">Templates</a>{% endif %}
+            {% if user.can('templates.view') %}<a href="/mail-templates" class="{% if active == 'mail-templates' %}active{% endif %}">Mail Templates</a>{% endif %}
             {% if user.can('emails.view') %}<a href="/emails" class="{% if active == 'emails' %}active{% endif %}">Emails</a>{% endif %}
             {% if user.is_owner %}<a href="/admin/users" class="{% if active == 'admin' %}active{% endif %}">Team</a>{% endif %}
             {% if user.is_owner %}<a href="/admin/campaigns" class="{% if active == 'admin-campaigns' %}active{% endif %}">Campaigns Admin</a>{% endif %}

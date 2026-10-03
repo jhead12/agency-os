@@ -1,0 +1,17 @@
+key: cbo_postcard_cold
+stage: cold
+mail_type: postcard
+front: |
+  YOUR VOTERS DESERVE BETTER INFO
+  {{org_name}} × U9itus
+back: |
+  Hi {{contact_first}},
+
+  68% of voters lack confidence in candidate research.
+  U9itus gives {{org_name}} a co-branded, nonpartisan
+  voter guide — verified candidates, ballot measures
+  in plain language, no account needed.
+
+  See it live: {{demo_link}}
+
+  — {{your_name}}, {{your_email}}

@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+{% block title %}Mail Templates — agency-os{% endblock %}
+{% block content %}
+<div class="active" style="display:none"></div>
+
+<div class="page-header">
+    <div class="page-header-row">
+        <div>
+            <h1>Mail Templates</h1>
+            <p class="subtitle">{{ scripts|length }} direct mail templates · Postcards & letters via Lob</p>
+        </div>
+    </div>
+</div>
+
+{% if request.query_params.get('saved') %}
+<div class="alert alert-success">✅ Mail template saved. New direct mail will use the updated content.</div>
+{% endif %}
+
+{# ── Variables reference ── #}
+<div class="detail-card full-width" style="margin-bottom: 16px;">
+    <h3>📖 Available Variables</h3>
+    <p style="color: var(--muted-foreground); font-size: 12px; margin-bottom: 8px;">
+        Use these in front/back (postcards) or subject/body (letters). They get replaced with prospect-specific data.
+    </p>
+    <div class="var-grid">
+        <code>{{org_name}}</code> <span>Organization name</span>
+        <code>{{contact_first}}</code> <span>Contact first name</span>
+        <code>{{focus_area}}</code> <span>Focus area</span>
+        <code>{{city}}</code> <span>City</span>
+        <code>{{state}}</code> <span>State</span>
+        <code>{{your_name}}</code> <span>Sender name</span>
+        <code>{{your_email}}</code> <span>Sender email</span>
+        <code>{{demo_link}}</code> <span>Demo URL</span>
+    </div>
+</div>
+
+{# ── Preview selector ── #}
+<div class="filters">
+    <form method="get" action="/mail-templates" id="preview-form">
+        <label class="filter-label">Preview as:</label>
+        <select name="preview_prospect" class="filter-select" onchange="this.form.submit()">
+            <option value="0">— Select prospect —</option>
+            {% for p in prospect_options %}
+            <option value="{{ p.id }}" {% if preview_prospect == p.id %}selected{% endif %}>{{ p.name }} ({{ p.city or '—' }})</option>
+            {% endfor %}
+        </select>
+    </form>
+</div>
+
+{% if scripts|length == 0 %}
+<div class="campaign-section">
+    <p style="color: var(--muted-foreground);">No mail templates yet. Create <code>mail_*.yaml</code> files in a campaign's <code>scripts/</code> folder to get started.</p>
+</div>
+{% endif %}
+
+{# ── Template editors ── #}
+{% for script in scripts %}
+<div class="template-editor-card" id="template-{{ loop.index0 }}">
+    <div class="template-header">
+        <div>
+            <h3>{{ script.key or script.file_name }}</h3>
+            <div class="template-meta">
+                <span class="badge-stage">{{ script.mail_type or 'postcard' }}</span>
+                <span class="badge-stage">{{ script.stage or '—' }}</span>
+                <span class="muted">{{ script.campaign_name }}</span>
+                <span class="muted">{{ script.file_name }}.yaml</span>
+            </div>
+        </div>
+        <button class="btn btn-sm template-toggle-btn" onclick="toggleTemplate({{ loop.index0 }})">
+            {{ 'Collapse' if loop.index0 == 0 else 'Expand' }}
+        </button>
+    </div>
+
+    <div class="template-body" id="template-body-{{ loop.index0 }}" style="{{ 'display: none;' if loop.index0 > 0 else '' }}">
+        <form method="post" action="/mail-templates/save" class="template-form">
+            <input type="hidden" name="file_path" value="{{ script.file_path }}">
+            <input type="hidden" name="mail_type" value="{{ script.mail_type or 'postcard' }}">
+
+            {% if script.mail_type == 'letter' %}
+            {# ── Letter editor ── #}
+            <div class="form-row" style="margin-bottom: 12px;">
+                <label>Letter Subject (heading)</label>
+                <input type="text" name="subject" value="{{ script.subject or '' }}" class="filter-input"
+                       style="width: 100%; font-family: inherit;" id="subject-{{ loop.index0 }}">
+            </div>
+            <div class="form-row" style="margin-bottom: 12px;">
+                <label>Letter Body</label>
+                <textarea name="body" rows="14" class="template-textarea" id="body-{{ loop.index0 }}">{{ script.body or '' }}</textarea>
+            </div>
+            {% else %}
+            {# ── Postcard editor ── #}
+            <div class="form-row" style="margin-bottom: 12px;">
+                <label>Front (headline, max 100 chars)</label>
+                <input type="text" name="front" value="{{ script.front or '' }}" class="filter-input"
+                       style="width: 100%; font-family: inherit; text-transform: uppercase;" id="front-{{ loop.index0 }}"
+                       maxlength="100">
+            </div>
+            <div class="form-row" style="margin-bottom: 12px;">
+                <label>Back (message, max 500 chars)</label>
+                <textarea name="back" rows="8" class="template-textarea" id="back-{{ loop.index0 }}"
+                          maxlength="500">{{ script.back or '' }}</textarea>
+            </div>
+            {% endif %}
+
+            <div class="template-actions">
+                {% if request.state.user.can('templates.edit') %}<button type="submit" class="btn">💾 Save Template</button>{% endif %}
+                {% if preview_p %}
+                <button type="button" class="btn btn-sm btn-secondary"
+                        onclick="loadMailPreview({{ loop.index0 }}, {{ preview_p.id }})">👁 Preview for {{ preview_p.name[:20] }}</button>
+                {% endif %}
+            </div>
+        </form>
+
+        {# Preview area — postcard or letter visual ── #}
+        <div class="template-preview" id="preview-{{ loop.index0 }}" style="display: none;">
+            <div class="preview-header">Preview</div>
+            <div id="preview-content-{{ loop.index0 }}"></div>
+        </div>
+    </div>
+</div>
+{% endfor %}
+
+<script>
+function toggleTemplate(idx) {
+    const body = document.getElementById('template-body-' + idx);
+    const btn = event.target;
+    if (body.style.display === 'none') {
+        body.style.display = 'block';
+        btn.textContent = 'Collapse';
+    } else {
+        body.style.display = 'none';
+        btn.textContent = 'Expand';
+    }
+}
+
+function loadMailPreview(idx, prospectId) {
+    const previewDiv = document.getElementById('preview-' + idx);
+    const contentDiv = document.getElementById('preview-content-' + idx);
+    previewDiv.style.display = 'block';
+    contentDiv.innerHTML = '<p>Loading...</p>';
+
+    fetch('/mail-templates/preview/' + idx + '?prospect_id=' + prospectId)
+        .then(r => r.json())
+        .then(data => {
+            if (data.error) {
+                contentDiv.innerHTML = '<p style="color: red;">' + data.error + '</p>';
+                return;
+            }
+            if (data.mail_type === 'letter') {
+                contentDiv.innerHTML = `
+                    <div style="border: 1px solid var(--border); border-radius: 8px; padding: 24px; max-width: 600px; background: white; color: #1a1a1a;">
+                        <h2 style="font-size: 18px; margin-bottom: 16px;">${data.subject || '(no subject)'}</h2>
+                        <div style="white-space: pre-wrap; font-size: 14px; line-height: 1.6;">${data.body || '(no body)'}</div>
+                    </div>`;
+            } else {
+                contentDiv.innerHTML = `
+                    <div style="display: flex; gap: 16px; flex-wrap: wrap;">
+                        <div style="width: 280px; height: 180px; border: 1px solid var(--border); border-radius: 8px; padding: 20px; background: linear-gradient(135deg, #1e3a5f, #2d5a87); color: white; display: flex; align-items: center; justify-content: center; text-align: center;">
+                            <div style="font-size: 16px; font-weight: 700; text-transform: uppercase; line-height: 1.4;">${data.front || '(no front)'}</div>
+                        </div>
+                        <div style="width: 280px; height: 180px; border: 1px solid var(--border); border-radius: 8px; padding: 16px; background: white; color: #1a1a1a; font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow: hidden;">
+                            ${data.back || '(no back)'}
+                        </div>
+                    </div>
+                    <p style="color: var(--muted-foreground); font-size: 12px; margin-top: 8px;">← Front (4x6) &nbsp;&nbsp; Back (4x6) →</p>`;
+            }
+        })
+        .catch(err => {
+            contentDiv.innerHTML = '<p style="color: red;">Error: ' + err.toString() + '</p>';
+        });
+}
+</script>
+
+{% endblock %}

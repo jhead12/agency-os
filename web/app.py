@@ -747,6 +747,164 @@ async def preview_template(
     })
 
 
+# ── Mail templates (Lob direct mail) ────────────────────────────────
+
+
+def _load_mail_scripts():
+    """Load all mail_*.yaml scripts from all campaigns."""
+    import yaml
+    all_scripts = []
+    for c in get_campaigns():
+        scripts_dir = c.config_dir / "scripts"
+        if not scripts_dir.exists():
+            continue
+        for script_file in sorted(scripts_dir.glob("mail_*.yaml")):
+            try:
+                script = yaml.safe_load(script_file.read_text())
+                script["file_name"] = script_file.stem
+                script["file_path"] = str(script_file)
+                script["campaign_name"] = c.name
+                script["campaign_dir"] = str(c.config_dir)
+                all_scripts.append(script)
+            except Exception:
+                continue
+    return all_scripts
+
+
+@app.get("/mail-templates", response_class=HTMLResponse)
+async def mail_templates_page(
+    request: Request,
+    preview_prospect: int = Query(default=0),
+):
+    """Lob mail template editor — view, edit, and preview postcard/letter templates."""
+    all_scripts = _load_mail_scripts()
+    db = get_db()
+
+    # Get prospect for preview
+    preview_p = None
+    if preview_prospect:
+        preview_p = db.get_prospect(preview_prospect)
+
+    # Get prospects for preview dropdown
+    prospect_options = db.conn.execute(
+        """SELECT p.id, p.name, p.city FROM prospects p
+           WHERE p.address IS NOT NULL AND p.address != ''
+           ORDER BY p.name LIMIT 50"""
+    ).fetchall()
+
+    return templates.TemplateResponse(request, "mail_templates.html", {
+        "active": "mail-templates",
+        "scripts": all_scripts,
+        "prospect_options": prospect_options,
+        "preview_prospect": preview_prospect,
+        "preview_p": preview_p,
+    })
+
+
+@app.post("/mail-templates/save")
+async def save_mail_template(
+    request: Request,
+    file_path: str = Form(...),
+    front: str = Form(default=""),
+    back: str = Form(default=""),
+    subject: str = Form(default=""),
+    body: str = Form(default=""),
+    mail_type: str = Form(default="postcard"),
+):
+    """Save an edited mail template back to its YAML file."""
+    from pathlib import Path
+    import yaml
+
+    path = Path(file_path).resolve()
+    if (
+        not path.exists()
+        or not path.name.endswith(".yaml")
+        or not path.is_relative_to(CAMPAIGNS_DIR.resolve())
+    ):
+        raise HTTPException(status_code=400, detail="Invalid file path")
+
+    existing = yaml.safe_load(path.read_text()) or {}
+    existing["mail_type"] = mail_type
+    if mail_type == "letter":
+        existing["subject"] = subject
+        existing["body"] = body
+        # Remove postcard fields if they exist
+        existing.pop("front", None)
+        existing.pop("back", None)
+    else:
+        existing["front"] = front
+        existing["back"] = back
+        # Remove letter fields if they exist
+        existing.pop("subject", None)
+        existing.pop("body", None)
+
+    path.write_text(yaml.dump(existing, default_flow_style=False, sort_keys=False, allow_unicode=True))
+    get_db().audit(current_user(request), "mail_template.save", "mail_template",
+                   str(path.relative_to(CAMPAIGNS_DIR.resolve())), {"mail_type": mail_type})
+    return RedirectResponse(url="/mail-templates?saved=1", status_code=303)
+
+
+@app.get("/mail-templates/preview/{script_idx}")
+async def preview_mail_template(
+    script_idx: int,
+    prospect_id: int = Query(default=0),
+):
+    """Return a JSON preview of a mail template rendered for a prospect."""
+    import re
+    all_scripts = _load_mail_scripts()
+
+    if script_idx >= len(all_scripts):
+        return JSONResponse({"error": "Mail template not found"})
+
+    script = all_scripts[script_idx]
+    db = get_db()
+
+    prospect = None
+    if prospect_id:
+        prospect = db.get_prospect(prospect_id)
+
+    variables = {}
+    if prospect:
+        for c in get_campaigns():
+            if str(c.config_dir) == script["campaign_dir"]:
+                variables = {
+                    "org_name": prospect.name,
+                    "contact_first": "there",
+                    "focus_area": (prospect.focus_area or "civic engagement").replace("_", " "),
+                    "city": prospect.city or "Los Angeles",
+                    "state": prospect.state or "CA",
+                    "your_name": c.sender_name,
+                    "your_email": c.sender_email,
+                }
+                registry = PluginRegistry()
+                registry.discover("plugins")
+                product = registry.get_product(c.product)
+                if product:
+                    variables["demo_link"] = product.generate_demo_link(prospect) or ""
+                    variables["value_prop"] = product.describe_value(prospect) or ""
+                break
+
+    def render(text):
+        def replace(match):
+            key = match.group(1).strip()
+            return str(variables.get(key, "{{" + key + "}}"))
+        return re.sub(r"\{\{(\w+)\}\}", replace, text)
+
+    mail_type = script.get("mail_type", "postcard")
+    if mail_type == "letter":
+        return JSONResponse({
+            "mail_type": "letter",
+            "subject": render(script.get("subject", "")),
+            "body": render(script.get("body", "")),
+        })
+    else:
+        return JSONResponse({
+            "mail_type": "postcard",
+            "front": render(script.get("front", "")),
+            "back": render(script.get("back", "")),
+        })
+
+
 @app.get("/call-log", response_class=HTMLResponse)
 async def call_log_page(
     request: Request,

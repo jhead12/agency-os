@@ -1,0 +1,16 @@
+key: cbo_postcard_followup
+stage: contacted
+mail_type: postcard
+front: |
+  DID YOUR VOTERS FIND WHAT THEY NEEDED?
+  {{org_name}} × U9itus
+back: |
+  Hi {{contact_first}},
+
+  Following up — civic orgs across California are using
+  U9itus to help their communities make informed voting
+  decisions. Co-branded, multilingual, mobile-first.
+
+  Your demo is ready: {{demo_link}}
+
+  — {{your_name}}, {{your_email}}

@@ -122,6 +122,9 @@ ROUTE_RULES: dict[str, str] = {
     "POST /admin/campaigns/{campaign_slug}": OWNER,
     "POST /admin/campaigns/{campaign_id}/toggle": OWNER,
     "GET /plugins": "campaigns.view",
+    "GET /mail-templates": "templates.view",
+    "POST /mail-templates/save": "templates.edit",
+    "GET /mail-templates/preview/{script_idx}": "templates.view",
 }
 
 # Pages in nav order — used to pick a landing page the user can actually open.
