@@ -62,8 +62,8 @@ def jobs_enabled() -> bool:
 class JobRunner:
     """Runs jobs against one database. One run of a given job at a time."""
 
-    def __init__(self, db_path: str, plugins_dir: str, load_campaigns: Callable[[], list[CampaignConfig]]):
-        self.db_path = db_path
+    def __init__(self, db_url: str, plugins_dir: str, load_campaigns: Callable[[], list[CampaignConfig]]):
+        self.db_url = db_url
         self.plugins_dir = plugins_dir
         self.load_campaigns = load_campaigns
         self._locks = {job.key: threading.Lock() for job in configured_jobs()}
@@ -78,12 +78,11 @@ class JobRunner:
         if not lock.acquire(blocking=False):
             return {"ok": False, "summary": {"error": "Already running"}}
 
-        db = Database(self.db_path)
+        db = Database(self.db_url)
         run_id = db.conn.execute(
-            "INSERT INTO job_runs (job, trigger, started_at) VALUES (?, ?, ?)",
+            "INSERT INTO job_runs (job, trigger, started_at) VALUES (?, ?, ?) RETURNING id",
             (key, trigger, datetime.now().isoformat(timespec="seconds")),
-        ).lastrowid
-        db.conn.commit()
+        ).fetchone()["id"]
         try:
             summary = self._execute(key, db)
             # A product that isn't configured did nothing; show that as a problem.
@@ -99,7 +98,6 @@ class JobRunner:
             "UPDATE job_runs SET finished_at = ?, ok = ?, summary = ? WHERE id = ?",
             (datetime.now().isoformat(timespec="seconds"), int(ok), json.dumps(summary, default=str), run_id),
         )
-        db.conn.commit()
         return {"ok": ok, "summary": summary}
 
     def _execute(self, key: str, db: Database) -> dict:
@@ -134,7 +132,7 @@ class JobRunner:
     # ── Schedule ───────────────────────────────────────────────────────
 
     def last_runs(self) -> dict[str, dict]:
-        db = Database(self.db_path)
+        db = Database(self.db_url)
         rows = db.conn.execute(
             """SELECT r.* FROM job_runs r
                JOIN (SELECT job, MAX(id) AS id FROM job_runs GROUP BY job) latest ON latest.id = r.id"""
@@ -152,7 +150,7 @@ class JobRunner:
         return due
 
     def recent_runs(self, limit: int = 30) -> list[dict]:
-        db = Database(self.db_path)
+        db = Database(self.db_url)
         rows = db.conn.execute("SELECT * FROM job_runs ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
         return [dict(row) for row in rows]
 

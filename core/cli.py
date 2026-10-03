@@ -11,6 +11,7 @@ Usage:
     agency-os digest --campaign voter-guide-cbo
     agency-os campaigns
     agency-os plugins
+    agency-os import-sqlite --from db.sqlite
     agency-os users list
     agency-os users create-owner --email you@example.com
     agency-os users grant-owner --email someone@example.com
@@ -23,27 +24,34 @@ from __future__ import annotations
 import json
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 import click
 
 from core import access
 from core.access import AccessError, OWNER_ROLE
-from core.campaign import discover_campaigns
-from core.db import Database
+from core.campaign import discover_campaigns, sync_campaign_files
+from core.db import Database, redact_url
 from core.pipeline import Pipeline
 from core.registry import PluginRegistry
 
 
-def _setup(campaigns_dir: str = "campaigns", plugins_dir: str = "plugins", db_path: str = "db.sqlite"):
-    """Initialize registry + DB, discover plugins + campaigns."""
+def _setup(campaigns_dir: str = "campaigns", plugins_dir: str = "plugins", db_url: str = ""):
+    """Initialize registry + DB, discover plugins + campaigns.
+
+    Campaign files come from the database (seeded from campaigns_dir), so the
+    CLI sees the same campaign config the dashboard edits.
+    """
     registry = PluginRegistry()
     print("Discovering plugins...")
     registry.discover(plugins_dir)
-    db = Database(db_path)
-    print(f"Database: {db_path}")
+    db = Database(db_url or None)
+    print(f"Database: {redact_url(db.url)}")
     print("Discovering campaigns...")
-    campaigns = discover_campaigns(campaigns_dir)
+    cache_dir = os.environ.get("AGENCY_OS_CAMPAIGNS_DIR",
+                               str(Path(tempfile.gettempdir()) / "agency-os-campaigns"))
+    campaigns = discover_campaigns(sync_campaign_files(db, campaigns_dir, cache_dir))
     for c in campaigns:
         print(f"  + {c.db_name}")
     return registry, db, campaigns
@@ -59,13 +67,13 @@ def _get_campaign(campaigns: list, name: str):
 
 
 @click.group()
-@click.option("--db", default=lambda: os.environ.get("AGENCY_OS_DB", "db.sqlite"),
-              help="Path to SQLite database file (default: $AGENCY_OS_DB or db.sqlite)")
+@click.option("--db", default=lambda: os.environ.get("DATABASE_URL", ""),
+              help="PostgreSQL connection URL (default: $DATABASE_URL)")
 @click.pass_context
 def cli(ctx, db):
     """agency-os — plugin-driven sales outreach engine."""
     ctx.ensure_object(dict)
-    ctx.obj["db_path"] = db
+    ctx.obj["db_url"] = db
 
 
 @cli.command()
@@ -79,7 +87,7 @@ def sync(ctx, campaign_name, sync_all, dry_run):
         click.echo("Error: specify --campaign <name> or --all")
         sys.exit(1)
 
-    registry, db, campaigns = _setup(db_path=ctx.obj["db_path"])
+    registry, db, campaigns = _setup(db_url=ctx.obj["db_url"])
     pipeline = Pipeline(db, registry)
 
     targets = campaigns if sync_all else [c for c in campaigns if c.db_name == campaign_name]
@@ -109,7 +117,7 @@ def enrich(ctx, campaign_name, enrich_all, limit):
         click.echo("Error: specify --campaign <name> or --all")
         sys.exit(1)
 
-    registry, db, campaigns = _setup(db_path=ctx.obj["db_path"])
+    registry, db, campaigns = _setup(db_url=ctx.obj["db_url"])
     pipeline = Pipeline(db, registry)
 
     targets = campaigns if enrich_all else [c for c in campaigns if c.db_name == campaign_name]
@@ -137,7 +145,7 @@ def enqueue(ctx, campaign_name, all_campaigns, limit, dry_run, test_email):
         click.echo("Error: specify --campaign <name> or --all")
         sys.exit(1)
 
-    registry, db, campaigns = _setup(db_path=ctx.obj["db_path"])
+    registry, db, campaigns = _setup(db_url=ctx.obj["db_url"])
     pipeline = Pipeline(db, registry)
 
     if test_email:
@@ -171,7 +179,7 @@ def test_send(ctx, campaign_name, to_email, script_name, prospect_id):
       agency_os.py test-send --campaign voter-guide--cbo-outreach-los-angeles --to joshua@u9itus.com
       agency_os.py test-send --campaign voter-guide--cbo-outreach-los-angeles --to joshua@u9itus.com --script 01_followup_impact --prospect-id 1
     """
-    registry, db, campaigns = _setup(db_path=ctx.obj["db_path"])
+    registry, db, campaigns = _setup(db_url=ctx.obj["db_url"])
     pipeline = Pipeline(db, registry)
 
     campaign = next((c for c in campaigns if c.db_name == campaign_name), None)
@@ -328,7 +336,7 @@ def provision(ctx, campaign_name, all_campaigns, limit, dry_run):
         click.echo("Error: specify --campaign <name> or --all")
         sys.exit(1)
 
-    registry, db, campaigns = _setup(db_path=ctx.obj["db_path"])
+    registry, db, campaigns = _setup(db_url=ctx.obj["db_url"])
     pipeline = Pipeline(db, registry)
 
     targets = campaigns if all_campaigns else [c for c in campaigns if c.db_name == campaign_name]
@@ -356,7 +364,7 @@ def pull_events(ctx, campaign_name, all_campaigns, dry_run):
         click.echo("Error: specify --campaign <name> or --all")
         sys.exit(1)
 
-    registry, db, campaigns = _setup(db_path=ctx.obj["db_path"])
+    registry, db, campaigns = _setup(db_url=ctx.obj["db_url"])
     pipeline = Pipeline(db, registry)
 
     targets = campaigns if all_campaigns else [c for c in campaigns if c.db_name == campaign_name]
@@ -382,7 +390,7 @@ def stale(ctx, campaign_name, all_campaigns):
         click.echo("Error: specify --campaign <name> or --all")
         sys.exit(1)
 
-    registry, db, campaigns = _setup(db_path=ctx.obj["db_path"])
+    registry, db, campaigns = _setup(db_url=ctx.obj["db_url"])
     pipeline = Pipeline(db, registry)
 
     targets = campaigns if all_campaigns else [c for c in campaigns if c.db_name == campaign_name]
@@ -404,7 +412,7 @@ def bookings(ctx, campaign_name, all_campaigns, days, dry_run):
         click.echo("Error: specify --campaign <name> or --all")
         sys.exit(1)
 
-    registry, db, campaigns = _setup(db_path=ctx.obj["db_path"])
+    registry, db, campaigns = _setup(db_url=ctx.obj["db_url"])
     pipeline = Pipeline(db, registry)
 
     targets = campaigns if all_campaigns else [c for c in campaigns if c.db_name == campaign_name]
@@ -434,7 +442,7 @@ def digest(ctx, campaign_name, all_campaigns):
         click.echo("Error: specify --campaign <name> or --all")
         sys.exit(1)
 
-    registry, db, campaigns = _setup(db_path=ctx.obj["db_path"])
+    registry, db, campaigns = _setup(db_url=ctx.obj["db_url"])
     pipeline = Pipeline(db, registry)
 
     targets = campaigns if all_campaigns else [c for c in campaigns if c.db_name == campaign_name]
@@ -456,7 +464,7 @@ def digest(ctx, campaign_name, all_campaigns):
 @click.pass_context
 def campaigns(ctx):
     """List all discovered campaigns."""
-    registry, db, all_campaigns = _setup(db_path=ctx.obj["db_path"])
+    registry, db, all_campaigns = _setup(db_url=ctx.obj["db_url"])
     click.echo(f"\nActive campaigns ({len(all_campaigns)}):")
     for c in all_campaigns:
         click.echo(f"  {c.db_name:30s} product={c.product}")
@@ -469,7 +477,7 @@ def campaigns(ctx):
 @click.pass_context
 def plugins(ctx, plugin_type):
     """List all discovered plugins."""
-    registry, db, all_campaigns = _setup(db_path=ctx.obj["db_path"])
+    registry, db, all_campaigns = _setup(db_url=ctx.obj["db_url"])
     all_plugins = registry.list_plugins()
     if plugin_type == "all":
         for ptype, keys in all_plugins.items():
@@ -483,6 +491,27 @@ def plugins(ctx, plugin_type):
             click.echo(f"  {k}")
 
 
+@cli.command("import-sqlite")
+@click.option("--from", "sqlite_path", required=True, type=click.Path(exists=True, dir_okay=False),
+              help="SQLite database file from before the PostgreSQL move (e.g. db.sqlite)")
+@click.pass_context
+def import_sqlite_cmd(ctx, sqlite_path):
+    """Copy an old SQLite database into an empty PostgreSQL database (one time)."""
+    from core.migrate import import_sqlite
+
+    db = Database(ctx.obj["db_url"] or None)
+    click.echo(f"Importing {sqlite_path} into {redact_url(db.url)}...")
+    try:
+        copied, skipped = import_sqlite(sqlite_path, db)
+    except RuntimeError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    for table, count in copied.items():
+        note = f" (skipped {skipped[table]} pointing at deleted rows)" if table in skipped else ""
+        click.echo(f"  {table}: {count}{note}")
+    click.echo("Done.")
+
+
 # ── Users ──────────────────────────────────────────────────────────────
 # Day-to-day user and role management happens in the web UI (/admin/users).
 # These commands cover bootstrap and recovery, so they run as "cli" in the
@@ -490,7 +519,7 @@ def plugins(ctx, plugin_type):
 
 
 def _access_db(ctx) -> Database:
-    db = Database(ctx.obj["db_path"])
+    db = Database(ctx.obj["db_url"] or None)
     db.install_access()
     return db
 

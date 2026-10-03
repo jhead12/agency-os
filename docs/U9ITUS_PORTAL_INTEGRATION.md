@@ -374,9 +374,7 @@ Until the hash is set, the API answers `503 service_not_configured`.
 
 ### Running the jobs on Railway (A7, done)
 
-agency-os's SQLite file sits on a volume attached to the web service, and a
-Railway volume can only be attached to one service, so a separate cron service
-can't reach the database. The web app runs the jobs itself (`core/jobs.py`): a
+The web app runs the jobs itself (`core/jobs.py`): a
 background loop started with the app wakes every 5 minutes and runs any job whose
 interval has passed since its last run. Runs are recorded in the `job_runs` table,
 so a redeploy doesn't re-run a job that just ran.
@@ -392,10 +390,8 @@ so a redeploy doesn't re-run a job that just ran.
   **Run now** button for each job. A run with the u9itus API unconfigured shows as a problem.
 - Sending email (`enqueue`) is deliberately not scheduled; it stays a manual step.
 
-The CLI's `--db` defaults to `./db.sqlite`, not the volume. When
-running the CLI on the Railway service (`railway run` or a shell), set
-`AGENCY_OS_DB=$RAILWAY_VOLUME_MOUNT_PATH/db.sqlite`, or it will create an empty
-database instead of using the real one.
+The CLI's `--db` defaults to `$DATABASE_URL`, which is set on the Railway
+service, so `railway run` and a shell there use the real database.
 
 ### End-to-end test (2026-10-02)
 

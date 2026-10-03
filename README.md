@@ -6,9 +6,13 @@ any product or service.
 
 ## Quick start
 
+Data lives in PostgreSQL. Point `DATABASE_URL` at a database (tables are
+created on first use):
+
 ```bash
 cd agency-os
 pip install -r requirements.txt
+createdb agency_os && export DATABASE_URL=postgresql://localhost/agency_os
 python agency_os.py campaigns          # list discovered campaigns
 python agency_os.py plugins            # list discovered plugins
 python agency_os.py sync --campaign voter-guide-cbo
@@ -28,26 +32,34 @@ To test the image locally with Podman (or Docker):
 podman build -t agency-os .
 podman run --rm -p 8000:8000 \
   -e AGENCY_OS_OWNER_EMAIL=you@example.com -e AGENCY_OS_OWNER_PASSWORD=change-me-now \
-  -e RAILWAY_VOLUME_MOUNT_PATH=/data -v agency-os-data:/data agency-os
+  -e DATABASE_URL=postgresql://user:pass@host.containers.internal/agency_os agency-os
 ```
 
 1. Create a Railway project from this GitHub repo.
-2. **Add a volume** to the service, mounted at `/data`. The app detects
-   `RAILWAY_VOLUME_MOUNT_PATH` and stores `db.sqlite` and the editable
-   `campaigns/` folder there (seeded from the repo on first boot), so data and
-   template edits survive redeploys.
+2. **Add a PostgreSQL service** to the project (+ New → Database → PostgreSQL).
+   On the web service, set `DATABASE_URL=${{Postgres.DATABASE_URL}}` (a
+   reference variable, so it follows the database's credentials). The web
+   service needs no volume; everything, including campaign files, is stored
+   in Postgres and survives redeploys.
 3. Set variables: `AGENCY_OS_OWNER_EMAIL` and `AGENCY_OS_OWNER_PASSWORD`
    (creates the first owner account on an empty database — see
    [Users & permissions](#users--permissions)) plus whichever API keys from
    `.env.example` you use.
 4. Generate a public domain under Settings → Networking.
 
-To bring your local data along, upload `db.sqlite` into the volume once
-(e.g. `railway ssh`, then copy it to `/data/db.sqlite`) before using the app.
+To bring data over from an old SQLite `db.sqlite`, import it once into the
+empty database **before** the first boot creates an owner (the import refuses
+to run if users or prospects already exist). From your machine, using the
+Postgres service's public URL (`DATABASE_PUBLIC_URL`):
 
-Note: after the first boot, campaign YAML on the volume is the source of
-truth — changes to `campaigns/` in git won't overwrite it. Delete
-`/data/campaigns` and redeploy to re-seed.
+```bash
+DATABASE_URL='postgresql://...' python agency_os.py import-sqlite --from db.sqlite
+```
+
+Campaign files: on first use the database is seeded from `campaigns/` in the
+repo, then edits made in the dashboard are kept. Files added to `campaigns/`
+in git are picked up on the next start; files already in the database are
+not overwritten by git changes.
 
 ## Architecture
 
@@ -217,8 +229,8 @@ and is sent over SMTP (`SMTP_HOST`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`).
 Repeat `--role` to give several roles. Re-inviting an existing user leaves
 their roles alone, so it doubles as a password reset link.
 
-Recovery from the server shell (on Railway, use `railway ssh` and pass
-`--db /data/db.sqlite`):
+Recovery from the server shell (on Railway, `railway ssh`; `DATABASE_URL` is
+already set there):
 
 ```bash
 python agency_os.py users list
@@ -227,7 +239,8 @@ python agency_os.py users grant-owner --email someone@example.com   # re-promote
 python agency_os.py users set-password --email someone@example.com
 ```
 
-Run the access tests with `python -m pytest tests/`.
+Run the tests against a scratch database (it is wiped, and its name must
+contain "test"): `TEST_DATABASE_URL=postgresql://localhost/agency_os_test python -m pytest tests/`.
 
 ## API keys
 

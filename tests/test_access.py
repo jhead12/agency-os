@@ -20,10 +20,12 @@ PASSWORD = "correct-horse-battery"
 
 
 @pytest.fixture
-def db(tmp_path, monkeypatch):
-    monkeypatch.setattr(webapp, "DB_PATH", str(tmp_path / "test.sqlite"))
+def db(pg_url, tmp_path, monkeypatch):
+    monkeypatch.setattr(webapp, "DB_URL", pg_url)
+    monkeypatch.setattr(webapp, "CAMPAIGNS_DIR", tmp_path / "campaigns")
+    monkeypatch.setattr(webapp, "_campaigns_synced", False)
     webapp._login_failures.clear()
-    database = Database(webapp.DB_PATH)
+    database = Database(pg_url)
     database.install_access()
     return database
 
@@ -253,12 +255,12 @@ def test_installer_preserves_edited_starter_roles(db):
 def test_calls_are_attributed_to_signed_in_user(db):
     make_user(db, "caller@x.com", "Caller")
     c = db.conn
-    prospect_id = c.execute("INSERT INTO prospects (name) VALUES ('Org')").lastrowid
-    campaign_id = c.execute("INSERT INTO campaigns (name) VALUES ('camp')").lastrowid
+    prospect_id = c.execute("INSERT INTO prospects (name) VALUES ('Org') RETURNING id").fetchone()[0]
+    campaign_id = c.execute("INSERT INTO campaigns (name) VALUES ('camp') RETURNING id").fetchone()[0]
     outreach_id = c.execute(
-        "INSERT INTO outreach (prospect_id, campaign_id) VALUES (?, ?)", (prospect_id, campaign_id)
-    ).lastrowid
-    c.commit()
+        "INSERT INTO outreach (prospect_id, campaign_id) VALUES (?, ?) RETURNING id",
+        (prospect_id, campaign_id),
+    ).fetchone()[0]
 
     r = client_for("caller@x.com").post("/call-log/record", data={
         "prospect_id": prospect_id, "outreach_id": outreach_id, "campaign_id": campaign_id,
@@ -312,7 +314,6 @@ def test_welcome_link_dead_for_deactivated_or_expired_user(db):
     rep_id = make_user(db, "rep@x.com", "Caller")
     path = invite(db, rep_id)
     db.conn.execute("UPDATE invites SET expires_at = '2000-01-01'")
-    db.conn.commit()
     assert client_for().get(path).status_code == 410
 
     path = invite(db, rep_id)
@@ -326,7 +327,7 @@ def test_cli_invite_creates_user_and_prints_email(db):
     from core.cli import cli
 
     r = CliRunner().invoke(cli, [
-        "--db", webapp.DB_PATH, "users", "invite", "--email", "New.Rep@x.com",
+        "--db", webapp.DB_URL, "users", "invite", "--email", "New.Rep@x.com",
         "--name", "Jane Rep", "--role", "sales rep", "--base-url", "https://dash.example/",
         "--no-send",
     ])
@@ -337,6 +338,6 @@ def test_cli_invite_creates_user_and_prints_email(db):
     assert user.roles == ("Sales Rep",)
     assert client_for().get(link.removeprefix("https://dash.example")).status_code == 200
 
-    r = CliRunner().invoke(cli, ["--db", webapp.DB_PATH, "users", "invite",
+    r = CliRunner().invoke(cli, ["--db", webapp.DB_URL, "users", "invite",
                                  "--email", "x@x.com", "--role", "Nope", "--base-url", "https://d", "--no-send"])
     assert r.exit_code == 1 and "Unknown role" in r.output

@@ -8,7 +8,7 @@ Complete command reference for agency-os. Run from the project root.
 # Install dependencies
 pip install -r requirements.txt
 
-# Load environment variables
+# Load environment variables (DATABASE_URL must point at PostgreSQL)
 source .env
 
 # Start the web dashboard
@@ -241,6 +241,13 @@ python3 agency_os.py plugins --type channels
 python3 agency_os.py plugins --type enrichers
 ```
 
+### Import an old SQLite database (one time)
+
+```bash
+# Copies every table into the empty database at $DATABASE_URL, keeping ids
+python3 agency_os.py import-sqlite --from db.sqlite
+```
+
 ---
 
 ## Cron Schedule
@@ -347,7 +354,7 @@ CALENDLY_API_TOKEN=
 # Dashboard
 AGENCY_OS_OWNER_EMAIL=
 AGENCY_OS_OWNER_PASSWORD=
-AGENCY_OS_DB=db.sqlite
+DATABASE_URL=postgresql://localhost/agency_os
 ```
 
 ---
