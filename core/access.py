@@ -42,6 +42,9 @@ CATALOG: dict[str, str] = {
     "templates.view": "View and preview email templates",
     "templates.edit": "Edit email templates",
     "portals.manage": "Create, renew and check prospects' u9itus demo pages",
+    "packages.view": "Browse x402 lead packages from approved providers",
+    "packages.buy": "Unlock lead packages into a campaign (spends USDC, within your allowance)",
+    "spend.view": "View lead-package spending and payment receipts",
 }
 
 # Starter roles are created once if missing. Owners may edit or delete them
@@ -56,7 +59,8 @@ STARTER_ROLES: dict[str, tuple[str, list[str]]] = {
         "Caller access plus editing prospects and reading sent email",
         ["dashboard.view", "prospects.view", "prospects.export", "prospects.edit",
          "pipeline.edit", "calls.view", "calls.log", "calendar.view",
-         "campaigns.view", "emails.view", "templates.view", "portals.manage"],
+         "campaigns.view", "emails.view", "templates.view", "portals.manage",
+         "packages.view", "spend.view"],
     ),
     "Template Editor": (
         "Writes and edits outreach email templates",
@@ -126,6 +130,8 @@ ROUTE_RULES: dict[str, str] = {
     "GET /mail-templates": "templates.view",
     "POST /mail-templates/save": "templates.edit",
     "GET /mail-templates/preview/{script_idx}": "templates.view",
+    "GET /lead-packages": "packages.view",
+    "POST /lead-packages/unlock": "packages.buy",
 }
 
 # Pages in nav order — used to pick a landing page the user can actually open.

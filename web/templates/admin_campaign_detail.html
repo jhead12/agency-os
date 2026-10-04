@@ -56,6 +56,61 @@
     </div>
 </div>
 
+{# ── Lead Packages (x402) ── #}
+{% set lp = campaign.lead_packages or {} %}
+<div class="campaign-section">
+    <div class="campaign-header">
+        <h2>Lead Packages</h2>
+        <span class="badge badge-product">Paid lead lists (x402)</span>
+    </div>
+    <p style="color: var(--muted-foreground); font-size: 0.875rem;">Let this campaign unlock lead packages from approved providers, and cap what it can spend. Saving never pays; unlocking happens on the <a href="/lead-packages">Lead Packages</a> page.</p>
+    <input type="hidden" name="lp_present" value="1">
+    <label class="plugin-card">
+        <input type="checkbox" name="lp_enabled" value="1" {% if lp.enabled %}checked{% endif %}>
+        <div class="plugin-card-body">
+            <strong>Allow lead packages</strong>
+            <p>Off by default. Package leads get a royalty paid before their first contact.</p>
+        </div>
+    </label>
+    <div class="form-grid">
+        <div class="form-field">
+            <label for="lp_network">Network</label>
+            <select id="lp_network" name="lp_network">
+                {% for key in networks %}<option value="{{ key }}" {% if (lp.network or 'base-sepolia') == key %}selected{% endif %}>{{ key }}{% if key == 'base-sepolia' %} (test){% endif %}</option>{% endfor %}
+            </select>
+        </div>
+        <div class="form-field">
+            <label for="lp_max_unlock_usd">Max unlock ($)</label>
+            <input type="number" id="lp_max_unlock_usd" name="lp_max_unlock_usd" value="{{ lp.max_unlock_usd or 0 }}" min="0" step="0.01">
+        </div>
+        <div class="form-field">
+            <label for="lp_max_royalty_usd">Max royalty per contact ($)</label>
+            <input type="number" id="lp_max_royalty_usd" name="lp_max_royalty_usd" value="{{ lp.max_royalty_per_contact_usd or 0 }}" min="0" step="0.01">
+        </div>
+        <div class="form-field">
+            <label for="lp_monthly_budget_usd">Monthly budget ($)</label>
+            <input type="number" id="lp_monthly_budget_usd" name="lp_monthly_budget_usd" value="{{ lp.monthly_budget_usd or 0 }}" min="0" step="0.01">
+        </div>
+    </div>
+    {% if unlocked %}
+    <div class="table-scroll">
+    <table class="data-table">
+        <thead><tr><th>Unlocked package</th><th>Leads imported</th><th>Royalty / contact</th><th>Receipt</th></tr></thead>
+        <tbody>
+        {% for p in unlocked %}
+        <tr>
+            <td><strong>{{ p.title }}</strong><br><span class="subtitle">{{ p.provider }}</span></td>
+            <td>{{ p.imported_count }}</td>
+            <td>{{ p.royalty_atomic|usd }}</td>
+            <td>{% if p.tx_hash %}<a href="{{ explorer_url(p.network, p.tx_hash) }}" target="_blank" rel="noopener">View tx</a>{% else %}—{% endif %}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% endif %}
+</div>
+
 {# ── Channels (multi-select, ordered) ── #}
 <div class="campaign-section">
     <div class="campaign-header">
@@ -83,7 +138,7 @@
         <h2>Enrichers</h2>
         <span class="badge badge-product">Find contact names, emails, phones</span>
     </div>
-    <p style="color: var(--muted-foreground); font-size: 0.875rem;">Select enrichers in order. First hit wins — put your best free enricher first.</p>
+    <p style="color: var(--muted-foreground); font-size: 0.875rem;">Select enrichers in order. First hit wins — put your best free enricher first. These enrichers also verify lead-package leads against the 90% guarantee.</p>
     <div class="plugin-checkbox-grid">
         {% for p in plugins.enrichers %}
         <label class="plugin-card{% if not p.configured %} plugin-card-warning{% endif %}">

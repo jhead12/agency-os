@@ -41,6 +41,17 @@
             <div class="detail-row"><span>Voter Engagement</span>
                 {% if prospect.voter_engagement %}<span class="tag tag-voter">Yes</span>{% else %}No{% endif %}
             </div>
+            <div class="detail-row"><span>Contact depth</span><span>{{ contact_tier|replace('_', ' ') }}</span></div>
+            {% if lead_package %}
+            <div class="detail-row"><span>Lead package</span><span>
+                {{ lead_package.package_id }} · seller's history: {{ (lead_package.tier or 'unworked')|replace('_', ' ') }}
+                {% if lead_package.claimed_tier and lead_package.claimed_tier != lead_package.tier %}(claimed {{ lead_package.claimed_tier|replace('_', ' ') }}){% endif %}
+                · royalty {{ (lead_package.royalty_atomic or 0)|usd }}
+            </span></div>
+            {% endif %}
+            {% for s in package_spend if user.can('spend.view') %}
+            <div class="detail-row"><span>Paid ({{ s.kind }})</span><span>{{ s.amount_atomic|usd }}{% if s.tx_hash %} · <a href="{{ explorer_url(s.network, s.tx_hash) }}" target="_blank" rel="noopener">tx</a>{% endif %}</span></div>
+            {% endfor %}
         </div>
 
         {% if user.can('prospects.edit') %}
@@ -277,12 +288,7 @@ function toggleEmail(id) {
             <div class="form-row">
                 <label>Outcome</label>
                 <select name="outcome" class="filter-select" required>
-                    <option value="completed">Completed — spoke to someone</option>
-                    <option value="no_answer">No answer</option>
-                    <option value="voicemail">Left voicemail</option>
-                    <option value="gatekeeper">Gatekeeper — left message</option>
-                    <option value="wrong_number">Wrong number</option>
-                    <option value="scheduled">Call scheduled for later</option>
+                    {% for key, label in CALL_OUTCOMES.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
                 </select>
             </div>
             <div class="form-row">

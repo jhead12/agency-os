@@ -43,6 +43,7 @@ class CampaignConfig:
     stale_threshold_days: int = 14
     sender_name: str = ""
     sender_email: str = ""
+    lead_packages: dict = field(default_factory=dict)  # x402 spend policy, see core/payments.SpendPolicy
     config_dir: Path = None  # type: ignore
 
     @classmethod
@@ -74,6 +75,7 @@ class CampaignConfig:
             stale_threshold_days=raw.get("stale_threshold_days", 14),
             sender_name=raw.get("sender_name", ""),
             sender_email=raw.get("sender_email", ""),
+            lead_packages=raw.get("lead_packages") or {},
             config_dir=campaign_dir,
         )
 

@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}Lead Packages — agency-os{% endblock %}
+{% block content %}
+{% set user = request.state.user %}
+<div class="page-header">
+    <h1>Lead Packages</h1>
+    <p class="subtitle">Lead lists from approved providers, paid in USDC over x402. Unlocking pays once; each lead's royalty is paid when it's first contacted.</p>
+</div>
+
+{% if msg %}<div class="save-notice">{{ msg }}</div>{% endif %}
+{% if error %}<div class="form-error">{{ error }}</div>{% endif %}
+{% if not payments_on %}
+<div class="form-error">Payments are off on this server (<code>AGENCY_OS_X402</code>). You can browse, but unlocking won't go through.</div>
+{% endif %}
+{% if not catalogs %}
+<div class="empty-state">No providers are approved yet. The server admin adds them with <code>AGENCY_OS_LEAD_PROVIDERS</code>.</div>
+{% endif %}
+
+{% for cat in catalogs %}
+<div class="campaign-section">
+    <div class="campaign-header">
+        <h2>{{ cat.provider }}</h2>
+        <span class="badge badge-product">{{ cat.packages|length }} package(s)</span>
+    </div>
+    {% if cat.error %}<div class="form-error">{{ cat.error }}</div>{% endif %}
+    <div class="table-scroll">
+    <table class="data-table">
+        <thead><tr><th>Package</th><th>Leads</th><th>Unlock</th><th>Royalty / contact</th><th>Guarantee (contact depth)</th><th></th></tr></thead>
+        <tbody>
+        {% for p in cat.packages %}
+        <tr>
+            <td>
+                <strong>{{ p.title }}</strong><br>
+                <span class="subtitle">{{ p.industry or '—' }} · {{ p.region or '—' }}{% if p.updated_at %} · updated {{ p.updated_at|fmt_date }}{% endif %}</span>
+                {% if p.sourcing %}<br><span class="subtitle">Sourced: {{ p.sourcing }}</span>{% endif %}
+                {% if p.consent_note %}<br><span class="subtitle">Consent: {{ p.consent_note }}{% if p.sms_consent %} (includes SMS){% endif %}</span>{% endif %}
+            </td>
+            <td>{{ p.lead_count }}</td>
+            <td>{{ p.unlock_price_atomic|usd }}</td>
+            <td>
+                {% if p.royalty_by_tier %}
+                {% for tier, amount in p.royalty_by_tier.items() %}{{ tier|replace('_', ' ') }}: {{ amount|usd }}<br>{% endfor %}
+                {% else %}{{ p.royalty_atomic|usd }}{% endif %}
+            </td>
+            <td>
+                {% if p.guaranteed %}<span class="badge badge-success">90% {{ p.guarantee_tier|replace('_', ' ') }}</span>{% else %}<span class="badge badge-warning">No guarantee</span>{% endif %}
+                {% if p.tier_mix %}<br><span class="subtitle">{% for tier, n in p.tier_mix.items() %}{{ n }} {{ tier|replace('_', ' ') }}{% if not loop.last %} · {% endif %}{% endfor %}</span>{% endif %}
+            </td>
+            <td>
+                {% if user.can('packages.buy') and campaigns %}
+                <form method="post" action="/lead-packages/unlock" class="stack-form">
+                    <input type="hidden" name="provider" value="{{ p.provider }}">
+                    <input type="hidden" name="package_id" value="{{ p.package_id }}">
+                    <select name="campaign" class="filter-input" required>
+                        {% for c in campaigns %}<option value="{{ c.db_name }}">{{ c.name }}</option>{% endfor %}
+                    </select>
+                    <label><input type="checkbox" name="confirm" value="yes" required> Pay {{ p.unlock_price_atomic|usd }} now, plus up to {{ p.max_royalty_atomic|usd }} per lead contacted</label>
+                    <button type="submit" class="btn btn-sm">Unlock</button>
+                </form>
+                {% elif user.can('packages.buy') %}
+                <span class="subtitle">Turn on lead packages for a campaign first.</span>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% endfor %}
+
+{% if user.can('packages.buy') %}
+<p class="subtitle">Your monthly spending allowance: {{ allowance|usd }}.</p>
+{% endif %}
+
+{% if unlocked %}
+<div class="campaign-section">
+    <div class="campaign-header"><h2>Unlocked</h2></div>
+    <div class="table-scroll">
+    <table class="data-table">
+        <thead><tr><th>Package</th><th>Campaign</th><th>Imported</th><th>Already had</th><th>Paid</th><th>Receipt</th></tr></thead>
+        <tbody>
+        {% for lp in unlocked %}
+        <tr>
+            <td><strong>{{ lp.title }}</strong><br><span class="subtitle">{{ lp.provider }}</span></td>
+            <td>{{ lp.campaign_name }}</td>
+            <td>{{ lp.imported_count }}</td>
+            <td>{{ lp.duplicate_count }}</td>
+            <td>{{ lp.unlock_price_atomic|usd }}<br><span class="subtitle">{{ lp.unlocked_at|fmt_date }}</span></td>
+            <td>{% if lp.tx_hash %}<a href="{{ explorer_url(lp.network, lp.tx_hash) }}" target="_blank" rel="noopener">View tx</a>{% else %}—{% endif %}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

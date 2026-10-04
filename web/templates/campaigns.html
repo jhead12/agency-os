@@ -44,6 +44,16 @@
         </div>
     </div>
 
+    {% if c.spend %}
+    <p class="campaign-meta-text">
+        Lead packages: {{ c.spend.month_atomic|usd }} of {{ c.spend.policy.monthly_budget_atomic|usd }} this month
+        · {{ (c.spend.by_kind.unlock or {}).count or 0 }} unlock(s) {{ ((c.spend.by_kind.unlock or {}).total_atomic or 0)|usd }}
+        · {{ (c.spend.by_kind.royalty or {}).count or 0 }} royalties {{ ((c.spend.by_kind.royalty or {}).total_atomic or 0)|usd }}
+        {% if c.spend.pending %}· <strong>{{ c.spend.pending }} payment(s) awaiting confirmation</strong>{% endif %}
+        {% if not c.spend.policy.enabled %}· off{% endif %}
+    </p>
+    {% endif %}
+
     <div class="stage-bars">
         {% set stages = c.stats.stage_counts or {} %}
         {% set total = c.stats.total_prospects or 1 %}

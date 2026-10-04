@@ -39,7 +39,7 @@
     <form method="get" action="/call-log">
         <select name="outcome" class="filter-select">
             <option value="">All outcomes</option>
-            {% set outcomes = ['completed', 'no_answer', 'voicemail', 'gatekeeper', 'wrong_number', 'scheduled'] %}
+            {% set outcomes = CALL_OUTCOMES.keys() %}
             {% for o in outcomes %}
             <option value="{{ o }}" {% if outcome_filter == o %}selected{% endif %}>{{ o }}</option>
             {% endfor %}

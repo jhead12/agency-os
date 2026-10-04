@@ -15,6 +15,7 @@ from typing import Optional
 
 from core.campaign import CampaignConfig, discover_campaigns
 from core.db import Database
+from core import lead_packages
 from core.models import Prospect, SendResult
 from core.registry import PluginRegistry
 
@@ -25,6 +26,10 @@ class Pipeline:
     def __init__(self, db: Database, registry: PluginRegistry):
         self.db = db
         self.registry = registry
+        # x402 royalty payments for package leads (core/lead_packages.py);
+        # tests swap in fakes. None means the defaults.
+        self.payer = None
+        self.http = None
 
     # ── Sync ───────────────────────────────────────────────────────────
 
@@ -105,7 +110,7 @@ class Pipeline:
         instead of the prospect's real email. This lets you test the full pipeline
         (scripts, personalization, sending) without emailing real prospects.
         """
-        stats = {"sent": 0, "skipped": 0, "failed": 0, "no_contact": 0}
+        stats = {"sent": 0, "skipped": 0, "failed": 0, "no_contact": 0, "royalty_blocked": 0}
         campaign_id = self.db.get_campaign_id(campaign.db_name)
         if not campaign_id:
             return {**stats, "error": "campaign not found"}
@@ -147,6 +152,20 @@ class Pipeline:
                 stats["failed"] += 1
                 continue
 
+            # Leads bought as an x402 package: pay the royalty before the first
+            # touch, and only text them if the package includes SMS consent.
+            # A no-op for every other prospect.
+            gate = lead_packages.gate_contact(
+                self.db, campaign, campaign_id, prospect, outreach.touch_count,
+                dry_run=dry_run, http=self.http, payer=self.payer,
+            )
+            if not gate.send:
+                print(f"  ! Skipping {prospect.name}: {gate.reason}")
+                stats["royalty_blocked"] += 1
+                continue
+            if gate.reason:
+                print(f"    [dry-run] {prospect.name}: {gate.reason}")
+
             variables = self._build_variables(campaign, prospect, outreach)
             subject = self._render(script.get("subject", ""), variables)
             body = self._render(script.get("body", ""), variables)
@@ -162,6 +181,8 @@ class Pipeline:
             # (a channel returns "skipped" when e.g. there's no phone number)
             result = None
             for ch_key in step.channels or campaign.channels:
+                if ch_key.startswith("sms") and not gate.sms_allowed:
+                    continue
                 channel = self.registry.get_channel(ch_key)
                 if not channel or not channel.is_configured():
                     continue
