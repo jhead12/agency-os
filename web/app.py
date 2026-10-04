@@ -54,7 +54,7 @@ from core.registry import PluginRegistry
 from core.pipeline import Pipeline
 from plugins.channels.lob_direct_mail import TEMPLATE_ID_RE, lob_template_url
 from core.jobs import JobRunner, configured_jobs, jobs_enabled
-from core import agents, claims, contact_depth, lead_packages, llm, mcp_auth, payments, tools, verify
+from core import agents, claims, contact_depth, evidence, lead_packages, llm, mcp_auth, payments, tools, verify
 from core.welcome import base_url as public_base_url
 from web.mcp_server import MCPMount
 from starlette.concurrency import run_in_threadpool
@@ -1707,6 +1707,60 @@ async def api_tool_call(request: Request, tool_name: str):
     result = await run_in_threadpool(tools.run_tool, get_db(), current_user(request), tool_name,
                                      body.get("args") or {}, source="webmcp", confirmed=body.get("confirmed") is True)
     return JSONResponse(result)
+
+
+# ── Evidence webhooks (core/evidence.py): no login; signed or keyed ─
+
+
+async def _webhook_body(request: Request) -> tuple[Optional[bytes], Optional[JSONResponse]]:
+    body = await request.body()
+    if len(body) > evidence.MAX_BODY:
+        return None, JSONResponse({"ok": False, "error": "too large"}, status_code=413)
+    return body, None
+
+
+def _webhook_result(handler, body: bytes) -> JSONResponse:
+    try:
+        payload = evidence.parse(body)
+    except ValueError:
+        return JSONResponse({"ok": False, "error": "body must be JSON"}, status_code=400)
+    return JSONResponse({"ok": True, "recorded": handler(get_db(), payload)})
+
+
+@app.post("/webhooks/lob")
+async def webhook_lob(request: Request):
+    """Lob tracking events: returned mail becomes evidence for the lead guarantee."""
+    if not os.environ.get("LOB_WEBHOOK_SECRET"):
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+    body, error = await _webhook_body(request)
+    if error:
+        return error
+    if not evidence.lob_signature_ok(body, request.headers.get("lob-signature", ""),
+                                     request.headers.get("lob-signature-timestamp", "")):
+        return JSONResponse({"ok": False, "error": "bad signature"}, status_code=401)
+    return await run_in_threadpool(_webhook_result, evidence.handle_lob, body)
+
+
+@app.post("/webhooks/smartlead")
+async def webhook_smartlead(request: Request, key: str = Query(default="")):
+    """Smartlead EMAIL_BOUNCE events (Smartlead doesn't sign; the URL carries the key)."""
+    if not os.environ.get("AGENCY_OS_WEBHOOK_KEY"):
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+    if not evidence.webhook_key_ok(key):
+        return JSONResponse({"ok": False, "error": "bad key"}, status_code=401)
+    body, error = await _webhook_body(request)
+    return error or await run_in_threadpool(_webhook_result, evidence.handle_smartlead, body)
+
+
+@app.post("/webhooks/bounce")
+async def webhook_bounce(request: Request, key: str = Query(default="")):
+    """Bounces from any other sender: {"email": "...", "type": "hard", "id": "..."}."""
+    if not os.environ.get("AGENCY_OS_WEBHOOK_KEY"):
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+    if not evidence.webhook_key_ok(key):
+        return JSONResponse({"ok": False, "error": "bad key"}, status_code=401)
+    body, error = await _webhook_body(request)
+    return error or await run_in_threadpool(_webhook_result, evidence.handle_generic, body)
 
 
 @app.get("/plugins", response_class=HTMLResponse)

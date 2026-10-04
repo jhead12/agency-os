@@ -101,6 +101,10 @@ ROUTE_RULES: dict[str, str] = {
     "POST /account/tokens/{token_id}/revoke": ANY_USER,
     "GET /oauth/consent": ANY_USER,
     "POST /oauth/consent": ANY_USER,
+    # Provider webhooks: no login; each checks a signature or a secret key (core/evidence.py).
+    "POST /webhooks/lob": PUBLIC,
+    "POST /webhooks/smartlead": PUBLIC,
+    "POST /webhooks/bounce": PUBLIC,
     "GET /welcome/{token}": PUBLIC,   # one-time link; the token is the credential
     "POST /welcome/{token}": PUBLIC,
 

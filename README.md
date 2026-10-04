@@ -307,6 +307,21 @@ it's unlocked and shown before you pay. Every value is range-checked, and a
 disconnected number, a fax tone, or a history below the promised tier always
 fails a lead on its own.
 
+Bounces and returned mail are recorded automatically from webhooks (or by
+hand on the prospect page):
+
+- **Lob**: add a webhook in the Lob dashboard for the `*.returned_to_sender`
+  events pointing at `<your agency-os URL>/webhooks/lob`, and set
+  `LOB_WEBHOOK_SECRET` to its secret. Requests are signature-checked.
+- **Smartlead**: add a webhook for `EMAIL_BOUNCE` pointing at
+  `<your agency-os URL>/webhooks/smartlead?key=<AGENCY_OS_WEBHOOK_KEY>`
+  (Smartlead doesn't sign webhooks, so the URL carries a secret key).
+- **Any other sender**: `POST /webhooks/bounce?key=<AGENCY_OS_WEBHOOK_KEY>`
+  with `{"email": "...", "type": "hard", "id": "<event id>"}`.
+
+Each endpoint is off until its secret is set. Soft bounces are ignored and
+each event is recorded once.
+
 Mark bounces and returned mail on the prospect page. A bounced email shows
 *Find a new email*, which re-runs the campaign's enrichers and compares what
 they find with the package's email. Failed leads are never contacted, so no
