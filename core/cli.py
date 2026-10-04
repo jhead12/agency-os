@@ -66,12 +66,28 @@ def _setup(campaigns_dir: str = "campaigns", plugins_dir: str = "plugins", db_ur
 
 
 def _get_campaign(campaigns: list, name: str):
-    """Find a campaign by name (case-insensitive slug match)."""
+    """Find a campaign by its full name or slug, or by a short name such as
+    "voter-guide-cbo" when its words match exactly one campaign's slug."""
     name_slug = name.lower().replace(" ", "-").replace("_", "-")
     for c in campaigns:
         if c.db_name == name_slug or c.name.lower() == name.lower():
             return c
-    return None
+    words = [w for w in name_slug.split("-") if w]
+    matches = [c for c in campaigns if words and all(w in c.db_name.split("-") for w in words)]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _targets(campaigns: list, name: str, every: bool) -> list:
+    """The campaigns a command runs on; exits listing the real names if none match."""
+    if every:
+        return campaigns
+    found = _get_campaign(campaigns, name or "")
+    if found is None:
+        click.echo(f"No campaign matches '{name}'. Campaigns:", err=True)
+        for c in campaigns:
+            click.echo(f"  {c.db_name}", err=True)
+        sys.exit(1)
+    return [found]
 
 
 @click.group()
@@ -98,7 +114,7 @@ def sync(ctx, campaign_name, sync_all, dry_run):
     registry, db, campaigns = _setup(db_url=ctx.obj["db_url"])
     pipeline = Pipeline(db, registry)
 
-    targets = campaigns if sync_all else [c for c in campaigns if c.db_name == campaign_name]
+    targets = _targets(campaigns, campaign_name, sync_all)
     if not targets:
         click.echo(f"No campaigns found matching '{campaign_name}'")
         sys.exit(1)
@@ -128,7 +144,7 @@ def enrich(ctx, campaign_name, enrich_all, limit):
     registry, db, campaigns = _setup(db_url=ctx.obj["db_url"])
     pipeline = Pipeline(db, registry)
 
-    targets = campaigns if enrich_all else [c for c in campaigns if c.db_name == campaign_name]
+    targets = _targets(campaigns, campaign_name, enrich_all)
     for campaign in targets:
         click.echo(f"\nEnriching: {campaign.name}")
         stats = pipeline.enrich_contacts(campaign, limit=limit)
@@ -159,7 +175,7 @@ def enqueue(ctx, campaign_name, all_campaigns, limit, dry_run, test_email):
     if test_email:
         click.echo(f"\n  ⚠ TEST MODE — all emails redirected to: {test_email}")
 
-    targets = campaigns if all_campaigns else [c for c in campaigns if c.db_name == campaign_name]
+    targets = _targets(campaigns, campaign_name, all_campaigns)
     for campaign in targets:
         click.echo(f"\n{'='*60}")
         click.echo(f"Outreach: {campaign.name}")
@@ -190,7 +206,7 @@ def test_send(ctx, campaign_name, to_email, script_name, prospect_id):
     registry, db, campaigns = _setup(db_url=ctx.obj["db_url"])
     pipeline = Pipeline(db, registry)
 
-    campaign = next((c for c in campaigns if c.db_name == campaign_name), None)
+    campaign = _get_campaign(campaigns, campaign_name)
     if not campaign:
         click.echo(f"Error: campaign '{campaign_name}' not found")
         sys.exit(1)
@@ -347,7 +363,7 @@ def provision(ctx, campaign_name, all_campaigns, limit, dry_run):
     registry, db, campaigns = _setup(db_url=ctx.obj["db_url"])
     pipeline = Pipeline(db, registry)
 
-    targets = campaigns if all_campaigns else [c for c in campaigns if c.db_name == campaign_name]
+    targets = _targets(campaigns, campaign_name, all_campaigns)
     for campaign in targets:
         click.echo(f"\n{'='*60}")
         click.echo(f"Provisioning: {campaign.name}")
@@ -375,7 +391,7 @@ def pull_events(ctx, campaign_name, all_campaigns, dry_run):
     registry, db, campaigns = _setup(db_url=ctx.obj["db_url"])
     pipeline = Pipeline(db, registry)
 
-    targets = campaigns if all_campaigns else [c for c in campaigns if c.db_name == campaign_name]
+    targets = _targets(campaigns, campaign_name, all_campaigns)
     for campaign in targets:
         click.echo(f"\n{'='*60}")
         click.echo(f"Pulling events: {campaign.name}")
@@ -401,7 +417,7 @@ def stale(ctx, campaign_name, all_campaigns):
     registry, db, campaigns = _setup(db_url=ctx.obj["db_url"])
     pipeline = Pipeline(db, registry)
 
-    targets = campaigns if all_campaigns else [c for c in campaigns if c.db_name == campaign_name]
+    targets = _targets(campaigns, campaign_name, all_campaigns)
     for campaign in targets:
         click.echo(f"\nStale check: {campaign.name}")
         stats = pipeline.check_stale(campaign)
@@ -423,7 +439,7 @@ def bookings(ctx, campaign_name, all_campaigns, days, dry_run):
     registry, db, campaigns = _setup(db_url=ctx.obj["db_url"])
     pipeline = Pipeline(db, registry)
 
-    targets = campaigns if all_campaigns else [c for c in campaigns if c.db_name == campaign_name]
+    targets = _targets(campaigns, campaign_name, all_campaigns)
     for campaign in targets:
         if not campaign.scheduler:
             if not all_campaigns:
@@ -453,7 +469,7 @@ def digest(ctx, campaign_name, all_campaigns):
     registry, db, campaigns = _setup(db_url=ctx.obj["db_url"])
     pipeline = Pipeline(db, registry)
 
-    targets = campaigns if all_campaigns else [c for c in campaigns if c.db_name == campaign_name]
+    targets = _targets(campaigns, campaign_name, all_campaigns)
     for campaign in targets:
         click.echo(f"\n{'='*60}")
         click.echo(f"Digest: {campaign.name}")

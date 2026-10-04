@@ -8,6 +8,10 @@ They are skipped when TEST_DATABASE_URL isn't set.
 
 import os
 
+# Never read the developer's .env in tests (core/env.py): real keys and owner
+# settings would change what the tests see.
+os.environ["AGENCY_OS_DOTENV"] = "off"
+
 import psycopg
 import pytest
 from psycopg.conninfo import conninfo_to_dict
