@@ -54,7 +54,9 @@ from core.registry import PluginRegistry
 from core.pipeline import Pipeline
 from plugins.channels.lob_direct_mail import TEMPLATE_ID_RE, lob_template_url
 from core.jobs import JobRunner, configured_jobs, jobs_enabled
-from core import agents, claims, contact_depth, evidence, lead_packages, llm, mcp_auth, payments, tools, verify
+from core import (
+    agents, claims, contact_depth, evidence, lead_packages, llm, mcp_auth, payments, selling, tools, verify,
+)
 from core.welcome import base_url as public_base_url
 from web.mcp_server import MCPMount
 from starlette.concurrency import run_in_threadpool
@@ -238,7 +240,7 @@ def nav_active(path: str) -> str:
         return "dashboard"
     parts = path.strip("/").split("/")
     if parts[0] == "admin":
-        return "admin-campaigns" if parts[1:2] == ["campaigns"] else "admin"
+        return {"campaigns": "admin-campaigns", "selling": "admin-selling"}.get(parts[1] if len(parts) > 1 else "", "admin")
     return parts[0]
 
 
@@ -326,40 +328,8 @@ async def prospect_list(
     campaigns = get_campaigns()
     campaign_map = {c.db_name: c for c in campaigns}
 
-    # Build query — search across multiple fields
-    where_parts = []
-    params = []
-
-    if q:
-        where_parts.append(
-            "(p.name ILIKE ? OR p.city ILIKE ? OR p.ein ILIKE ? "
-            "OR p.zip ILIKE ? OR p.focus_area ILIKE ? OR p.website_url ILIKE ? "
-            "OR p.county ILIKE ? OR p.ntee_code ILIKE ?)"
-        )
-        params.extend([f"%{q}%"] * 8)
-
-    if source:
-        where_parts.append("p.source = ?")
-        params.append(source)
-
-    if stage:
-        where_parts.append("o.stage = ?")
-        params.append(stage)
-
-    # Campaign filter — only show prospects in the selected campaign
-    if campaign:
-        where_parts.append("o.campaign_id = (SELECT id FROM campaigns WHERE name = ?)")
-        params.append(campaign)
-
-    # City filter — supports multiple cities (comma-separated)
-    if cities:
-        city_list = [c.strip() for c in cities.split(",") if c.strip()]
-        if city_list:
-            placeholders = ",".join("?" * len(city_list))
-            where_parts.append(f"p.city IN ({placeholders})")
-            params.extend(city_list)
-
-    where_clause = " AND ".join(where_parts) if where_parts else "1=1"
+    where_clause, params = db.prospect_filter(
+        {"q": q, "source": source, "stage": stage, "campaign": campaign, "cities": cities})
 
     # Count total
     count_sql = f"""
@@ -1280,6 +1250,8 @@ async def prospect_detail(request: Request, prospect_id: int):
         "contact_tier": contact_depth.history_for_prospect(db, prospect_id)[1],
         "lead_package": lead_package,
         "verification": verify.lead_verdict(db, prospect_id) if lead_package else None,
+        "do_not_sell": bool(db.conn.execute("SELECT do_not_sell FROM prospects WHERE id = ?",
+                                            (prospect_id,)).fetchone()["do_not_sell"]),
         "agent_panel": {"personas": list(agents.load_personas().values()), "tasks": agents.TASKS,
                         "model": llm.describe()} if current_user(request).uses_ai("agents.use") else None,
         "bounced": verify.bounced_emails(db, prospect_id),
@@ -1761,6 +1733,126 @@ async def webhook_bounce(request: Request, key: str = Query(default="")):
         return JSONResponse({"ok": False, "error": "bad key"}, status_code=401)
     body, error = await _webhook_body(request)
     return error or await run_in_threadpool(_webhook_result, evidence.handle_generic, body)
+
+
+# ── Selling our own lists (core/selling.py) ─────────────────────────
+
+
+def _x402_reply(reply: selling.Reply) -> JSONResponse:
+    return JSONResponse(reply.body, status_code=reply.status, headers=reply.headers)
+
+
+def _selling_off() -> Optional[JSONResponse]:
+    return JSONResponse({"detail": "Not Found"}, status_code=404) if selling.problem() else None
+
+
+@app.get("/x402/packages")
+async def x402_catalog(request: Request):
+    """Our free catalog for other agency-os instances (and any x402 lead buyer)."""
+    off = _selling_off()
+    return off or {"packages": await run_in_threadpool(selling.catalog, get_db())}
+
+
+@app.get("/x402/packages/{slug}/leads")
+async def x402_leads(request: Request, slug: str):
+    off = _selling_off()
+    if off:
+        return off
+    reply = await run_in_threadpool(selling.sell_leads, get_db(), selling.default_gate(), slug,
+                                    request.headers.get("payment-signature", ""), str(request.url))
+    return _x402_reply(reply)
+
+
+@app.post("/x402/packages/{slug}/contacts")
+async def x402_contacts(request: Request, slug: str):
+    off = _selling_off()
+    if off:
+        return off
+    try:
+        body = evidence.parse(await request.body())
+    except ValueError:
+        return JSONResponse({"error": "body must be JSON"}, status_code=400)
+    reply = await run_in_threadpool(selling.royalty, get_db(), selling.default_gate(), slug, body,
+                                    request.headers.get("payment-signature", ""), str(request.url))
+    return _x402_reply(reply)
+
+
+@app.post("/x402/packages/{slug}/claims")
+async def x402_claims(request: Request, slug: str):
+    off = _selling_off()
+    if off:
+        return off
+    try:
+        body = evidence.parse(await request.body())
+    except ValueError:
+        return JSONResponse({"error": "body must be JSON"}, status_code=400)
+    return _x402_reply(await run_in_threadpool(selling.handle_claim, get_db(), slug, body))
+
+
+@app.get("/admin/selling", response_class=HTMLResponse)
+async def admin_selling(request: Request, msg: str = Query(default=""), error: str = Query(default="")):
+    return _selling_page(request, msg=msg, error=error)
+
+
+def _selling_page(request: Request, *, msg: str = "", error: str = "", preview: Optional[dict] = None,
+                  form: Optional[dict] = None):
+    db = get_db()
+    return templates.TemplateResponse(request, "admin_selling.html", {
+        "active": "admin", **selling.overview(db), "problem": selling.problem(),
+        "network": selling.network_key(), "pay_to": selling.pay_to(), "catalog_url": f"{site_url()}/x402",
+        "saved_lists": db.list_prospect_saved_lists(current_user(request).id),
+        "tiers": [t for t in contact_depth.TIERS if t != "unworked"],
+        "preview": preview, "form": form or {}, "msg": msg, "error": error,
+    })
+
+
+@app.post("/admin/selling/publish", response_class=HTMLResponse)
+async def admin_selling_publish(request: Request):
+    """Preview a saved list as a package, then publish it (two steps; publishing needs a confirm)."""
+    form = {k: str(v) for k, v in (await request.form()).items()}
+    db = get_db()
+    try:
+        saved_list_id = int(form.get("saved_list_id", ""))
+    except ValueError:
+        return _selling_page(request, error="Pick a saved list.", form=form)
+    tier = form.get("guarantee_tier", "")
+    saved = db.get_prospect_saved_list(saved_list_id)
+    if saved is None or tier not in contact_depth.RANK:
+        return _selling_page(request, error="Pick a saved list and a contact depth.", form=form)
+    if form.get("action") != "publish" or form.get("confirm") != "yes":
+        found = await run_in_threadpool(selling.preview, db, saved["criteria"], tier)
+        return _selling_page(request, preview={**found, "eligible": len(found["eligible"]), "list": saved["name"]},
+                             form=form, error="" if form.get("action") != "publish" else "Tick the box to publish.")
+    package_id, problem = await run_in_threadpool(lambda: selling.publish(
+        db, current_user(request), saved_list_id=saved_list_id, title=form.get("title", ""),
+        industry=form.get("industry", ""), region=form.get("region", ""), unlock_usd=form.get("unlock_usd", ""),
+        royalty_usd={t: form.get(f"royalty_{t}", "") for t in contact_depth.TIERS},
+        guarantee_tier=tier, rules={"window_days": form.get("window_days", 30), "claim_days": form.get("claim_days", 7)},
+        consent_note=form.get("consent_note", ""), sms_consent=form.get("sms_consent") == "1",
+        contributor_pool_pct=form.get("contributor_pool_pct", 20)))
+    if problem:
+        return _selling_page(request, error=problem, form=form)
+    return _back("/admin/selling", msg="Package published.")
+
+
+@app.post("/admin/selling/{package_id}/active")
+async def admin_selling_active(request: Request, package_id: int, active: str = Form(default="")):
+    selling.set_active(get_db(), current_user(request), package_id, active == "1")
+    return _back("/admin/selling", msg="Package listed." if active == "1" else "Package withdrawn from the catalog.")
+
+
+@app.post("/admin/selling/claims/{claim_id}/refund")
+async def admin_selling_refund(request: Request, claim_id: int, amount_usd: str = Form(default=""),
+                               tx_hash: str = Form(default="")):
+    problem = selling.record_refund(get_db(), current_user(request), claim_id, amount_usd, tx_hash.strip())
+    return _back("/admin/selling", error=problem) if problem else _back("/admin/selling", msg="Refund recorded.")
+
+
+@app.post("/prospects/{prospect_id}/do-not-sell")
+async def prospect_do_not_sell(request: Request, prospect_id: int, flag: str = Form(default="")):
+    """Honor a request not to sell someone's data: never published, sold or used as a replacement."""
+    selling.set_do_not_sell(get_db(), current_user(request), prospect_id, flag == "1")
+    return _back(f"/prospects/{prospect_id}", msg="Marked do not sell." if flag == "1" else "Do-not-sell removed.")
 
 
 @app.get("/plugins", response_class=HTMLResponse)

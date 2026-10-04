@@ -49,6 +49,15 @@
                 · royalty {{ (lead_package.royalty_atomic or 0)|usd }}
             </span></div>
             {% endif %}
+            <div class="detail-row"><span>Do not sell</span><span>
+                {% if do_not_sell %}<span class="badge badge-warning">Yes</span>{% else %}No{% endif %}
+                {% if user.can('prospects.edit') %}
+                <form method="post" action="/prospects/{{ prospect.id }}/do-not-sell" style="display: inline;">
+                    <input type="hidden" name="flag" value="{{ '0' if do_not_sell else '1' }}">
+                    <button type="submit" class="btn btn-secondary btn-sm">{{ 'Allow selling' if do_not_sell else 'Mark do not sell' }}</button>
+                </form>
+                {% endif %}
+            </span></div>
             {% for s in package_spend if user.can('spend.view') %}
             <div class="detail-row"><span>Paid ({{ s.kind }})</span><span>{{ s.amount_atomic|usd }}{% if s.tx_hash %} · <a href="{{ explorer_url(s.network, s.tx_hash) }}" target="_blank" rel="noopener">tx</a>{% endif %}</span></div>
             {% endfor %}

@@ -319,20 +319,22 @@ class UnlockResult:
     payment: Optional[PaidResult] = None
 
 
-def _read_leads(response: httpx.Response) -> tuple[list[dict], str]:
-    """Clean leads from an unlock response, and an error if it was unreadable."""
+def _read_leads(response: httpx.Response) -> tuple[list[dict], str, str]:
+    """Clean leads from an unlock response, the seller's claim token, and an error if it was unreadable."""
     try:
         data = _json_body(response)
     except ValueError as exc:
-        return [], f"Paid, but the leads could not be read: {exc}"
+        return [], "", f"Paid, but the leads could not be read: {exc}"
     raw_leads = data.get("leads") if isinstance(data, dict) else data
     if not isinstance(raw_leads, list):
-        return [], "Paid, but the response had no list of leads"
-    return [l for l in (parse_lead(i) for i in raw_leads[:MAX_LEADS_PER_PACKAGE]) if l], ""
+        return [], "", "Paid, but the response had no list of leads"
+    token = _text(data.get("claim_token"), 200) if isinstance(data, dict) else None
+    return [l for l in (parse_lead(i) for i in raw_leads[:MAX_LEADS_PER_PACKAGE]) if l], token or "", ""
 
 
 def _import_leads(db: Database, package: Package, campaign_id: int, user: Optional[CurrentUser],
-                  payment: PaidResult, leads: list[dict], rules: verify.Rules) -> tuple[int, int, int]:
+                  payment: PaidResult, leads: list[dict], rules: verify.Rules,
+                  claim_token: str = "") -> tuple[int, int, int]:
     """Record the package and add its new leads to the campaign, in one transaction.
 
     Returns (lead_package_id, imported, duplicates). The package row is
@@ -343,13 +345,14 @@ def _import_leads(db: Database, package: Package, campaign_id: int, user: Option
         lp_id = c.execute(
             """INSERT INTO lead_packages (provider, package_id, campaign_id, title, industry, region,
                    lead_count, unlock_price_atomic, royalty_atomic, royalty_by_tier, pay_to, network,
-                   guarantee, guarantee_tier, guarantee_rules, consent_note, sms_consent, unlocked_by, tx_hash)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",
+                   guarantee, guarantee_tier, guarantee_rules, consent_note, sms_consent, unlocked_by, tx_hash,
+                   claim_token)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",
             (package.provider, package.package_id, campaign_id, package.title, package.industry,
              package.region, len(leads), package.unlock_price_atomic, package.royalty_atomic,
              json.dumps(package.royalty_by_tier), package.pay_to, package.network,
              json.dumps(package.guarantee), package.guarantee_tier, json.dumps(rules.to_dict()), package.consent_note,
-             int(package.sms_consent), user.id if user else None, payment.tx_hash or None),
+             int(package.sms_consent), user.id if user else None, payment.tx_hash or None, claim_token or None),
         ).fetchone()["id"]
         if payment.spend_id:
             c.execute("UPDATE spend SET lead_package_id = ? WHERE id = ?", (lp_id, payment.spend_id))
@@ -505,9 +508,9 @@ def unlock(db: Database, campaign, campaign_id: int, user: Optional[CurrentUser]
     if not payment.ok:
         return UnlockResult(False, payment.error or "Payment did not go through", payment=payment)
 
-    leads, read_error = _read_leads(payment.response)
+    leads, claim_token, read_error = _read_leads(payment.response)
     lp_id, imported, duplicates = _import_leads(db, package, campaign_id, user, payment, leads,
-                                                package_rules(package, campaign))
+                                                package_rules(package, campaign), claim_token)
     if read_error:
         return UnlockResult(False, read_error, lp_id, payment=payment)
     return UnlockResult(True, f"Unlocked: {imported} leads imported, {duplicates} already in agency-os",

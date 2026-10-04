@@ -363,6 +363,45 @@ Safeguards:
   the campaign they were unlocked into, and they're only texted if the package
   includes SMS consent.
 
+### Selling our own lists
+
+agency-os is also an x402 lead provider, so other agency-os instances (or any
+x402 lead buyer) can buy from you. **Administration → Sell Lead Packages**
+(permission `packages.sell`, owners by default) publishes a saved prospect
+list as a package: pick the contact depth it guarantees, the unlock price,
+royalties by tier and the guarantee window, check the list (it shows how many
+prospects qualify), then publish.
+
+- Only leads we can stand behind go in: a contact on file, no bounced email,
+  and our own contact history at or above the promised tier. Leads marked
+  **do not sell** on their prospect page, and leads bought from someone else,
+  are never sold. Leads are re-checked at every sale.
+- Buyers get the leads and a private claim token. Royalties are charged only
+  for leads sold to that buyer, once each.
+- Claims are checked against our records (a lead we've reached since the sale
+  isn't dead) and capped at what breaks 90%. Replacements come from the same
+  list; what can't be replaced waits on the Selling page for an owner to
+  refund by hand and record the transaction. Nothing is refunded automatically.
+- Income and refunds go in the same `spend` ledger (`unlock_in`, `royalty_in`,
+  `refund_out`).
+
+Turn the store on with `AGENCY_OS_SELL=on` and `AGENCY_OS_SELL_PAY_TO=<your
+wallet address>` (and `pip install -r requirements-payments.txt`). Payments are
+verified and settled by an x402 facilitator: `AGENCY_OS_X402_FACILITATOR`,
+default `https://x402.org/facilitator`, which handles Base Sepolia. Mainnet
+needs `AGENCY_OS_SELL_NETWORK=base`, `AGENCY_OS_X402_ALLOW_MAINNET=1` and a
+mainnet facilitator.
+
+**Testnet trial (dev provider).** Run two copies, each with its own
+`DATABASE_URL`. On the seller: `AGENCY_OS_SELL=on`, a test wallet in
+`AGENCY_OS_SELL_PAY_TO`, publish a list. On the buyer: the CDP wallet keys
+with test USDC, `AGENCY_OS_X402=on`, and
+`AGENCY_OS_LEAD_PROVIDERS=http://127.0.0.1:<seller port>/x402`. Unlock from the
+buyer's Lead Packages page and check both transactions on Sepolia Basescan.
+
+Selling contact data can make you a California data broker under the Delete
+Act (registration and deletion requests); keep a consent note on each package.
+
 ## AI agents (beta, opt-in)
 
 Each user chooses whether to use AI. It's off by default, and anyone who

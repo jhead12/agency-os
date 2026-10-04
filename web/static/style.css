@@ -356,6 +356,8 @@ body {
 .detail-row span:last-child { text-align: right; }
 .detail-row span.badge-success, .detail-row span.badge-warning { color: white; }
 .subtitle a, .detail-row a { color: var(--accent); }
+.detail-row code { overflow-wrap: anywhere; }
+.detail-row > span:last-child { min-width: 0; }
 
 .outreach-block { padding-bottom: 12px; margin-bottom: 12px; border-bottom: 1px solid var(--border); }
 .outreach-block:last-child { border-bottom: none; }

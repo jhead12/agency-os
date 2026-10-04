@@ -53,6 +53,7 @@ CATALOG: dict[str, str] = {
     "spend.view": "View lead-package spending and payment receipts",
     "agents.use": "Run the built-in AI agents (drafts only; nothing is sent)",
     "ai.connect": "Connect your own AI assistant to agency-os (WebMCP)",
+    "packages.sell": "Publish our own lists as lead packages, and handle buyers' claims and refunds",
 }
 
 # Starter roles are created once if missing. Owners may edit or delete them
@@ -105,6 +106,16 @@ ROUTE_RULES: dict[str, str] = {
     "POST /webhooks/lob": PUBLIC,
     "POST /webhooks/smartlead": PUBLIC,
     "POST /webhooks/bounce": PUBLIC,
+    # Selling: the x402 provider endpoints are public; payment or a claim token authorizes them.
+    "GET /x402/packages": PUBLIC,
+    "GET /x402/packages/{slug}/leads": PUBLIC,
+    "POST /x402/packages/{slug}/contacts": PUBLIC,
+    "POST /x402/packages/{slug}/claims": PUBLIC,
+    "GET /admin/selling": "packages.sell",
+    "POST /admin/selling/publish": "packages.sell",
+    "POST /admin/selling/{package_id}/active": "packages.sell",
+    "POST /admin/selling/claims/{claim_id}/refund": "packages.sell",
+    "POST /prospects/{prospect_id}/do-not-sell": "prospects.edit",
     "GET /welcome/{token}": PUBLIC,   # one-time link; the token is the credential
     "POST /welcome/{token}": PUBLIC,
 

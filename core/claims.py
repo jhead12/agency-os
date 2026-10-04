@@ -34,7 +34,7 @@ from core.lead_packages import _json_body, _package_url, add_leads, configured_p
 from core.payments import USDC
 
 _TX_RE = re.compile(r"^0x[0-9a-fA-F]{64}$")
-REMEDIED = ("filed", "replaced", "refunded")
+REMEDIED = ("filed", "replaced", "refunded", "review")
 
 
 @dataclass
@@ -90,6 +90,7 @@ def expected_refund(db: Database, lp: dict, failed: list[dict], shortfall: int, 
 def _claim_body(lp: dict, summary: dict, failed: list[dict], expected: int, rules) -> dict:
     return {
         "unlock_tx": lp["tx_hash"] or "",
+        "claim_token": lp.get("claim_token") or "",
         "lead_count": summary["lead_count"],
         "failed_count": summary["failed"],
         "shortfall": summary["claimable"],
@@ -206,6 +207,11 @@ def _apply_remedy(db: Database, lp: dict, claim_id: int, shortfall: int, data: d
         _finish(db, claim_id, "refunded", user, remedy="refund", refund_atomic=amount, refund_tx=tx)
         return ClaimResult(True, "Refund reported. Confirm the transaction onchain, then mark it settled "
                                  "with `spend resolve`.", claim_id)
+
+    if remedy == "review":
+        reason = str(data.get("reason") or "The seller is reviewing a refund")[:500]
+        _finish(db, claim_id, "review", user, remedy="review", reason=reason)
+        return ClaimResult(True, f"Claim accepted for review: {reason}", claim_id)
 
     if remedy == "disputed":
         reason = str(data.get("reason") or "No reason given")[:500]
