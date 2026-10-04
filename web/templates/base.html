@@ -13,6 +13,9 @@
         {% set active = nav_active(request.url.path) %}
         <div class="nav-brand">
             <a href="/">agency-os</a>
+            {% if user and (user.uses_ai('agents.use') or user.uses_ai('ai.connect')) %}
+            <a href="/account" class="ai-badge" title="AI features are on for you. Turn them off on your Account page.">AI beta</a>
+            {% endif %}
             {% if user %}
             <button class="nav-toggle" id="nav-toggle" aria-label="Toggle menu" aria-expanded="false" aria-controls="nav-links">
                 <span></span><span></span><span></span>
@@ -69,5 +72,6 @@
     </main>
 
     <script src="/static/app.js"></script>
+    {% if user and user.uses_ai('ai.connect') %}<script src="/static/webmcp.js" defer></script>{% endif %}
 </body>
 </html>

@@ -178,6 +178,40 @@
     </div>
 </div>
 
+{% if agent_panel %}
+<div class="detail-card full-width" id="agent-panel" data-prospect="{{ prospect.id }}">
+    <h3>Ask an agent <span class="ai-badge">AI beta</span></h3>
+    {% if not agent_panel.model %}
+    <p class="muted">No AI model is set up on this server yet. An owner can set <code>ANTHROPIC_API_KEY</code>, or point <code>AGENCY_OS_LLM</code> at a local model (see README).</p>
+    {% else %}
+    <form class="agent-form" id="agent-form" method="post" action="/prospects/{{ prospect.id }}/agent">
+        <div class="form-row">
+            <label for="agent-select">Agent</label>
+            <select id="agent-select" name="agent" class="filter-select">
+                {% for p in agent_panel.personas %}<option value="{{ p.key }}" data-tasks="{{ p.tasks|join(',') }}" title="{{ p.description }}">{{ p.emoji }} {{ p.name }}</option>{% endfor %}
+            </select>
+        </div>
+        <div class="form-row">
+            <label for="agent-task">Task</label>
+            <select id="agent-task" name="task" class="filter-select">
+                {% for key, t in agent_panel.tasks.items() %}<option value="{{ key }}">{{ t[0] }}</option>{% endfor %}
+            </select>
+        </div>
+        <textarea name="instructions" rows="2" maxlength="2000" class="filter-input" placeholder="Anything to add? e.g. mention their board meeting next month" aria-label="Extra instructions"></textarea>
+        <div><button type="submit" class="btn">Draft</button></div>
+    </form>
+    <p class="muted" style="margin-top: 8px;">Uses {{ agent_panel.model }}. Drafts only; nothing is sent.</p>
+    <div id="agent-result" hidden>
+        <div class="agent-output" id="agent-output" aria-live="polite"></div>
+        <div class="agent-actions">
+            <button type="button" class="btn btn-secondary btn-sm" id="agent-copy">Copy</button>
+            {% if user.can('prospects.edit') %}<button type="button" class="btn btn-secondary btn-sm" id="agent-save">Save as note</button>{% endif %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
 {% if verification %}
 {% set v = verification %}
 <div class="detail-card full-width">

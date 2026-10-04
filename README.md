@@ -7,7 +7,10 @@ any product or service.
 ## Quick start
 
 Data lives in PostgreSQL. Point `DATABASE_URL` at a database (tables are
-created on first use):
+created on first use). Settings can go in a `.env` file in the project folder
+(copy `.env.example`); the CLI and the web app read it at startup, and anything
+already set in your shell takes precedence. Campaigns can be named by a short
+form such as `voter-guide-cbo` when it matches only one campaign.
 
 ```bash
 cd agency-os
@@ -308,8 +311,8 @@ leads, a refund (recorded as a pending `refund_in` until you confirm it onchain
 with `spend resolve`), or a dispute. Each package and seller shows its verified
 rate measured across the unlocks on this server.
 
-The AI review is off unless `AGENCY_OS_AI_REVIEW=on` and `ANTHROPIC_API_KEY`
-are set (`pip install anthropic`). It reads call dispositions and notes for
+The AI review is off unless `AGENCY_OS_AI_REVIEW=on` and an AI model is
+configured (see *AI agents* below; Claude or a local model). It reads call dispositions and notes for
 leads near the threshold, counts as one signal, and runs only from *Re-check
 leads* or `packages verify --ai`. A verdict is cached until the lead's evidence
 changes.
@@ -333,6 +336,73 @@ Safeguards:
 - Package leads never overwrite existing prospects. They are only contacted in
   the campaign they were unlocked into, and they're only texted if the package
   includes SMS consent.
+
+## AI agents (beta, opt-in)
+
+Each user chooses whether to use AI. It's off by default, and anyone who
+leaves it off sees the app exactly as before. Turn it on under **Account → AI
+features**. That needs the `agents.use` and/or `ai.connect` permission (the
+Sales Rep starter role has both on new installs; on an existing install, add
+them to roles under Admin → Roles). `AGENCY_OS_AI=off` hides AI for everyone.
+
+- **Ask an agent** (prospect page): sales personas from
+  [agency-agents](https://github.com/msitarzewski/agency-agents) (`agents/`)
+  draft the next email, a text, call prep, a MEDDPICC deal review, or a
+  proposal outline from the prospect's record. Drafts only; nothing is sent.
+  *Save as note* adds the draft to the prospect.
+- **Your own AI (WebMCP)**: a browser AI that supports WebMCP
+  (`document.modelContext`, currently a Chrome origin trial) gets agency-os
+  tools: search and read prospects, calls and campaigns, draft with a persona,
+  and add notes, log calls or change stages. Every call runs as you with your
+  permissions; any change opens a confirm dialog showing exactly what will
+  change, and is recorded in the audit log.
+
+The model (`core/llm.py`):
+
+- **Claude**: set `ANTHROPIC_API_KEY` and `pip install -r requirements-ai.txt`
+  (Docker: `--build-arg WITH_AI=1`). Uses `claude-opus-5-5`.
+- **Local model, e.g. Hermes on Ollama**: `ollama pull hermes3`, then
+  `AGENCY_OS_LLM=openai_compatible`, `AGENCY_OS_LLM_BASE_URL=http://localhost:11434/v1`,
+  `AGENCY_OS_LLM_MODEL=hermes3`. Any OpenAI-compatible server works. A hosted
+  deploy can't reach a model on your laptop; use this when running agency-os
+  yourself.
+
+**Connect any MCP client (Hermes Agent, Claude Desktop/Code, Rook...).**
+agency-os is an MCP server at `<your agency-os URL>/mcp` (streamable HTTP). With
+AI features on, **Account → Connect an AI app** creates a personal token,
+shown once, read-only unless you tick *Allow changes*, and gives ready-made
+config:
+
+```yaml
+# Hermes Agent: ~/.hermes/config.yaml
+mcp_servers:
+  agency_os:
+    url: https://your-agency-os.example/mcp
+    headers:
+      Authorization: "Bearer aos_pat_..."
+```
+
+```bash
+claude mcp add --transport http agency-os https://your-agency-os.example/mcp \
+  --header "Authorization: Bearer aos_pat_..."
+```
+
+The server offers the same tools as WebMCP (changes only for tokens allowed to
+make them; your client's approval prompt is the confirmation, and every change
+is audited as `mcp:<token name>`), one prompt per persona and task so your own
+model does the drafting, and personas and prospects as resources. Hermes can
+run on a local model, so this is how a local AI works with a hosted agency-os.
+
+**Claude.ai and ChatGPT connectors.** Add a custom connector with the same
+`/mcp` URL. The app registers itself and sends you to an agency-os consent page
+(behind your normal sign-in) where you allow it, optionally with changes.
+This is standard OAuth 2.1: PKCE, single-use codes, one-hour access tokens,
+rotating 30-day refresh tokens. Revoke any token or app on your Account page.
+Set `AGENCY_OS_BASE_URL` to the public https URL (Railway's domain is used
+automatically) so the OAuth metadata points to the right place.
+
+Tokens and connected apps stop working when their user turns AI features off,
+is deactivated, or when `AGENCY_OS_AI=off`.
 
 ## API keys
 

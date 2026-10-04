@@ -1,0 +1,3 @@
+# Claude for the built-in agent panel and the lead-package AI review (core/llm.py).
+# Not needed for a local OpenAI-compatible model (Ollama, LM Studio...): that uses httpx.
+anthropic>=1.11,<2

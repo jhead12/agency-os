@@ -265,10 +265,12 @@ def test_ai_review_is_cached_until_evidence_changes(db, x402_env, provider):
 
 def test_ai_review_is_off_by_default(monkeypatch):
     monkeypatch.delenv("AGENCY_OS_AI_REVIEW", raising=False)
-    assert not verify.ClaudeReviewer().is_configured()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    assert not verify.LLMReviewer().is_configured()  # needs the review switch too
     monkeypatch.setenv("AGENCY_OS_AI_REVIEW", "on")
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    assert not verify.ClaudeReviewer().is_configured()
+    assert verify.LLMReviewer().is_configured()
+    monkeypatch.setenv("AGENCY_OS_LLM", "off")
+    assert not verify.LLMReviewer().is_configured()
 
 
 class FakeEnricher:

@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Connect an app — agency-os{% endblock %}
+{% block content %}
+{% set user = request.state.user %}
+<div class="page-header">
+    <h1>Connect an app</h1>
+</div>
+{% if not client %}
+<div class="form-error">This sign-in request has expired or was already used. Start the connection again from the app.</div>
+{% elif not ai_on %}
+<div class="form-error">AI features are off for your account. Turn them on under <a href="/account">Account</a>, then connect the app again.</div>
+{% else %}
+<div class="detail-card" style="max-width: 640px;">
+    <h3>{{ client.client_name or 'An app' }} wants to use agency-os as you</h3>
+    <div class="detail-row"><span>Signed in as</span><span>{{ user.name }} ({{ user.email }})</span></div>
+    <div class="detail-row"><span>Sends you back to</span><span><code>{{ redirect_host }}</code></span></div>
+    <p class="muted" style="margin-top: 12px;">It will be able to search and read prospects, calls and campaigns you can see, and draft with the sales personas. It acts with your permissions, and you can revoke it any time on your Account page.</p>
+    <form method="post" action="/oauth/consent" class="stack-form" style="margin-top: 12px;">
+        <input type="hidden" name="request" value="{{ request_id }}">
+        <label class="check-label"><input type="checkbox" name="allow_writes" value="1"> Also allow changes: add notes, log calls, move pipeline stages (recorded in the audit log)</label>
+        <div style="display: flex; gap: 8px;">
+            <button type="submit" name="decision" value="approve" class="btn">Allow</button>
+            <button type="submit" name="decision" value="deny" class="btn btn-secondary">Deny</button>
+        </div>
+    </form>
+</div>
+{% endif %}
+{% endblock %}

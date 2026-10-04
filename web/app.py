@@ -28,6 +28,7 @@ import tempfile
 import time
 from collections import defaultdict
 from contextlib import asynccontextmanager
+from typing import Optional
 from pathlib import Path
 from datetime import datetime, timezone
 from urllib.parse import quote, urlsplit, urlencode
@@ -35,6 +36,10 @@ from urllib.parse import quote, urlsplit, urlencode
 # Ensure project root is on path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+
+from core.env import load_dotenv  # noqa: E402
+
+load_dotenv()  # .env settings for local runs; a deploy's own environment always wins
 
 from fastapi import FastAPI, Request, Query, HTTPException, Form, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
@@ -49,7 +54,9 @@ from core.registry import PluginRegistry
 from core.pipeline import Pipeline
 from plugins.channels.lob_direct_mail import TEMPLATE_ID_RE, lob_template_url
 from core.jobs import JobRunner, configured_jobs, jobs_enabled
-from core import claims, contact_depth, lead_packages, payments, verify
+from core import agents, claims, contact_depth, lead_packages, llm, mcp_auth, payments, tools, verify
+from core.welcome import base_url as public_base_url
+from web.mcp_server import MCPMount
 from starlette.concurrency import run_in_threadpool
 
 # ── Init ────────────────────────────────────────────────────────────
@@ -75,6 +82,9 @@ def get_campaigns():
     return discover_campaigns(str(CAMPAIGNS_DIR))
 
 
+tools.campaign_source = lambda: get_campaigns()  # the AI tools read campaigns through the web app's cache
+
+
 def save_campaign_file(path: Path, content: str) -> None:
     """Write a campaign file to the local cache and to the database."""
     path.write_text(content)
@@ -85,12 +95,21 @@ def get_job_runner() -> JobRunner:
     return JobRunner(get_db().url, str(PROJECT_ROOT / "plugins"), get_campaigns)
 
 
+def site_url() -> str:
+    """This server's public URL: AGENCY_OS_BASE_URL, Railway's domain, or the local port."""
+    return public_base_url() or f"http://127.0.0.1:{os.environ.get('PORT', '8000')}"
+
+
+mcp_mount = MCPMount(lambda: get_db(), site_url)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     bootstrap_access()
     # Background jobs (core/jobs.py): on for the deployed service only.
     task = asyncio.create_task(get_job_runner().loop()) if jobs_enabled() else None
-    yield
+    async with mcp_mount.running():  # the MCP server (/mcp) and its OAuth endpoints
+        yield
     if task:
         task.cancel()
 
@@ -1261,6 +1280,8 @@ async def prospect_detail(request: Request, prospect_id: int):
         "contact_tier": contact_depth.history_for_prospect(db, prospect_id)[1],
         "lead_package": lead_package,
         "verification": verify.lead_verdict(db, prospect_id) if lead_package else None,
+        "agent_panel": {"personas": list(agents.load_personas().values()), "tasks": agents.TASKS,
+                        "model": llm.describe()} if current_user(request).uses_ai("agents.use") else None,
         "bounced": verify.bounced_emails(db, prospect_id),
         "package_spend": db.prospect_spend(prospect_id),
         "portal": (prospect.metadata or {}).get("u9itus") or {},
@@ -1618,6 +1639,74 @@ async def prospect_refresh_email(request: Request, prospect_id: int, outreach_id
     return _back(f"/prospects/{prospect_id}", msg=message)
 
 
+# ── AI: agent panel and the user's own assistant (core/tools.py) ────
+
+_AI_OFF = "Turn on AI features on your Account page first."
+_MAX_TOOL_BODY = 64 * 1024
+
+
+def _ai_refusal(request: Request, permission: str) -> Optional[JSONResponse]:
+    """A JSON refusal unless this user has the AI feature on; the header blocks cross-site posts."""
+    if not current_user(request).uses_ai(permission):
+        return JSONResponse({"ok": False, "error": _AI_OFF}, status_code=403)
+    if request.method == "POST" and request.headers.get("x-aos-tool") != "1":
+        return JSONResponse({"ok": False, "error": "Missing X-AOS-Tool header"}, status_code=400)
+    return None
+
+
+@app.post("/prospects/{prospect_id}/agent")
+async def prospect_agent(request: Request, prospect_id: int, agent: str = Form(...), task: str = Form(...),
+                         instructions: str = Form(default="")):
+    """Draft with a sales persona for this prospect. Returns JSON; nothing is sent."""
+    refusal = _ai_refusal(request, "agents.use")
+    if refusal:
+        return refusal
+    result = await run_in_threadpool(
+        tools.run_tool, get_db(), current_user(request), "draft_with_agent",
+        {"prospect_id": prospect_id, "agent": agent, "task": task, "instructions": instructions}, source="panel")
+    return JSONResponse(result)
+
+
+@app.post("/prospects/{prospect_id}/agent/note")
+async def prospect_agent_note(request: Request, prospect_id: int, note: str = Form(...)):
+    """Save a draft from the panel as a note. Clicking Save is the confirmation."""
+    refusal = _ai_refusal(request, "agents.use")
+    if refusal:
+        return refusal
+    result = tools.run_tool(get_db(), current_user(request), "add_prospect_note",
+                            {"prospect_id": prospect_id, "note": note}, source="panel", confirmed=True)
+    return JSONResponse(result)
+
+
+@app.get("/api/tools")
+async def api_tools(request: Request):
+    """The tools this user's own AI may call (WebMCP)."""
+    refusal = _ai_refusal(request, "ai.connect")
+    if refusal:
+        return refusal
+    return {"tools": [t.public() for t in tools.available(current_user(request))]}
+
+
+@app.post("/api/tools/{tool_name}")
+async def api_tool_call(request: Request, tool_name: str):
+    """Run one tool for the user's own AI. Body: {"args": {...}, "confirmed": bool}."""
+    refusal = _ai_refusal(request, "ai.connect")
+    if refusal:
+        return refusal
+    raw = await request.body()
+    if len(raw) > _MAX_TOOL_BODY:
+        return JSONResponse({"ok": False, "error": "Request too large"}, status_code=413)
+    try:
+        body = json.loads(raw or b"{}")
+    except ValueError:
+        return JSONResponse({"ok": False, "error": "Body must be JSON"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"ok": False, "error": "Body must be a JSON object"}, status_code=400)
+    result = await run_in_threadpool(tools.run_tool, get_db(), current_user(request), tool_name,
+                                     body.get("args") or {}, source="webmcp", confirmed=body.get("confirmed") is True)
+    return JSONResponse(result)
+
+
 @app.get("/plugins", response_class=HTMLResponse)
 async def plugins_page(request: Request, msg: str = Query(default=""), error: str = Query(default=""),
                        test_slug: str = Query(default=""), test_demo: str = Query(default=""),
@@ -1942,18 +2031,84 @@ async def logout(request: Request):
 
 @app.get("/account", response_class=HTMLResponse)
 async def account_page(request: Request, msg: str = Query(default=""), error: str = Query(default="")):
+    return _account(request, msg=msg, error=error)
+
+
+def _account(request: Request, *, msg: str = "", error: str = "", new_token: str = ""):
     user = current_user(request)
     spending = None
     if user.can("packages.buy"):
         db = get_db()
         spending = {**db.user_spend(user.id), "allowance_atomic": db.spend_allowance(user.id)}
+    ai = None
+    if user.can("agents.use") or user.can("ai.connect"):
+        ai = {"enabled": user.ai_enabled, "allowed": access.ai_allowed(), "model": llm.describe(),
+              "mcp_url": f"{site_url()}/mcp",
+              "tokens": mcp_auth.list_tokens(get_db(), user.id) if user.uses_ai("ai.connect") else [],
+              "new_token": new_token}
     return templates.TemplateResponse(request, "account.html", {
         "active": "account",
         "spending": spending,
+        "ai": ai,
         "permissions": [(k, v) for k, v in access.CATALOG.items() if user.can(k)],
         "msg": msg,
         "error": error,
     })
+
+
+@app.post("/account/ai")
+async def account_ai(request: Request, enabled: str = Form(default="")):
+    """Turn AI features on or off for yourself. Off keeps the app exactly as before."""
+    user = current_user(request)
+    if not (user.can("agents.use") or user.can("ai.connect")):
+        return _back("/account", error="Your role doesn't include AI features. Ask an owner.")
+    get_db().set_ai_enabled(user.id, enabled == "1", actor=user)
+    return _back("/account", msg="AI features turned on." if enabled == "1" else "AI features turned off.")
+
+
+@app.post("/account/tokens")
+async def account_token_create(request: Request, name: str = Form(default=""), allow_writes: str = Form(default="")):
+    """Make a personal token for an MCP client. It's shown once."""
+    user = current_user(request)
+    if not user.uses_ai("ai.connect"):
+        return _back("/account", error="Turn on AI features first.")
+    try:
+        token = mcp_auth.create_personal_token(get_db(), user, name, allow_writes == "1")
+    except ValueError as exc:
+        return _back("/account", error=str(exc))
+    # Rendered straight into this response (never put in a URL), and never shown again.
+    return _account(request, msg="Access key created. Copy it now; it won't be shown again.", new_token=token)
+
+
+@app.post("/account/tokens/{token_id}/revoke")
+async def account_token_revoke(request: Request, token_id: int):
+    revoked = mcp_auth.revoke(get_db(), current_user(request), token_id)
+    return _back("/account", msg="Disconnected. That app or key can no longer reach agency-os.") if revoked else _back("/account", error="That connection was not found.")
+
+
+@app.get("/oauth/consent", response_class=HTMLResponse)
+async def oauth_consent(request: Request, request_id: str = Query(default="", alias="request")):
+    """An app (Claude.ai, ChatGPT...) asks to act as you in agency-os."""
+    user = current_user(request)
+    found = mcp_auth.load_request(get_db(), request_id) if request_id else None
+    client, params = found if found else (None, None)
+    return templates.TemplateResponse(request, "oauth_consent.html", {
+        "client": client, "params": params, "request_id": request_id,
+        "ai_on": user.uses_ai("ai.connect"),
+        "redirect_host": urlsplit(str(params.redirect_uri)).netloc if params else "",
+    })
+
+
+@app.post("/oauth/consent")
+async def oauth_consent_decide(request: Request, request_id: str = Form(..., alias="request"),
+                               decision: str = Form(...), allow_writes: str = Form(default="")):
+    user = current_user(request)
+    if decision == "approve" and not user.uses_ai("ai.connect"):
+        return _back("/account", error="Turn on AI features first, then connect the app again.")
+    target = mcp_auth.decide(get_db(), user, request_id, decision == "approve", allow_writes == "1")
+    if target is None:
+        return _back("/account", error="That sign-in request expired. Start the connection again from the app.")
+    return RedirectResponse(url=target, status_code=303)
 
 
 @app.post("/account/password")
@@ -2327,6 +2482,11 @@ async def api_stats():
     for c in campaigns:
         results.append(db.get_pipeline_stats(c.db_name))
     return JSONResponse(results)
+
+
+# Last, so every route above wins: /mcp, the OAuth endpoints (/authorize,
+# /token, /register, /revoke) and their /.well-known metadata (web/mcp_server.py).
+app.mount("/", mcp_mount)
 
 
 if __name__ == "__main__":

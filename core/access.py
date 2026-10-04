@@ -17,10 +17,16 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import os
 import secrets
 from dataclasses import dataclass, field
 
 OWNER_ROLE = "Owner"
+
+
+def ai_allowed() -> bool:
+    """Owner-wide kill switch: AGENCY_OS_AI=off hides every AI feature for everyone."""
+    return os.environ.get("AGENCY_OS_AI", "").strip().lower() not in ("off", "0", "false", "no")
 
 
 class AccessError(ValueError):
@@ -45,6 +51,8 @@ CATALOG: dict[str, str] = {
     "packages.view": "Browse x402 lead packages from approved providers",
     "packages.buy": "Unlock lead packages into a campaign (spends USDC, within your allowance)",
     "spend.view": "View lead-package spending and payment receipts",
+    "agents.use": "Run the built-in AI agents (drafts only; nothing is sent)",
+    "ai.connect": "Connect your own AI assistant to agency-os (WebMCP)",
 }
 
 # Starter roles are created once if missing. Owners may edit or delete them
@@ -60,7 +68,7 @@ STARTER_ROLES: dict[str, tuple[str, list[str]]] = {
         ["dashboard.view", "prospects.view", "prospects.export", "prospects.edit",
          "pipeline.edit", "calls.view", "calls.log", "calendar.view",
          "campaigns.view", "emails.view", "templates.view", "portals.manage",
-         "packages.view", "spend.view"],
+         "packages.view", "spend.view", "agents.use", "ai.connect"],
     ),
     "Template Editor": (
         "Writes and edits outreach email templates",
@@ -88,6 +96,11 @@ ROUTE_RULES: dict[str, str] = {
     "POST /logout": ANY_USER,
     "GET /account": ANY_USER,
     "POST /account/password": ANY_USER,
+    "POST /account/ai": ANY_USER,
+    "POST /account/tokens": ANY_USER,
+    "POST /account/tokens/{token_id}/revoke": ANY_USER,
+    "GET /oauth/consent": ANY_USER,
+    "POST /oauth/consent": ANY_USER,
     "GET /welcome/{token}": PUBLIC,   # one-time link; the token is the credential
     "POST /welcome/{token}": PUBLIC,
 
@@ -138,6 +151,10 @@ ROUTE_RULES: dict[str, str] = {
     "POST /lead-packages/unlocked/{lead_package_id}/claim": "packages.buy",
     "POST /prospects/{prospect_id}/contact-event": "prospects.edit",
     "POST /prospects/{prospect_id}/refresh-email": "prospects.edit",
+    "POST /prospects/{prospect_id}/agent": "agents.use",
+    "POST /prospects/{prospect_id}/agent/note": "agents.use",
+    "GET /api/tools": "ai.connect",
+    "POST /api/tools/{tool_name}": "ai.connect",
 }
 
 # Pages in nav order — used to pick a landing page the user can actually open.
@@ -162,6 +179,7 @@ class CurrentUser:
     name: str
     roles: tuple[str, ...] = ()
     permissions: frozenset[str] = field(default_factory=frozenset)
+    ai_enabled: bool = False  # the user opted in to AI features (Account page)
 
     @property
     def is_owner(self) -> bool:
@@ -176,6 +194,14 @@ class CurrentUser:
         if permission not in CATALOG:
             return False
         return self.is_owner or permission in self.permissions
+
+    def uses_ai(self, permission: str) -> bool:
+        """An AI feature is on for this user: allowed on the server, opted in, and permitted.
+
+        Every AI surface checks this, so users who haven't opted in see the
+        app exactly as it was.
+        """
+        return ai_allowed() and self.ai_enabled and self.can(permission)
 
     def allows(self, rule: str) -> bool:
         """Evaluate a ROUTE_RULES value for this user."""

@@ -159,40 +159,31 @@ _REVIEW_SYSTEM = (
 )
 
 
-class ClaudeReviewer:
-    """Claude reads a lead's dispositions and notes. Off unless AGENCY_OS_AI_REVIEW=on
-    and ANTHROPIC_API_KEY is set; needs `pip install anthropic`."""
-
-    model = "claude-opus-5-5"
+class LLMReviewer:
+    """The app's AI model (core/llm.py: Claude or a local model such as Hermes) reads
+    a lead's dispositions and notes. Off unless AGENCY_OS_AI_REVIEW=on and a model
+    is configured."""
 
     def is_configured(self) -> bool:
+        from core import llm
+
         return (os.environ.get("AGENCY_OS_AI_REVIEW", "").lower() in ("1", "on", "true", "yes")
-                and bool(os.environ.get("ANTHROPIC_API_KEY")))
+                and bool(llm.backend()))
 
     def review(self, lead: dict) -> Optional[dict]:
-        try:
-            import anthropic
+        from core import llm
 
-            response = anthropic.Anthropic().messages.create(
-                model=self.model,
-                max_tokens=2048,
-                system=_REVIEW_SYSTEM,
-                messages=[{"role": "user", "content": f"<lead>\n{json.dumps(lead, indent=1)}\n</lead>"}],
-                output_config={"effort": "low", "format": {"type": "json_schema", "schema": _REVIEW_SCHEMA}},
-            )
-            if response.stop_reason in ("refusal", "max_tokens"):
-                return None
-            text = next(b.text for b in response.content if b.type == "text")
-            data = json.loads(text)
-        except Exception:  # the review is optional; never let it break verification
-            return None
-        if data.get("verdict") not in ("real", "not_real", "unclear"):
+        reply = llm.generate(_REVIEW_SYSTEM, f"<lead>\n{json.dumps(lead, indent=1, default=str)}\n</lead>\n\n"
+                             'Reply with JSON: {"verdict": "real" | "not_real" | "unclear", "reason": "..."}',
+                             max_tokens=2048, effort="low", json_schema=_REVIEW_SCHEMA)
+        data = reply.json() if reply.ok else None
+        if not data or data.get("verdict") not in ("real", "not_real", "unclear"):
             return None
         return {"verdict": data["verdict"], "reason": str(data.get("reason", ""))[:500]}
 
 
 def default_reviewer() -> Reviewer:
-    return ClaudeReviewer()
+    return LLMReviewer()
 
 
 # ── Reading evidence from the database ────────────────────────────────
