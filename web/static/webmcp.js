@@ -3,8 +3,18 @@
 // Every call runs as the signed-in user, with their permissions, and is audited.
 // Changes (write tools) ask the user first, showing exactly what will change.
 (async () => {
-    const mc = document.modelContext ?? navigator.modelContext;  // the spec moved the getter to document
-    if (!mc || typeof mc.registerTool !== 'function') return;
+    // Browser AIs that are extensions (sidebars) often add modelContext a moment after the
+    // page loads, so wait for it briefly instead of checking only once.
+    const find = () => {
+        const mc = document.modelContext ?? navigator.modelContext;  // the spec moved the getter to document
+        return mc && typeof mc.registerTool === 'function' ? mc : null;
+    };
+    let mc = find();
+    for (let waited = 0; !mc && waited < 15000; waited += 250) {
+        await new Promise(resolve => setTimeout(resolve, 250));
+        mc = find();
+    }
+    if (!mc) return;
 
     const call = async (name, args, confirmed = false) => {
         const response = await fetch(`/api/tools/${encodeURIComponent(name)}`, {
