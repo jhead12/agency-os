@@ -47,7 +47,7 @@
             </details>
             {% endif %}
             {% if user.is_owner or user.can('packages.sell') %}
-            <details class="nav-group {% if active in ['admin', 'admin-campaigns', 'admin-selling'] %}nav-group-active{% endif %}">
+            <details class="nav-group {% if active in ['admin', 'admin-campaigns', 'admin-selling', 'admin-payouts'] %}nav-group-active{% endif %}">
                 <summary>Administration</summary>
                 <div class="nav-dropdown">
                     {% if user.is_owner %}
@@ -55,6 +55,7 @@
                     <a href="/admin/campaigns" class="{% if active == 'admin-campaigns' %}active{% endif %}">Campaign Settings</a>
                     {% endif %}
                     {% if user.can('packages.sell') %}<a href="/admin/selling" class="{% if active == 'admin-selling' %}active{% endif %}">Sell Lead Packages</a>{% endif %}
+                    {% if user.is_owner %}<a href="/admin/payouts" class="{% if active == 'admin-payouts' %}active{% endif %}">Rep Payouts</a>{% endif %}
                 </div>
             </details>
             {% endif %}

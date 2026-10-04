@@ -392,6 +392,21 @@ default `https://x402.org/facilitator`, which handles Base Sepolia. Mainnet
 needs `AGENCY_OS_SELL_NETWORK=base`, `AGENCY_OS_X402_ALLOW_MAINNET=1` and a
 mainnet facilitator.
 
+**Rep royalties.** The reps who built a lead share in what buyers pay for it:
+the package's contributor share (set when publishing, default 20%) of each
+lead's part of the unlock and of its royalty, split *found the contact* 50%,
+*reached the decision-maker* 30%, *sourced it* 20%. Credit comes from our
+records (the rep whose contact edit supplied the email or phone; the rep who
+logged a call that reached the decision-maker); owners add *sourced* credit,
+or adjust any credit, on the prospect page. Shares become payable once the
+buyer's guarantee period ends without a claim, and are taken back if a claim
+on that lead holds. Reps see theirs under **Account → My data royalties** and
+set a payout wallet (password required). Owners pay from **Administration →
+Rep Payouts**: by hand (record the transaction), or with
+`AGENCY_OS_PAYOUTS=on` from the CDP wallet, one confirmed payout at a time,
+above `AGENCY_OS_PAYOUT_MIN_USD` (default $5) and up to
+`AGENCY_OS_PAYOUT_MAX_USD` (default $500).
+
 **Testnet trial (dev provider).** Run two copies, each with its own
 `DATABASE_URL`. On the seller: `AGENCY_OS_SELL=on`, a test wallet in
 `AGENCY_OS_SELL_PAY_TO`, publish a list. On the buyer: the CDP wallet keys

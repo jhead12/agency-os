@@ -126,6 +126,28 @@
     {% endif %}
     {% endif %}
 
+    {% if earnings %}
+    <div class="detail-card">
+        <h3>My data royalties</h3>
+        <p class="muted">When a lead you helped build is sold, you get a share of what the buyer pays. It becomes payable once the buyer's guarantee period ends without a claim.</p>
+        <div class="detail-row"><span>Pending (buyer's guarantee running)</span><span>{{ earnings.balance.pending|usd }}</span></div>
+        <div class="detail-row"><span>Ready to pay</span><span>{{ earnings.balance.payable|usd }}</span></div>
+        <div class="detail-row"><span>Paid to you</span><span>{{ earnings.balance.paid|usd }}</span></div>
+        {% for l in earnings.lines %}
+        <div class="detail-row"><span>{{ l.lead_name }} · {{ earnings.labels[l.task] }}<br><span class="muted">{{ l.title }} · {{ 'royalty' if 'royalty' in l.income else 'unlock' }}{% if l.income.startswith('clawback') %} (taken back after a claim){% endif %} · {{ l.status }}</span></span><span>{{ l.amount_atomic|usd }}</span></div>
+        {% endfor %}
+        <form method="post" action="/account/payout-address" class="stack-form" style="margin-top: 12px;">
+            <label>Pay my royalties in USDC to this wallet address
+                <input type="text" name="address" value="{{ earnings.address or '' }}" placeholder="0x…" maxlength="42" class="filter-input">
+            </label>
+            <label>Your password (to confirm the change)
+                <input type="password" name="current_password" required autocomplete="current-password" class="filter-input">
+            </label>
+            <button type="submit" class="btn btn-secondary">Save payout address</button>
+        </form>
+    </div>
+    {% endif %}
+
     {% if spending %}
     <div class="detail-card">
         <h3>Lead package spending</h3>

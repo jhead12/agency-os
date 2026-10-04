@@ -221,6 +221,32 @@
 </div>
 {% endif %}
 
+{% if credit is not none %}
+<div class="detail-card full-width">
+    <h3>Who built this lead</h3>
+    <p class="muted">If this lead is sold as part of a package, these reps share its royalties: found the contact 50%, reached the decision-maker 30%, sourced it 20%.</p>
+    {% for c in credit %}
+    <div class="detail-row">
+        <span>{{ c.name }} · {{ credit_labels[c.task] }}<br><span class="muted">{{ 'from our records' if c.source == 'auto' else 'set by an owner' }}{% if not c.active %} · removed{% endif %}</span></span>
+        <span>
+            <form method="post" action="/prospects/{{ prospect.id }}/credit" style="display: inline;">
+                <input type="hidden" name="user_id" value="{{ c.user_id }}"><input type="hidden" name="task" value="{{ c.task }}">
+                <input type="hidden" name="active" value="{{ '0' if c.active else '1' }}">
+                <button type="submit" class="btn btn-secondary btn-sm">{{ 'Remove' if c.active else 'Restore' }}</button>
+            </form>
+        </span>
+    </div>
+    {% else %}
+    <p class="muted">No credit yet.</p>
+    {% endfor %}
+    <form method="post" action="/prospects/{{ prospect.id }}/credit" style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px;">
+        <select name="user_id" class="filter-select" aria-label="Rep">{% for u in team %}<option value="{{ u.id }}">{{ u.name }}</option>{% endfor %}</select>
+        <select name="task" class="filter-select" aria-label="What they did">{% for key, label in credit_labels.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select>
+        <button type="submit" class="btn btn-secondary btn-sm">Give credit</button>
+    </form>
+</div>
+{% endif %}
+
 {% if verification %}
 {% set v = verification %}
 <div class="detail-card full-width">

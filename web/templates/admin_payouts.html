@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Rep Payouts — agency-os{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Rep payouts</h1>
+    <p class="subtitle">Data royalties owed to the reps who built the leads you sell. Balances become payable when each buyer's guarantee period ends without a claim; a claim that holds takes the share back.</p>
+</div>
+{% if msg %}<div class="save-notice">{{ msg }}</div>{% endif %}
+{% if error %}<div class="form-error">{{ error }}</div>{% endif %}
+
+<div class="detail-card" style="margin-bottom: 16px;">
+    <div class="detail-row"><span>Network</span><span>{{ network }}</span></div>
+    <div class="detail-row"><span>Minimum payout</span><span>{{ minimum|usd }}</span></div>
+    <div class="detail-row"><span>Automatic payouts</span><span>{% if automatic %}On, from the CDP wallet, up to {{ maximum|usd }} each{% else %}Off: pay by hand, then record the transaction{% endif %}</span></div>
+</div>
+
+<div class="campaign-section">
+    <div class="campaign-header"><h2>Balances</h2></div>
+    {% if not balances %}<p class="muted">No royalties yet. They start when a published package sells.</p>{% else %}
+    <div class="table-scroll">
+    <table class="data-table">
+        <thead><tr><th>Rep</th><th>Pending</th><th>Ready to pay</th><th>Paid</th><th>Pay</th></tr></thead>
+        <tbody>
+        {% for b in balances %}
+        <tr>
+            <td><strong>{{ b.name }}</strong><br><span class="subtitle">{{ b.payout_address or 'no payout address yet' }}</span></td>
+            <td>{{ b.pending|usd }}</td>
+            <td>{{ b.payable|usd }}</td>
+            <td>{{ b.paid|usd }}</td>
+            <td>
+                {% if b.payable >= minimum and b.payout_address %}
+                    {% if automatic %}
+                    <form method="post" action="/admin/payouts/{{ b.user_id }}" class="stack-form">
+                        <label class="check-label"><input type="checkbox" name="confirm" value="yes"> Send {{ b.payable|usd }}</label>
+                        <button type="submit" class="btn btn-sm">Pay now</button>
+                    </form>
+                    {% endif %}
+                    <form method="post" action="/admin/payouts/{{ b.user_id }}" class="stack-form" style="margin-top: 6px;">
+                        <input type="text" name="tx_hash" placeholder="Paid by hand? 0x transaction" class="filter-input" aria-label="Payout transaction hash">
+                        <button type="submit" class="btn btn-secondary btn-sm">Record payout</button>
+                    </form>
+                {% else %}<span class="muted">{{ 'Needs an address' if not b.payout_address else 'Under the minimum' }}</span>{% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% endif %}
+</div>
+
+{% if payouts %}
+<div class="campaign-section">
+    <div class="campaign-header"><h2>Payout history</h2></div>
+    <div class="table-scroll">
+    <table class="data-table">
+        <thead><tr><th>Rep</th><th>Amount</th><th>Status</th><th>Transaction</th></tr></thead>
+        <tbody>
+        {% for p in payouts %}
+        <tr>
+            <td>{{ p.name }}<br><span class="subtitle">{{ p.created_at|fmt_date }}</span></td>
+            <td>{{ p.amount_atomic|usd }}</td>
+            <td>{{ p.status }}{% if p.error %}<br><span class="subtitle">{{ p.error }}</span>{% endif %}</td>
+            <td>{% if p.tx_hash %}<a href="{{ explorer_url(p.network, p.tx_hash) }}" target="_blank" rel="noopener">View</a>{% else %}—{% endif %}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

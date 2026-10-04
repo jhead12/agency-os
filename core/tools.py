@@ -219,7 +219,7 @@ def _log_call(db, user, args):
         outreach_id=row["id"], campaign_id=row["campaign_id"], prospect_id=args["prospect_id"],
         outcome=args["outcome"], notes=args.get("notes") or None,
         decision_maker_name=args.get("decision_maker_name") or None,
-        stage_at_call=row["stage"], called_by=user.name,
+        stage_at_call=row["stage"], called_by=user.name, called_by_user_id=user.id,
     ))
     return {"ok": True, "call_id": call_id}
 

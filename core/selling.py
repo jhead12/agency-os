@@ -39,7 +39,7 @@ import secrets
 from dataclasses import dataclass
 from typing import Any, Optional, Protocol
 
-from core import contact_depth, verify
+from core import contact_depth, royalties, verify
 from core.access import hash_token
 from core.payments import (
     MAINNETS, NETWORKS, PAYMENT_RESPONSE_HEADER, PAYMENT_REQUIRED_HEADER, USDC, mainnet_allowed, usd_to_atomic,
@@ -392,6 +392,8 @@ def sell_leads(db, gate: Gate, slug: str, payment: str, url: str) -> Reply:
             (pkg["id"], checked.payer, caip(), settled.tx_hash, amount, hash_token(token))).fetchone()["id"]
         c.executemany("INSERT INTO sale_leads (sale_id, published_lead_id) VALUES (?, ?)",
                       [(sale_id, lead["id"]) for lead in leads])
+        # The reps who built each lead share in its part of the unlock (core/royalties.py).
+        royalties.accrue(db, c, sale_id, "unlock", {lead["id"]: amount // len(leads) for lead in leads})
         c.execute(
             """INSERT INTO spend (kind, ref, amount_atomic, asset, network, pay_to, tx_hash, status)
                VALUES ('unlock_in', ?, ?, ?, ?, ?, ?, 'settled')""",
@@ -434,6 +436,7 @@ def royalty(db, gate: Gate, slug: str, body: Any, payment: str, url: str) -> Rep
     with c.raw.transaction():
         c.execute("INSERT INTO sale_royalties (sale_id, published_lead_id, tx_hash, amount_atomic) VALUES (?, ?, ?, ?)",
                   (sale["id"], lead["id"], settled.tx_hash, amount))
+        royalties.accrue(db, c, sale["id"], "royalty", {lead["id"]: amount})
         c.execute(
             """INSERT INTO spend (kind, ref, amount_atomic, asset, network, pay_to, tx_hash, status)
                VALUES ('royalty_in', ?, ?, ?, ?, ?, ?, 'settled')""",
@@ -473,8 +476,10 @@ def handle_claim(db, slug: str, body: Any) -> Reply:
                    VALUES (?, ?, ?, ?, ?) RETURNING id""",
                 (sale["id"], status, shortfall, json.dumps(failed[:MAX_CLAIM_BODY_LEADS]), reason[:500])).fetchone()["id"]
             if accepted:
+                lead_ids = [sold[l]["published_lead_id"] for l in accepted]
                 c.execute("UPDATE sale_leads SET claim_id = ? WHERE sale_id = ? AND published_lead_id = ANY(?)",
-                          (claim_id, sale["id"], [sold[l]["published_lead_id"] for l in accepted]))
+                          (claim_id, sale["id"], lead_ids))
+                royalties.claw_back(db, c, sale["id"], lead_ids)  # failed leads earn their reps nothing
             db._audit(c, None, f"selling.claim_{status}", "package_sale", sale["id"], {"shortfall": shortfall})
         return claim_id
 

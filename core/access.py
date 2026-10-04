@@ -54,6 +54,7 @@ CATALOG: dict[str, str] = {
     "agents.use": "Run the built-in AI agents (drafts only; nothing is sent)",
     "ai.connect": "Connect your own AI assistant to agency-os (WebMCP)",
     "packages.sell": "Publish our own lists as lead packages, and handle buyers' claims and refunds",
+    "royalties.view_own": "See your own data royalties and set where they're paid",
 }
 
 # Starter roles are created once if missing. Owners may edit or delete them
@@ -62,14 +63,14 @@ STARTER_ROLES: dict[str, tuple[str, list[str]]] = {
     "Caller": (
         "Works the phones: views prospects and scripts, logs calls, moves stages",
         ["dashboard.view", "prospects.view", "pipeline.edit",
-         "calls.view", "calls.log", "calendar.view"],
+         "calls.view", "calls.log", "calendar.view", "royalties.view_own"],
     ),
     "Sales Rep": (
         "Caller access plus editing prospects and reading sent email",
         ["dashboard.view", "prospects.view", "prospects.export", "prospects.edit",
          "pipeline.edit", "calls.view", "calls.log", "calendar.view",
          "campaigns.view", "emails.view", "templates.view", "portals.manage",
-         "packages.view", "spend.view", "agents.use", "ai.connect"],
+         "packages.view", "spend.view", "agents.use", "ai.connect", "royalties.view_own"],
     ),
     "Template Editor": (
         "Writes and edits outreach email templates",
@@ -116,6 +117,10 @@ ROUTE_RULES: dict[str, str] = {
     "POST /admin/selling/{package_id}/active": "packages.sell",
     "POST /admin/selling/claims/{claim_id}/refund": "packages.sell",
     "POST /prospects/{prospect_id}/do-not-sell": "prospects.edit",
+    "POST /prospects/{prospect_id}/credit": "packages.sell",
+    "POST /account/payout-address": "royalties.view_own",
+    "GET /admin/payouts": OWNER,
+    "POST /admin/payouts/{user_id}": OWNER,
     "GET /welcome/{token}": PUBLIC,   # one-time link; the token is the credential
     "POST /welcome/{token}": PUBLIC,
 

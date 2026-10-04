@@ -146,5 +146,6 @@ class CallLog:
     voicemail_left: bool = False
     notes: Optional[str] = None
     called_by: Optional[str] = None
+    called_by_user_id: Optional[int] = None  # who logged it, for rep royalties (core/royalties.py)
     called_at: Optional[datetime] = None
     id: Optional[int] = None

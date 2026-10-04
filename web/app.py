@@ -55,7 +55,8 @@ from core.pipeline import Pipeline
 from plugins.channels.lob_direct_mail import TEMPLATE_ID_RE, lob_template_url
 from core.jobs import JobRunner, configured_jobs, jobs_enabled
 from core import (
-    agents, claims, contact_depth, evidence, lead_packages, llm, mcp_auth, payments, selling, tools, verify,
+    agents, claims, contact_depth, evidence, lead_packages, llm, mcp_auth, payments, royalties, selling, tools,
+    verify,
 )
 from core.welcome import base_url as public_base_url
 from web.mcp_server import MCPMount
@@ -240,7 +241,8 @@ def nav_active(path: str) -> str:
         return "dashboard"
     parts = path.strip("/").split("/")
     if parts[0] == "admin":
-        return {"campaigns": "admin-campaigns", "selling": "admin-selling"}.get(parts[1] if len(parts) > 1 else "", "admin")
+        return {"campaigns": "admin-campaigns", "selling": "admin-selling", "payouts": "admin-payouts"}.get(
+            parts[1] if len(parts) > 1 else "", "admin")
     return parts[0]
 
 
@@ -1072,6 +1074,7 @@ async def record_call(
         voicemail_left=bool(voicemail_left),
         notes=notes or None,
         called_by=current_user(request).name,
+        called_by_user_id=current_user(request).id,
     )
     db.log_call(call)
     return RedirectResponse(url=f"/prospects/{prospect_id}", status_code=303)
@@ -1250,6 +1253,9 @@ async def prospect_detail(request: Request, prospect_id: int):
         "contact_tier": contact_depth.history_for_prospect(db, prospect_id)[1],
         "lead_package": lead_package,
         "verification": verify.lead_verdict(db, prospect_id) if lead_package else None,
+        "credit": royalties.credits(db, prospect_id) if current_user(request).can("packages.sell") else None,
+        "credit_labels": royalties.TASK_LABELS,
+        "team": [u for u in db.list_users() if u.get("is_active")] if current_user(request).can("packages.sell") else [],
         "do_not_sell": bool(db.conn.execute("SELECT do_not_sell FROM prospects WHERE id = ?",
                                             (prospect_id,)).fetchone()["do_not_sell"]),
         "agent_panel": {"personas": list(agents.load_personas().values()), "tasks": agents.TASKS,
@@ -1855,6 +1861,38 @@ async def prospect_do_not_sell(request: Request, prospect_id: int, flag: str = F
     return _back(f"/prospects/{prospect_id}", msg="Marked do not sell." if flag == "1" else "Do-not-sell removed.")
 
 
+@app.post("/prospects/{prospect_id}/credit")
+async def prospect_credit(request: Request, prospect_id: int, user_id: int = Form(...), task: str = Form(...),
+                          active: str = Form(default="1")):
+    """Give or remove a rep's credit for building this lead (their share of its sales)."""
+    try:
+        royalties.set_credit(get_db(), current_user(request), prospect_id, user_id, task, active == "1")
+    except ValueError as exc:
+        return _back(f"/prospects/{prospect_id}", error=str(exc))
+    return _back(f"/prospects/{prospect_id}", msg="Credit updated.")
+
+
+@app.get("/admin/payouts", response_class=HTMLResponse)
+async def admin_payouts(request: Request, msg: str = Query(default=""), error: str = Query(default="")):
+    db = get_db()
+    return templates.TemplateResponse(request, "admin_payouts.html", {
+        "active": "admin", "balances": royalties.balances(db), "payouts": royalties.payouts(db),
+        "minimum": royalties.minimum(), "maximum": royalties.maximum(), "network": royalties.payout_network(),
+        "automatic": royalties.default_sender().is_configured(), "msg": msg, "error": error,
+    })
+
+
+@app.post("/admin/payouts/{user_id}")
+async def admin_payout(request: Request, user_id: int, confirm: str = Form(default=""), tx_hash: str = Form(default="")):
+    """Pay a rep's balance: send it from the CDP wallet, or record a payment made by hand."""
+    if not tx_hash.strip() and confirm != "yes":
+        return _back("/admin/payouts", error="Tick the box to send the payment.")
+    problem = await run_in_threadpool(
+        royalties.pay, get_db(), current_user(request), user_id,
+        sender=None if tx_hash.strip() else royalties.default_sender(), tx_hash=tx_hash.strip())
+    return _back("/admin/payouts", error=problem) if problem else _back("/admin/payouts", msg="Payout done.")
+
+
 @app.get("/plugins", response_class=HTMLResponse)
 async def plugins_page(request: Request, msg: str = Query(default=""), error: str = Query(default=""),
                        test_slug: str = Query(default=""), test_demo: str = Query(default=""),
@@ -2194,9 +2232,18 @@ def _account(request: Request, *, msg: str = "", error: str = "", new_token: str
               "mcp_url": f"{site_url()}/mcp",
               "tokens": mcp_auth.list_tokens(get_db(), user.id) if user.uses_ai("ai.connect") else [],
               "new_token": new_token}
+    earnings = None
+    if user.can("royalties.view_own"):
+        db = get_db()
+        mine = royalties.balances(db, user.id)
+        prefs = db.conn.execute("SELECT payout_address FROM user_prefs WHERE user_id = ?", (user.id,)).fetchone()
+        earnings = {"balance": mine[0] if mine else {"pending": 0, "payable": 0, "paid": 0},
+                    "lines": royalties.statement(db, user.id, 20), "labels": royalties.TASK_LABELS,
+                    "address": prefs["payout_address"] if prefs else None}
     return templates.TemplateResponse(request, "account.html", {
         "active": "account",
         "spending": spending,
+        "earnings": earnings,
         "ai": ai,
         "permissions": [(k, v) for k, v in access.CATALOG.items() if user.can(k)],
         "msg": msg,
@@ -2257,6 +2304,19 @@ async def oauth_consent_decide(request: Request, request_id: str = Form(..., ali
     if target is None:
         return _back("/account", error="That sign-in request expired. Start the connection again from the app.")
     return RedirectResponse(url=target, status_code=303)
+
+
+@app.post("/account/payout-address")
+async def account_payout_address(request: Request, address: str = Form(default=""),
+                                 current_password: str = Form(...)):
+    """Where your data royalties are paid. Needs your password, since it redirects money."""
+    user = current_user(request)
+    db = get_db()
+    row = db.get_user_by_email(user.email)
+    if not access.verify_password(current_password, row["password_hash"]):
+        return _back("/account", error="Current password is incorrect.")
+    problem = royalties.set_payout_address(db, user, address)
+    return _back("/account", error=problem) if problem else _back("/account", msg="Payout address saved.")
 
 
 @app.post("/account/password")
