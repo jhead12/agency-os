@@ -126,3 +126,17 @@ document.addEventListener('click', async (event) => {
     }
     setTimeout(() => { button.textContent = label; }, 1500);
 });
+
+// Tap-to-call: the tel: link hands the call to the phone; then bring up the call log
+// form so the outcome is quick to record when the call ends.
+document.addEventListener('click', (event) => {
+    const link = event.target.closest('a.call-link[data-call-log]');
+    if (!link) return;
+    const form = document.querySelector(link.dataset.callLog);
+    if (!form) return;
+    setTimeout(() => {
+        form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        form.classList.add('call-log-highlight');
+        setTimeout(() => form.classList.remove('call-log-highlight'), 2500);
+    }, 400);
+});

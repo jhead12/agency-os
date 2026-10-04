@@ -158,6 +158,9 @@
             <div class="form-row">
                 <label>Phone</label>
                 <input type="text" name="contact_phone" value="{{ o.contact_phone or '' }}" placeholder="(213) 555-0100">
+                {% if o.contact_phone|tel %}
+                <a href="{{ o.contact_phone|tel }}" class="btn btn-sm call-link" data-call-log="#log-call-{{ o.id }}">📞 Call {{ o.contact_name or prospect.name }}</a>
+                {% endif %}
             </div>
             <div class="form-row">
                 <label>Title</label>
@@ -386,7 +389,7 @@ function toggleEmail(id) {
 <div class="detail-card full-width">
     <h3>📞 Log a Call</h3>
     {% for o in outreach_rows %}
-    <form method="post" action="/call-log/record" class="call-log-form">
+    <form method="post" action="/call-log/record" class="call-log-form" id="log-call-{{ o.id }}">
         <input type="hidden" name="prospect_id" value="{{ prospect.id }}">
         <input type="hidden" name="outreach_id" value="{{ o.id }}">
         <input type="hidden" name="campaign_id" value="{{ o.campaign_id }}">

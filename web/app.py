@@ -224,6 +224,24 @@ def fmt_currency(val) -> str:
     return f"${val}"
 
 
+def tel_href(phone) -> str:
+    """A tel: link for a stored phone number, or "" if it isn't dialable.
+
+    US numbers get +1 (10 digits, or 11 starting with 1); numbers written with a
+    leading + keep their country code. Opening the link hands the call to the
+    device: the phone app on mobile, "Call from iPhone" on a Mac, Phone Link on Windows.
+    """
+    raw = str(phone or "").strip()
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    if raw.startswith("+") and 8 <= len(digits) <= 15:
+        return f"tel:+{digits}"
+    if len(digits) == 10:
+        return f"tel:+1{digits}"
+    if len(digits) == 11 and digits.startswith("1"):
+        return f"tel:+{digits}"
+    return ""
+
+
 def fmt_date(val) -> str:
     if not val:
         return "—"
@@ -248,6 +266,7 @@ def nav_active(path: str) -> str:
 
 templates.env.filters["currency"] = fmt_currency
 templates.env.filters["fmt_date"] = fmt_date
+templates.env.filters["tel"] = tel_href
 templates.env.globals["nav_active"] = nav_active
 templates.env.globals["CALL_OUTCOMES"] = contact_depth.CALL_OUTCOMES
 
