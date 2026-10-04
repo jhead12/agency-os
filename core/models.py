@@ -135,7 +135,7 @@ class CallLog:
     script_key: Optional[str] = None
     script_title: Optional[str] = None
     stage_at_call: Optional[str] = None
-    outcome: str = "completed"  # completed | no_answer | voicemail | gatekeeper | wrong_number | scheduled
+    outcome: str = "completed"  # a key of core.contact_depth.CALL_OUTCOMES
     duration_minutes: Optional[int] = None
     interest_level: Optional[str] = None  # high | medium | low | not_interested
     decision_maker_name: Optional[str] = None

@@ -1,0 +1,5 @@
+# x402 lead-package payments (core/payments.py). Optional: only needed when
+# AGENCY_OS_X402=on. Install with: pip install -r requirements-payments.txt
+# (Docker: build with --build-arg WITH_PAYMENTS=1)
+x402[evm]>=2.25,<3
+cdp-sdk>=1.48,<2

@@ -17,6 +17,10 @@ Usage:
     agency-os users grant-owner --email someone@example.com
     agency-os users set-password --email someone@example.com
     agency-os users invite --email rep@example.com --name "Jane Rep" --role "Sales Rep"
+    agency-os packages list
+    agency-os packages unlock --campaign voter-guide-cbo --provider https://leads.example --package p1 --email you@example.com
+    agency-os spend --campaign voter-guide-cbo
+    agency-os spend allowance --email rep@example.com --usd 100
 """
 
 from __future__ import annotations
@@ -654,6 +658,106 @@ def users_invite(ctx, email, name, role_names, base_url, no_send):
         click.echo(f"Email not sent ({result.error}). Share this link with them instead:\n  {link}", err=True)
         sys.exit(1)
     click.echo(f"Welcome email sent to {user.email} (link expires {expires_at:%b %d, %Y})")
+
+
+# ── Lead packages (x402) ───────────────────────────────────────────
+
+
+@cli.group()
+def packages():
+    """Browse and unlock x402 lead packages."""
+
+
+@packages.command("list")
+def packages_list():
+    """List packages from the providers in AGENCY_OS_LEAD_PROVIDERS."""
+    from core import lead_packages
+
+    providers = lead_packages.configured_providers()
+    if not providers:
+        click.echo("No providers configured (AGENCY_OS_LEAD_PROVIDERS).")
+        return
+    for provider in providers:
+        found, error = lead_packages.fetch_catalog(provider)
+        click.echo(f"\n{provider}" + (f"  ! {error}" if error else ""))
+        for p in found:
+            badge = "90% guarantee" if p.guaranteed else "no guarantee"
+            click.echo(f"  {p.package_id:<24} {p.title[:40]:<40} {p.lead_count:>6} leads  "
+                       f"unlock ${p.unlock_usd:,.2f}  royalty ${p.royalty_usd:,.2f}  [{badge}]")
+
+
+@packages.command("unlock")
+@click.option("--campaign", "campaign_name", required=True)
+@click.option("--provider", required=True)
+@click.option("--package", "package_id", required=True)
+@click.option("--email", required=True, help="The user paying (their allowance applies)")
+@click.option("--yes", is_flag=True, help="Skip the confirmation prompt")
+@click.pass_context
+def packages_unlock(ctx, campaign_name, provider, package_id, email, yes):
+    """Pay for a package and import its leads into a campaign."""
+    from core import lead_packages
+
+    _registry, db, campaigns = _setup(db_url=ctx.obj["db_url"])
+    campaign = _get_campaign(campaigns, campaign_name)
+    if not campaign:
+        _fail(AccessError(f"Campaign not found: {campaign_name}"))
+    row = db.get_user_by_email(email)
+    user = db.load_current_user(row["id"]) if row else None
+    if user is None or not user.can("packages.buy"):
+        _fail(AccessError(f"{email} can't buy packages (needs the packages.buy permission)"))
+    package, error = lead_packages.find_package(lead_packages.normalize_provider(provider) or "", package_id)
+    if package is None:
+        _fail(AccessError(error))
+    if not yes:
+        click.confirm(f"Pay ${package.unlock_usd:,.2f} for '{package.title}' plus "
+                      f"${package.royalty_usd:,.2f} per lead contacted?", abort=True)
+    campaign_id = db.upsert_campaign(campaign.db_name, str(campaign.config_dir / "campaign.yaml"))
+    result = lead_packages.unlock(db, campaign, campaign_id, user, package)
+    click.echo(result.message)
+    if not result.ok:
+        sys.exit(1)
+
+
+@cli.group(invoke_without_command=True)
+@click.option("--campaign", "campaign_name", help="Show one campaign's spending")
+@click.pass_context
+def spend(ctx, campaign_name):
+    """Lead-package spending per campaign."""
+    if ctx.invoked_subcommand:
+        return
+    from core.payments import SpendPolicy, atomic_to_usd
+
+    _registry, db, campaigns = _setup(db_url=ctx.obj["db_url"])
+    selected = [c for c in campaigns if not campaign_name or c is _get_campaign(campaigns, campaign_name)]
+    for c in selected:
+        campaign_id = db.get_campaign_id(c.db_name)
+        if not campaign_id:
+            continue
+        summary = db.campaign_spend(campaign_id)
+        policy = SpendPolicy.from_config(c.lead_packages)
+        click.echo(f"\n{c.name}  ({'on' if policy.enabled else 'off'}, {policy.network})")
+        click.echo(f"  this month: ${atomic_to_usd(summary['month_atomic']):,.2f}"
+                   f" of ${atomic_to_usd(policy.monthly_budget_atomic):,.2f}")
+        for kind, v in summary["by_kind"].items():
+            click.echo(f"  {kind:<8} {v['count']:>5}  ${atomic_to_usd(v['total_atomic']):,.2f}")
+        if summary["pending"]:
+            click.echo(f"  ! {summary['pending']} payment(s) still pending")
+
+
+@spend.command("allowance")
+@click.option("--email", required=True)
+@click.option("--usd", type=float, required=True, help="Monthly allowance in dollars (0 = can't spend)")
+@click.pass_context
+def spend_allowance(ctx, email, usd):
+    """Set how much a user may spend on lead packages per month."""
+    from core.payments import usd_to_atomic
+
+    db = _access_db(ctx)
+    row = db.get_user_by_email(email)
+    if not row:
+        _fail(AccessError(f"No user with email {email}"))
+    db.set_spend_allowance(row["id"], usd_to_atomic(usd), actor=None)
+    click.echo(f"{email} may now spend ${max(usd, 0):,.2f} per month on lead packages")
 
 
 if __name__ == "__main__":

@@ -242,6 +242,49 @@ python agency_os.py users set-password --email someone@example.com
 Run the tests against a scratch database (it is wiped, and its name must
 contain "test"): `TEST_DATABASE_URL=postgresql://localhost/agency_os_test python -m pytest tests/`.
 
+## Lead packages (x402)
+
+Buy lead lists from approved providers and pay in USDC over
+[x402](https://x402.org). Unlocking a package pays once and imports its
+leads into a campaign. The first time a package lead is contacted, the
+pipeline pays that lead's royalty before sending. Every payment is recorded
+in the `spend` table with its onchain transaction.
+
+A lead's value is the contact that has really happened. Each lead carries its
+contact history, and its **tier** is the deepest step that history proves
+(`core/contact_depth.py`): mailed → emailed → phone verified → connected →
+pitched. The tier is computed from the history, never taken from the seller's
+claim. Each package guarantees that 90% of its leads reach a stated tier, and
+each lead's royalty follows its own tier (`royalty_by_tier` in the catalog).
+Call outcomes include the dispositions the guarantee relies on (disconnected,
+answering machine, hung up, busy, fax tone, wrong number).
+
+Off by default. To try it on Base Sepolia (test USDC):
+
+1. `pip install -r requirements-payments.txt` (Docker: `--build-arg WITH_PAYMENTS=1`)
+2. Set `AGENCY_OS_X402=on`, `AGENCY_OS_LEAD_PROVIDERS=https://provider.example`
+   and the Coinbase CDP wallet keys (`CDP_API_KEY_ID`, `CDP_API_KEY_SECRET`,
+   `CDP_WALLET_SECRET`). Fund the wallet with test USDC.
+3. In **Admin → Campaign Settings**, turn on *Lead Packages* for a campaign and
+   set its caps and monthly budget.
+4. Give buyers the `packages.buy` permission and an allowance:
+   `python agency_os.py spend allowance --email rep@example.com --usd 50`
+5. Unlock from **Campaigns → Lead Packages**, or
+   `python agency_os.py packages unlock --campaign ... --provider ... --package ... --email ...`
+
+Safeguards:
+- Only allowlisted https providers can be used.
+- A quote is only paid if it is USDC on the campaign's network, goes to the
+  catalog's pay-to address, and costs no more than the catalog price.
+- Per-unlock and per-royalty caps, a campaign monthly budget and a per-user
+  allowance all apply. Budget is reserved under a per-campaign lock, so
+  parallel runs can't overspend.
+- Each unlock and royalty can be paid only once.
+- Mainnet needs `AGENCY_OS_X402_ALLOW_MAINNET=1` as well.
+- Package leads never overwrite existing prospects. They are only contacted in
+  the campaign they were unlocked into, and they're only texted if the package
+  includes SMS consent.
+
 ## API keys
 
 Set via environment variables:

@@ -6,8 +6,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY requirements.txt .
+COPY requirements.txt requirements-payments.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
+
+# x402 lead-package payments pull in web3/solana, so they're opt-in.
+ARG WITH_PAYMENTS=0
+RUN if [ "$WITH_PAYMENTS" = "1" ]; then pip install --no-cache-dir -r requirements-payments.txt; fi
 
 COPY . .
 

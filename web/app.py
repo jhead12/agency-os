@@ -49,6 +49,8 @@ from core.registry import PluginRegistry
 from core.pipeline import Pipeline
 from plugins.channels.lob_direct_mail import TEMPLATE_ID_RE, lob_template_url
 from core.jobs import JobRunner, configured_jobs, jobs_enabled
+from core import contact_depth, lead_packages, payments
+from starlette.concurrency import run_in_threadpool
 
 # ── Init ────────────────────────────────────────────────────────────
 
@@ -224,6 +226,7 @@ def nav_active(path: str) -> str:
 templates.env.filters["currency"] = fmt_currency
 templates.env.filters["fmt_date"] = fmt_date
 templates.env.globals["nav_active"] = nav_active
+templates.env.globals["CALL_OUTCOMES"] = contact_depth.CALL_OUTCOMES
 
 
 # ── Routes ──────────────────────────────────────────────────────────
@@ -1051,6 +1054,8 @@ async def record_call(
 ):
     """Record a completed phone call."""
     from core.models import CallLog
+    if outcome not in contact_depth.CALL_OUTCOMES:
+        return _back(f"/prospects/{prospect_id}", error="Pick a call outcome from the list.")
     db = get_db()
 
     from datetime import datetime as _dt
@@ -1249,6 +1254,9 @@ async def prospect_detail(request: Request, prospect_id: int):
     )
 
     return templates.TemplateResponse(request, "prospect_detail.html", {
+        "contact_tier": contact_depth.history_for_prospect(db, prospect_id)[1],
+        "lead_package": lead_packages.package_info(prospect),
+        "package_spend": db.prospect_spend(prospect_id),
         "portal": (prospect.metadata or {}).get("u9itus") or {},
         "portal_link": next((r["demo_link"] for r in outreach_rows if r["demo_link"]), None),
         "portal_events": portal_events,
@@ -1421,17 +1429,89 @@ async def campaign_list(request: Request):
     db = get_db()
     campaigns = get_campaigns()
 
+    show_spend = current_user(request).can("spend.view")
     campaign_data = []
     for c in campaigns:
         stats = db.get_pipeline_stats(c.db_name)
+        spend = None
+        campaign_id = db.get_campaign_id(c.db_name) if show_spend and c.lead_packages else None
+        if campaign_id:
+            spend = db.campaign_spend(campaign_id)
+            spend["policy"] = payments.SpendPolicy.from_config(c.lead_packages)
         campaign_data.append({
             "config": c,
             "stats": stats,
+            "spend": spend,
         })
 
     return templates.TemplateResponse(request, "campaigns.html", {
         "campaigns": campaign_data,
     })
+
+
+# ── Lead packages (x402) ────────────────────────────────────────────
+
+
+def _usd(atomic) -> str:
+    return f"${payments.atomic_to_usd(atomic):,.2f}"
+
+
+templates.env.filters["usd"] = _usd
+templates.env.globals["explorer_url"] = payments.explorer_url
+
+
+@app.get("/lead-packages", response_class=HTMLResponse)
+async def lead_packages_page(request: Request, msg: str = Query(default=""), error: str = Query(default="")):
+    """Browse approved providers' lead packages and the ones already unlocked."""
+    user = current_user(request)
+    db = get_db()
+    catalogs = []
+    for provider in lead_packages.configured_providers():
+        packages, problem = await run_in_threadpool(lead_packages.cached_catalog, provider)
+        catalogs.append({"provider": provider, "packages": packages, "error": problem})
+    buyable = [c for c in get_campaigns() if (c.lead_packages or {}).get("enabled")]
+    return templates.TemplateResponse(request, "lead_packages.html", {
+        "catalogs": catalogs,
+        "campaigns": buyable,
+        "unlocked": db.list_lead_packages() if user.can("spend.view") else [],
+        "payments_on": payments.payments_enabled(),
+        "allowance": db.spend_allowance(user.id),
+        "msg": msg,
+        "error": error,
+    })
+
+
+@app.post("/lead-packages/unlock")
+async def lead_package_unlock(
+    request: Request,
+    provider: str = Form(...),
+    package_id: str = Form(...),
+    campaign: str = Form(...),
+    confirm: str = Form(default=""),
+):
+    """Pay for a package and import its leads. Needs an explicit confirm."""
+    user = current_user(request)
+    if confirm != "yes":
+        return _back("/lead-packages", error="Tick the box to approve the payment.")
+    if provider not in lead_packages.configured_providers():
+        return _back("/lead-packages", error="That provider isn't on the approved list.")
+    config = next((c for c in get_campaigns() if c.db_name == campaign), None)
+    if config is None or not (config.lead_packages or {}).get("enabled"):
+        return _back("/lead-packages", error="Pick a campaign that has lead packages turned on.")
+    db = get_db()
+    campaign_id = db.get_campaign_id(config.db_name) or db.upsert_campaign(
+        config.db_name, str(config.config_dir / "campaign.yaml"))
+
+    def run():
+        package, problem = lead_packages.find_package(provider, package_id)
+        if package is None:
+            return lead_packages.UnlockResult(False, problem)
+        return lead_packages.unlock(db, config, campaign_id, user, package)
+
+    result = await run_in_threadpool(run)
+    if result.ok:
+        return _back("/lead-packages", msg=result.message)
+    return _back("/lead-packages", error=result.message)
 
 
 @app.get("/plugins", response_class=HTMLResponse)
@@ -2012,11 +2092,15 @@ async def admin_campaign_detail(request: Request, campaign_slug: str):
     yaml_path = campaign.config_dir / "campaign.yaml"
     yaml_content = yaml_path.read_text() if yaml_path.exists() else ""
 
+    db = get_db()
+    campaign_id = db.get_campaign_id(campaign.db_name)
     return templates.TemplateResponse(request, "admin_campaign_detail.html", {
         "active": "admin",
         "campaign": campaign,
         "yaml": yaml_content,
         "plugins": _get_registry_plugins(),
+        "networks": list(payments.NETWORKS),
+        "unlocked": db.list_lead_packages(campaign_id) if campaign_id else [],
     })
 
 
@@ -2032,6 +2116,12 @@ async def admin_campaign_update(
     sender_name: str = Form(default=""),
     sender_email: str = Form(default=""),
     stale_threshold_days: str = Form(default="14"),
+    lp_present: str = Form(default=""),
+    lp_enabled: str = Form(default=""),
+    lp_network: str = Form(default="base-sepolia"),
+    lp_max_unlock_usd: str = Form(default="0"),
+    lp_max_royalty_usd: str = Form(default="0"),
+    lp_monthly_budget_usd: str = Form(default="0"),
 ):
     """Update a campaign's plugin associations by rewriting campaign.yaml."""
     if not _same_origin(request):
@@ -2071,6 +2161,25 @@ async def admin_campaign_update(
             raw["stale_threshold_days"] = int(stale_threshold_days)
         except ValueError:
             pass
+
+    # Lead packages: only when the section was on the form, so older forms
+    # (and other tools posting here) never turn spending on or off by accident.
+    if lp_present:
+        def dollars(value: str) -> float:
+            try:
+                return round(max(0.0, float(value)), 2)
+            except ValueError:
+                return 0.0
+        block = dict(raw.get("lead_packages") or {})
+        block.update({
+            "enabled": bool(lp_enabled),
+            "network": lp_network if lp_network in payments.NETWORKS else "base-sepolia",
+            "max_unlock_usd": dollars(lp_max_unlock_usd),
+            "max_royalty_per_contact_usd": dollars(lp_max_royalty_usd),
+            "monthly_budget_usd": dollars(lp_monthly_budget_usd),
+        })
+        raw["lead_packages"] = block
+        get_db().audit(current_user(request), "campaign.lead_packages", "campaign", campaign.db_name, block)
 
     # Write back
     save_campaign_file(yaml_path, _yaml.dump(raw, default_flow_style=False, sort_keys=False))
