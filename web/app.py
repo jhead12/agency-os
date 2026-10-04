@@ -36,7 +36,7 @@ from urllib.parse import quote, urlsplit, urlencode
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from fastapi import FastAPI, Request, Query, HTTPException, Form, Depends
+from fastapi import FastAPI, Request, Query, HTTPException, Form, Depends, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -2185,6 +2185,220 @@ async def admin_campaign_update(
     save_campaign_file(yaml_path, _yaml.dump(raw, default_flow_style=False, sort_keys=False))
 
     return _back("/admin/campaigns", msg=f"Updated campaign '{campaign.name}'.")
+
+
+# ── CSV Lead Import ─────────────────────────────────────────────────
+
+# Maps CSV column headers (case-insensitive) to Prospect model fields.
+# Multiple header variants are accepted for each field.
+_CSV_FIELD_MAP = {
+    "name": ["name", "organization", "organization name", "org", "company"],
+    "ein": ["ein", "tax id", "tax_id"],
+    "ntee_code": ["ntee", "ntee_code", "ntee code", "category"],
+    "website_url": ["website", "website_url", "url", "domain"],
+    "address": ["address", "street", "address1", "address_1", "street_address"],
+    "city": ["city"],
+    "state": ["state", "st"],
+    "zip": ["zip", "zip_code", "zipcode", "postal", "postal_code"],
+    "county": ["county"],
+    "focus_area": ["focus_area", "focus area", "focus", "category"],
+    "annual_revenue": ["annual_revenue", "annual revenue", "revenue", "income"],
+    "voter_engagement": ["voter_engagement", "voter engagement"],
+    "source": ["source", "lead_source", "lead source"],
+    "source_url": ["source_url", "source url", "referral", "ref"],
+    # Outreach-level contact info (goes on the outreach row, not prospect)
+    "contact_name": ["contact_name", "contact", "contact name", "first name", "firstname"],
+    "contact_email": ["contact_email", "email", "contact email", "e-mail"],
+    "contact_phone": ["contact_phone", "phone", "contact phone", "telephone", "tel"],
+    "contact_title": ["contact_title", "contact title", "title", "position"],
+}
+
+
+def _parse_csv_headers(headers: list[str]) -> dict[str, int]:
+    """Map CSV column headers to field names. Returns {field: col_index}."""
+    mapping = {}
+    normalized = [h.strip().lower() for h in headers]
+    for field, variants in _CSV_FIELD_MAP.items():
+        for i, col in enumerate(normalized):
+            if col in variants and field not in mapping:
+                mapping[field] = i
+    return mapping
+
+
+@app.post("/admin/campaigns/{campaign_slug}/import-csv")
+async def import_csv_leads(
+    request: Request,
+    campaign_slug: str,
+    file: UploadFile = File(...),
+):
+    """Upload a CSV file of leads and add them to a campaign.
+
+    Accepts any CSV with a header row. Recognized columns (case-insensitive):
+    name, organization, ein, ntee, website, address, city, state, zip,
+    county, focus_area, annual_revenue, voter_engagement, source,
+    contact_name, contact_email, contact_phone, contact_title
+
+    Minimum required: name (and state recommended for dedup).
+
+    Prospects are upserted (matched by EIN or name+state). If the prospect
+    is new to this campaign, an outreach row is created at 'cold' stage.
+    Contact info from the CSV is written to the outreach row.
+    """
+    if not _same_origin(request):
+        return _back("/admin/campaigns", error="Cross-site request blocked.")
+
+    # Find campaign
+    campaigns = get_campaigns()
+    campaign = next((c for c in campaigns if c.db_name == campaign_slug), None)
+    if not campaign:
+        return _back("/admin/campaigns", error=f"Campaign '{campaign_slug}' not found.")
+
+    # Read and parse the CSV
+    import csv as _csv
+    import io
+
+    raw = await file.read()
+    if not raw:
+        return _back(f"/admin/campaigns/{campaign_slug}", error="Empty file.")
+
+    try:
+        text = raw.decode("utf-8-sig")  # handles BOM
+    except UnicodeDecodeError:
+        try:
+            text = raw.decode("latin-1")
+        except Exception:
+            return _back(f"/admin/campaigns/{campaign_slug}", error="Could not decode file. Use UTF-8.")
+
+    reader = _csv.reader(io.StringIO(text))
+    rows = list(reader)
+    if len(rows) < 2:
+        return _back(f"/admin/campaigns/{campaign_slug}", error="CSV needs a header row and at least one data row.")
+
+    field_map = _parse_csv_headers(rows[0])
+    if "name" not in field_map:
+        return _back(
+            f"/admin/campaigns/{campaign_slug}",
+            error="CSV must have a 'name' or 'organization' column.",
+        )
+
+    db = get_db()
+    from core.models import Prospect
+    import json as _json
+
+    campaign_id = db.get_campaign_id(campaign.db_name) or db.upsert_campaign(campaign.db_name, str(campaign.config_dir))
+
+    imported = 0
+    updated = 0
+    skipped = 0
+    errors = []
+
+    for row_idx, row in enumerate(rows[1:], start=2):
+        if not row or all(not c.strip() for c in row):
+            skipped += 1
+            continue
+
+        def get(field):
+            idx = field_map.get(field)
+            if idx is None or idx >= len(row):
+                return ""
+            return row[idx].strip()
+
+        org_name = get("name")
+        if not org_name:
+            skipped += 1
+            continue
+
+        # Parse annual_revenue as int
+        rev_str = get("annual_revenue").replace(",", "").replace("$", "")
+        try:
+            annual_revenue = int(rev_str) if rev_str else None
+        except ValueError:
+            annual_revenue = None
+
+        # Parse voter_engagement as bool
+        ve_str = get("voter_engagement").lower()
+        voter_engagement = ve_str in ("1", "true", "yes", "y")
+
+        prospect = Prospect(
+            name=org_name,
+            ein=get("ein") or None,
+            ntee_code=get("ntee_code") or None,
+            website_url=get("website_url") or None,
+            address=get("address") or None,
+            city=get("city") or None,
+            state=get("state") or None,
+            zip=get("zip") or None,
+            county=get("county") or None,
+            focus_area=get("focus_area") or None,
+            annual_revenue=annual_revenue,
+            voter_engagement=voter_engagement,
+            source=get("source") or "csv_upload",
+            source_url=get("source_url") or None,
+            metadata={},
+        )
+
+        try:
+            prospect_id = db.upsert_prospect(prospect)
+            # Check if this was an insert or update
+            existing = db.conn.execute(
+                "SELECT created_at, updated_at FROM prospects WHERE id = ?",
+                (prospect_id,),
+            ).fetchone()
+            is_new = existing and existing["created_at"] == existing["updated_at"]
+
+            # Create outreach row for this campaign
+            outreach_id = db.upsert_outreach(prospect_id, campaign_id)
+
+            # If CSV has contact info, update the outreach row
+            contact_name = get("contact_name")
+            contact_email = get("contact_email")
+            contact_phone = get("contact_phone")
+            contact_title = get("contact_title")
+            if contact_name or contact_email or contact_phone:
+                db.update_outreach(outreach_id, {
+                    "contact_name": contact_name,
+                    "contact_email": contact_email,
+                    "contact_phone": contact_phone,
+                    "contact_title": contact_title,
+                })
+
+            if is_new:
+                imported += 1
+            else:
+                updated += 1
+        except Exception as exc:
+            errors.append(f"Row {row_idx}: {exc}")
+            skipped += 1
+
+    db.audit(
+        current_user(request),
+        "csv_import",
+        "campaign",
+        campaign.db_name,
+        {"file": file.filename, "imported": imported, "updated": updated, "skipped": skipped, "errors": errors[:10]},
+    )
+
+    msg = f"Imported {imported} new, updated {updated} existing, skipped {skipped}."
+    if errors:
+        msg += f" {len(errors)} error(s): {errors[0]}"
+    return _back(f"/admin/campaigns/{campaign_slug}", msg=msg)
+
+
+@app.get("/admin/campaigns/{campaign_slug}/import-template")
+async def download_csv_template():
+    """Download a blank CSV template with the recognized column headers."""
+    from fastapi.responses import PlainTextResponse
+    headers = [
+        "name", "ein", "ntee_code", "website_url", "address",
+        "city", "state", "zip", "county", "focus_area",
+        "annual_revenue", "voter_engagement", "source",
+        "contact_name", "contact_email", "contact_phone", "contact_title",
+    ]
+    return PlainTextResponse(
+        ",".join(headers) + "\n",
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=lead_import_template.csv"},
+    )
 
 
 @app.get("/healthz")

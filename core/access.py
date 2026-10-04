@@ -125,6 +125,8 @@ ROUTE_RULES: dict[str, str] = {
     "GET /admin/campaigns": OWNER,
     "GET /admin/campaigns/{campaign_slug}": OWNER,
     "POST /admin/campaigns/{campaign_slug}": OWNER,
+    "POST /admin/campaigns/{campaign_slug}/import-csv": OWNER,
+    "GET /admin/campaigns/{campaign_slug}/import-template": OWNER,
     "GET /plugins": "campaigns.view",
     "POST /plugins/u9itus_voter_guide/test": "portals.manage",
     "GET /mail-templates": "templates.view",
