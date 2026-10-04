@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core import claims, lead_packages, verify  # noqa: E402
 from core.models import CallLog, EnrichmentResult, SendResult  # noqa: E402
-from core.verify import score_lead, summarize  # noqa: E402
+from core.verify import DEFAULT_RULES, Rules, rules_for, score_lead, summarize  # noqa: E402
 from tests.fake_x402_provider import BASE, FakePayer  # noqa: E402
 from tests.test_access import client_for, db, make_user  # noqa: E402,F401
 from tests.test_lead_packages import (  # noqa: E402,F401
@@ -89,7 +89,7 @@ def test_ai_is_one_weighted_signal():
 def test_shortfall_is_what_90_percent_needs(n, failed, shortfall):
     checks = [{"status": "failed" if i < failed else "verified", "replacement": 0, "claim_id": None}
               for i in range(n)]
-    assert summarize({}, checks, True)["shortfall"] == shortfall
+    assert summarize({}, checks, {"open": True})["shortfall"] == shortfall
 
 
 # ── Database: verdicts, gate, claims ───────────────────────────────────
@@ -204,10 +204,15 @@ def test_unreachable_provider_releases_the_leads(db, x402_env, provider):
 def test_claims_only_inside_the_window(db, x402_env, provider):
     user, campaign_id, lp_id, rows = unlocked(db, provider)
     fail_first_lead(db, campaign_id, rows)
-    db.conn.execute("UPDATE lead_packages SET unlocked_at = CURRENT_TIMESTAMP - INTERVAL '31 days' WHERE id = ?",
+    db.conn.execute("UPDATE lead_packages SET unlocked_at = CURRENT_TIMESTAMP - INTERVAL '33 days' WHERE id = ?",
+                    (lp_id,))
+    status = claims.package_status(db, lp_id)  # window closed, still inside the 7 claim days
+    assert not status["summary"]["window_open"] and status["window"]["claims_open"]
+    assert status["claim_problem"] is None and status["window"]["claim_days_left"] == 4
+    db.conn.execute("UPDATE lead_packages SET unlocked_at = CURRENT_TIMESTAMP - INTERVAL '38 days' WHERE id = ?",
                     (lp_id,))
     status = claims.package_status(db, lp_id)
-    assert not status["summary"]["window_open"] and "window has closed" in status["claim_problem"]
+    assert not status["window"]["claims_open"] and "have closed" in status["claim_problem"]
     assert not claims.file_claim(db, lp_id, user, http=provider.client()).ok and provider.claims == []
 
 
@@ -364,3 +369,73 @@ def test_email_send_counts_as_working_the_lead(db, x402_env, provider):
                                   (rows[1]["prospect_id"],)).fetchone()["id"]
     db.log_email(outreach_id, campaign_id, "cold", "Hi", "", SendResult(status="sent", provider_message_id="abc"))
     assert verify.lead_verdict(db, rows[1]["prospect_id"])["status"] == "verified"
+
+
+# ── Tunable rules ──────────────────────────────────────────────────────
+
+
+def test_rules_are_range_checked_and_keep_the_hard_failures():
+    loose = DEFAULT_RULES.merged({
+        "fail_at": 99, "window_days": 1, "claim_days": "lots", "wrong_number_reports": 0,
+        "unworked_at_close": "whatever", "made_up": 1,
+        "weights": {"disconnected": 0, "tier_below_promise": -2, "email_bounced": 9, "nope": 1}})
+    assert loose.fail_at == 2.0 and loose.window_days == 7 and loose.claim_days == 7
+    assert loose.wrong_number_reports == 1 and loose.unworked_at_close == "verified"
+    assert loose.weight("email_bounced") == 2.0
+    # A dead number and a history below the promise still fail a lead on their own.
+    assert loose.weight("disconnected") >= 2.0 and loose.weight("tier_below_promise") >= 2.0
+    assert score(["disconnected"], rules=loose).status == "failed"
+
+
+def test_rules_layer_package_over_campaign_over_defaults():
+    rules = rules_for({"window_days": 14, "rules": {"wrong_number_reports": 3}},
+                      {"window_days": 45, "no_answer_attempts": 4, "wrong_number_reports": 1})
+    assert rules.window_days == 14 and rules.wrong_number_reports == 3 and rules.no_answer_attempts == 4
+    assert rules_for(None, None) == DEFAULT_RULES
+
+
+def test_scoring_follows_the_rules():
+    strict = Rules(wrong_number_reports=3, no_answer_attempts=3, fail_at=0.5)
+    assert score(["wrong_number", "wrong_number"], rules=strict).status == "verified"
+    assert score(["wrong_number"] * 3, rules=strict).status == "failed"
+    assert score(["no_answer"] * 3, rules=strict).status == "failed"  # 0.5 meets fail_at 0.5
+    assert score(events=["email_bounced"], rules=strict).status == "failed"
+
+
+@pytest.mark.parametrize("policy, lead_count, failed, shortfall", [
+    ("verified", 10, 1, 0), ("excluded", 4, 1, 1), ("failed", 10, 7, 6)])
+def test_unworked_leads_at_close(policy, lead_count, failed, shortfall):
+    checks = ([{"status": "failed", "replacement": 0, "claim_id": None, "signals": "[]"}]
+              + [{"status": "verified", "replacement": 0, "claim_id": None}] * 3
+              + [{"status": "unworked", "replacement": 0, "claim_id": None}] * 6)
+    open_now = summarize({}, checks, {"open": True}, Rules(unworked_at_close=policy))
+    assert open_now["unworked"] == 6 and open_now["shortfall"] == 0 or policy == "excluded"
+    closed = summarize({}, checks, {"open": False}, Rules(unworked_at_close=policy))
+    assert (closed["lead_count"], closed["failed"], closed["shortfall"]) == (lead_count, failed, shortfall)
+
+
+def test_rules_are_fixed_at_unlock_and_shown(db, x402_env, provider, monkeypatch):
+    provider.packages["p1"]["guarantee"]["rules"] = {"wrong_number_reports": 3, "claim_days": 10}
+    user = buyer(db)
+    campaign_id = db.upsert_campaign("lp-test", "x")
+    result = lead_packages.unlock(db, campaign(guarantee_rules={"window_days": 45, "fail_at": 1.5}), campaign_id,
+                                  user, package(provider), http=provider.client(), payer=FakePayer())
+    lp = db.get_lead_package(result.lead_package_id)
+    fixed = verify.stored_rules(lp)
+    assert (fixed.window_days, fixed.fail_at, fixed.wrong_number_reports, fixed.claim_days) == (30, 1.5, 3, 10)
+    # Later changes to the campaign's defaults don't touch a running guarantee.
+    assert verify.stored_rules(db.get_lead_package(result.lead_package_id)) == fixed
+
+    rows = db.conn.execute("SELECT prospect_id FROM lead_checks WHERE lead_package_id = ? ORDER BY id",
+                           (result.lead_package_id,)).fetchall()
+    call(db, campaign_id, rows[0]["prospect_id"], "wrong_number", called_by="Ana")
+    call(db, campaign_id, rows[0]["prospect_id"], "wrong_number", called_by="Ana")
+    assert verify.lead_verdict(db, rows[0]["prospect_id"])["status"] == "verified"  # needs 3 under these terms
+
+    monkeypatch.setattr(lead_packages, "make_http", lambda transport=None: provider.client())
+    page = client_for("buyer@x.com").get(f"/lead-packages/unlocked/{result.lead_package_id}").text
+    assert "Guarantee terms" in page and "3 reports" in page and "10 more to file a claim" in page
+
+    call(db, campaign_id, rows[0]["prospect_id"], "disconnected")
+    assert claims.file_claim(db, result.lead_package_id, user, http=provider.client()).ok
+    assert provider.claims[0]["rules"]["wrong_number_reports"] == 3

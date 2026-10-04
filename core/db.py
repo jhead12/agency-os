@@ -275,6 +275,8 @@ CREATE TABLE IF NOT EXISTS lead_packages (
 -- Columns added after lead_packages first shipped (no-ops on new databases).
 ALTER TABLE lead_packages ADD COLUMN IF NOT EXISTS royalty_by_tier TEXT DEFAULT '{}';
 ALTER TABLE lead_packages ADD COLUMN IF NOT EXISTS guarantee_tier TEXT;
+-- The guarantee rules fixed at unlock (core/verify.Rules); NULL on older unlocks.
+ALTER TABLE lead_packages ADD COLUMN IF NOT EXISTS guarantee_rules TEXT;
 -- AI features are opt-in per user (Account page); a missing row means off.
 ALTER TABLE user_prefs ADD COLUMN IF NOT EXISTS ai_enabled INTEGER NOT NULL DEFAULT 0;
 

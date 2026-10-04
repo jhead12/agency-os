@@ -1485,6 +1485,8 @@ def _usd(atomic) -> str:
 
 templates.env.filters["usd"] = _usd
 templates.env.globals["explorer_url"] = payments.explorer_url
+templates.env.globals["WEIGHT_LABELS"] = verify.WEIGHT_LABELS
+templates.env.globals["UNWORKED_POLICIES"] = verify.UNWORKED_POLICIES
 
 
 @app.get("/lead-packages", response_class=HTMLResponse)
@@ -2366,6 +2368,7 @@ async def admin_campaign_detail(request: Request, campaign_slug: str):
         "networks": list(payments.NETWORKS),
         "unlocked": db.list_lead_packages(campaign_id) if campaign_id else [],
         "paused": lead_packages.paused_refs(campaign),
+        "default_rules": verify.DEFAULT_RULES.merged((campaign.lead_packages or {}).get("guarantee_rules")),
         "ratings": claims.ratings(db),
         "package_ref": lead_packages.package_ref,
     })
@@ -2389,6 +2392,12 @@ async def admin_campaign_update(
     lp_max_unlock_usd: str = Form(default="0"),
     lp_max_royalty_usd: str = Form(default="0"),
     lp_monthly_budget_usd: str = Form(default="0"),
+    lp_rule_fail_at: str = Form(default=""),
+    lp_rule_wrong_number_reports: str = Form(default=""),
+    lp_rule_no_answer_attempts: str = Form(default=""),
+    lp_rule_window_days: str = Form(default=""),
+    lp_rule_claim_days: str = Form(default=""),
+    lp_rule_unworked_at_close: str = Form(default=""),
     lp_listed: list[str] = Form(default=[]),
     lp_active: list[str] = Form(default=[]),
 ):
@@ -2459,6 +2468,15 @@ async def admin_campaign_update(
         block.pop("paused_packages", None)
         if paused:
             block["paused_packages"] = paused
+        # Default guarantee rules for this campaign's future unlocks (range-checked;
+        # weights stay as set in campaign.yaml).
+        entered = {"fail_at": lp_rule_fail_at, "wrong_number_reports": lp_rule_wrong_number_reports,
+                   "no_answer_attempts": lp_rule_no_answer_attempts, "window_days": lp_rule_window_days,
+                   "claim_days": lp_rule_claim_days, "unworked_at_close": lp_rule_unworked_at_close}
+        current = dict(block.get("guarantee_rules") or {})
+        checked = verify.DEFAULT_RULES.merged({**current, **{k: v for k, v in entered.items() if v.strip()}})
+        block["guarantee_rules"] = {**{k: v for k, v in checked.to_dict().items() if k != "weights"},
+                                    **({"weights": current["weights"]} if current.get("weights") else {})}
         raw["lead_packages"] = block
         get_db().audit(current_user(request), "campaign.lead_packages", "campaign", campaign.db_name, block)
 

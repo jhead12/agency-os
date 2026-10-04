@@ -419,8 +419,10 @@ def test_campaign_editor_saves_policy_and_never_pays(db, x402_env, provider):
                           "lp_max_unlock_usd": "25", "lp_max_royalty_usd": "-3",
                           "lp_monthly_budget_usd": "lots"})
     saved = yaml.safe_load((config.config_dir / "campaign.yaml").read_text())["lead_packages"]
-    assert saved == {"enabled": True, "network": "base", "max_unlock_usd": 25.0,
-                     "max_royalty_per_contact_usd": 0.0, "monthly_budget_usd": 0.0}
+    assert saved["guarantee_rules"]["window_days"] == 30  # defaults saved with the section
+    assert {k: v for k, v in saved.items() if k != "guarantee_rules"} == {
+        "enabled": True, "network": "base", "max_unlock_usd": 25.0,
+        "max_royalty_per_contact_usd": 0.0, "monthly_budget_usd": 0.0}
 
     # A post without the section (older form, other tools) leaves spending settings alone.
     owner.post(url, data={"sender_name": "Joshua"})

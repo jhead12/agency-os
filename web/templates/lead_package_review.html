@@ -26,6 +26,14 @@
         <div class="detail-row"><span>Your allowance</span><span>{{ preview.allowance_left_atomic|usd }}</span></div>
         {% if p.consent_note %}<div class="detail-row"><span>Consent</span><span>{{ p.consent_note }}{% if not p.sms_consent %} (no SMS){% endif %}</span></div>{% endif %}
     </div>
+
+    {% if preview.rules %}
+    <div class="detail-card">
+        <h3>Guarantee terms</h3>
+        <p class="muted">Fixed when you unlock; {{ 'set by the seller' if p.guarantee.rules else "this campaign's defaults" }}.</p>
+        {% with rules = preview.rules %}{% include "_guarantee_rules.html" %}{% endwith %}
+    </div>
+    {% endif %}
 </div>
 
 {% if preview.already_unlocked %}

@@ -1,0 +1,12 @@
+{# The guarantee rules for one package: `rules` is a core.verify.Rules. #}
+<div class="detail-row"><span>A lead fails at a score of</span><span>{{ rules.fail_at }}</span></div>
+<div class="detail-row"><span>Wrong number counts after</span><span>{{ rules.wrong_number_reports }} report{{ '' if rules.wrong_number_reports == 1 else 's' }} (or two callers)</span></div>
+<div class="detail-row"><span>No answer counts after</span><span>{{ rules.no_answer_attempts }} calls</span></div>
+<div class="detail-row"><span>Verification window</span><span>{{ rules.window_days }} days, then {{ rules.claim_days }} more to file a claim</span></div>
+<div class="detail-row"><span>Leads nobody worked, at the end</span><span>{{ UNWORKED_POLICIES[rules.unworked_at_close] }}</span></div>
+<details class="mcp-examples">
+    <summary>Evidence weights</summary>
+    {% for key, label in WEIGHT_LABELS.items() %}
+    <div class="detail-row"><span>{{ label }}</span><span>{{ '%+.2f'|format(rules.weight(key)) }}</span></div>
+    {% endfor %}
+</details>

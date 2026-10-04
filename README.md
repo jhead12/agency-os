@@ -296,6 +296,17 @@ lead fails at a score of 1.0:
 | Seller's history proves less than the promised tier | 1.0 |
 | Reached the organization / enricher agrees / AI says real | −1.0 / −0.25 / −0.5 |
 
+These are the defaults. The rules are part of the deal: a package can state
+its own terms (`guarantee.rules` in the catalog), a campaign sets defaults
+for packages that don't (*Guarantee rules for new unlocks* in the campaign
+editor: the fail score, how many wrong-number reports and no-answer calls
+count, the window, the claim period after it, and how unworked leads count
+when the window closes; weights in `campaign.yaml` under
+`lead_packages.guarantee_rules.weights`). They're fixed on each package when
+it's unlocked and shown before you pay. Every value is range-checked, and a
+disconnected number, a fax tone, or a history below the promised tier always
+fails a lead on its own.
+
 Mark bounces and returned mail on the prospect page. A bounced email shows
 *Find a new email*, which re-runs the campaign's enrichers and compares what
 they find with the package's email. Failed leads are never contacted, so no

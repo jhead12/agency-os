@@ -92,6 +92,26 @@
             <input type="number" id="lp_monthly_budget_usd" name="lp_monthly_budget_usd" value="{{ lp.monthly_budget_usd or 0 }}" min="0" step="0.01">
         </div>
     </div>
+    <details class="mcp-examples" style="margin-top: 12px;">
+        <summary>Guarantee rules for new unlocks</summary>
+        <p style="color: var(--muted-foreground); font-size: 0.875rem;">Used when a package doesn't state its own. They're fixed on each package when it's unlocked, so changing them here never changes a guarantee already running.</p>
+        <div class="form-grid">
+            <div class="form-field"><label for="lp_rule_fail_at">A lead fails at score</label>
+                <input type="number" id="lp_rule_fail_at" name="lp_rule_fail_at" value="{{ default_rules.fail_at }}" min="0.5" max="2" step="0.05"></div>
+            <div class="form-field"><label for="lp_rule_wrong_number_reports">Wrong-number reports to count</label>
+                <input type="number" id="lp_rule_wrong_number_reports" name="lp_rule_wrong_number_reports" value="{{ default_rules.wrong_number_reports }}" min="1" max="5"></div>
+            <div class="form-field"><label for="lp_rule_no_answer_attempts">No-answer calls to count</label>
+                <input type="number" id="lp_rule_no_answer_attempts" name="lp_rule_no_answer_attempts" value="{{ default_rules.no_answer_attempts }}" min="2" max="20"></div>
+            <div class="form-field"><label for="lp_rule_window_days">Verification window (days)</label>
+                <input type="number" id="lp_rule_window_days" name="lp_rule_window_days" value="{{ default_rules.window_days }}" min="7" max="120"></div>
+            <div class="form-field"><label for="lp_rule_claim_days">Days after it to file a claim</label>
+                <input type="number" id="lp_rule_claim_days" name="lp_rule_claim_days" value="{{ default_rules.claim_days }}" min="0" max="30"></div>
+            <div class="form-field"><label for="lp_rule_unworked_at_close">Leads nobody worked, at the end</label>
+                <select id="lp_rule_unworked_at_close" name="lp_rule_unworked_at_close">
+                    {% for key, label in UNWORKED_POLICIES.items() %}<option value="{{ key }}" {% if default_rules.unworked_at_close == key %}selected{% endif %}>{{ label }}</option>{% endfor %}
+                </select></div>
+        </div>
+    </details>
     {% if unlocked %}
     <p style="color: var(--muted-foreground); font-size: 0.875rem;">Unlocked packages. Untick one to pause it: its leads won't be contacted (or cost royalties) until you tick it again.</p>
     <div class="plugin-checkbox-grid">

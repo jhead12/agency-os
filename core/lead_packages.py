@@ -222,7 +222,8 @@ class Package:
             lead_count=lead_count, sourcing=_text(item.get("sourcing"), 500) or "",
             consent_note=_text(item.get("consent_note"), 500) or "",
             sms_consent=item.get("sms_consent") is True, updated_at=_text(item.get("updated_at"), 40) or "",
-            guarantee={k: guarantee[k] for k in ("verified_rate_min", "window_days", "tier") if k in guarantee},
+            guarantee={k: guarantee[k] for k in ("verified_rate_min", "window_days", "tier", "rules")
+                       if k in guarantee and (k != "rules" or isinstance(guarantee[k], dict))},
             royalty_by_tier=royalty_by_tier, tier_mix=tier_mix,
         )
 
@@ -331,7 +332,7 @@ def _read_leads(response: httpx.Response) -> tuple[list[dict], str]:
 
 
 def _import_leads(db: Database, package: Package, campaign_id: int, user: Optional[CurrentUser],
-                  payment: PaidResult, leads: list[dict]) -> tuple[int, int, int]:
+                  payment: PaidResult, leads: list[dict], rules: verify.Rules) -> tuple[int, int, int]:
     """Record the package and add its new leads to the campaign, in one transaction.
 
     Returns (lead_package_id, imported, duplicates). The package row is
@@ -342,12 +343,12 @@ def _import_leads(db: Database, package: Package, campaign_id: int, user: Option
         lp_id = c.execute(
             """INSERT INTO lead_packages (provider, package_id, campaign_id, title, industry, region,
                    lead_count, unlock_price_atomic, royalty_atomic, royalty_by_tier, pay_to, network,
-                   guarantee, guarantee_tier, consent_note, sms_consent, unlocked_by, tx_hash)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",
+                   guarantee, guarantee_tier, guarantee_rules, consent_note, sms_consent, unlocked_by, tx_hash)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",
             (package.provider, package.package_id, campaign_id, package.title, package.industry,
              package.region, len(leads), package.unlock_price_atomic, package.royalty_atomic,
              json.dumps(package.royalty_by_tier), package.pay_to, package.network,
-             json.dumps(package.guarantee), package.guarantee_tier, package.consent_note,
+             json.dumps(package.guarantee), package.guarantee_tier, json.dumps(rules.to_dict()), package.consent_note,
              int(package.sms_consent), user.id if user else None, payment.tx_hash or None),
         ).fetchone()["id"]
         if payment.spend_id:
@@ -364,6 +365,11 @@ def _import_leads(db: Database, package: Package, campaign_id: int, user: Option
             "imported": imported, "duplicates": duplicates,
         })
     return lp_id, imported, duplicates
+
+
+def package_rules(package: Package, campaign) -> verify.Rules:
+    """The guarantee rules this unlock would fix: the package's terms over the campaign's defaults."""
+    return verify.rules_for(package.guarantee, (campaign.lead_packages or {}).get("guarantee_rules"))
 
 
 def _unlock_problem(campaign, package: Package) -> Optional[str]:
@@ -394,6 +400,7 @@ class UnlockPreview:
     allowance_left_atomic: int
     already_unlocked: bool = False
     problems: list[str] = field(default_factory=list)
+    rules: Optional[verify.Rules] = None
 
     @property
     def ok(self) -> bool:
@@ -423,7 +430,7 @@ def preview_unlock(db: Database, campaign, campaign_id: int, user: Optional[Curr
         package=package, unlock_atomic=unlock_cost, max_royalties_atomic=max_royalties_atomic(package),
         campaign_left_atomic=campaign_left, allowance_left_atomic=allowance_left,
         already_unlocked=db.find_lead_package(package.provider, package.package_id, campaign_id) is not None,
-        problems=problems,
+        problems=problems, rules=package_rules(package, campaign),
     )
 
 
@@ -499,7 +506,8 @@ def unlock(db: Database, campaign, campaign_id: int, user: Optional[CurrentUser]
         return UnlockResult(False, payment.error or "Payment did not go through", payment=payment)
 
     leads, read_error = _read_leads(payment.response)
-    lp_id, imported, duplicates = _import_leads(db, package, campaign_id, user, payment, leads)
+    lp_id, imported, duplicates = _import_leads(db, package, campaign_id, user, payment, leads,
+                                                package_rules(package, campaign))
     if read_error:
         return UnlockResult(False, read_error, lp_id, payment=payment)
     return UnlockResult(True, f"Unlocked: {imported} leads imported, {duplicates} already in agency-os",

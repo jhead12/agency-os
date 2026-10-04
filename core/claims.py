@@ -52,16 +52,17 @@ def package_status(db: Database, lead_package_id: int, *, reviewer=None) -> Opti
     checks = verify.evaluate_package(db, lead_package_id, reviewer=reviewer)
     for check in checks:
         check["signals"] = verify.as_json(check["signals"])
-    window_open, days_left = verify.window_state(db, lp)
-    summary = verify.summarize(lp, checks, window_open)
+    rules = verify.stored_rules(lp)
+    window = verify.window_state(db, lp, rules)
+    summary = verify.summarize(lp, checks, window, rules)
     claims = [dict(r) for r in db.conn.execute(
         "SELECT * FROM package_claims WHERE lead_package_id = ? ORDER BY id DESC", (lead_package_id,)).fetchall()]
     remedied = sum(c["shortfall"] for c in claims if c["status"] in REMEDIED)
     summary["claimable"] = max(0, summary["shortfall"] - remedied)
     in_flight = any(c["status"] == "filed" for c in claims)
     problem = None
-    if not window_open:
-        problem = "The verification window has closed"
+    if not window["claims_open"]:
+        problem = "The verification window and the claim period have closed"
     elif in_flight:
         problem = "A claim is already in progress"
     elif summary["shortfall"] and (not summary["claimable"] or not summary["unclaimed_failed"]):
@@ -70,8 +71,8 @@ def package_status(db: Database, lead_package_id: int, *, reviewer=None) -> Opti
         problem = "No shortfall to claim: the package is meeting its guarantee"
     elif lp["provider"] not in configured_providers():
         problem = "The provider is no longer on the allowlist"
-    return {"lp": lp, "checks": checks, "summary": summary, "claims": claims,
-            "days_left": days_left, "claim_problem": problem}
+    return {"lp": lp, "checks": checks, "summary": summary, "claims": claims, "rules": rules,
+            "window": window, "days_left": window["days_left"], "claim_problem": problem}
 
 
 def expected_refund(db: Database, lp: dict, failed: list[dict], shortfall: int, lead_count: int) -> int:
@@ -86,7 +87,7 @@ def expected_refund(db: Database, lp: dict, failed: list[dict], shortfall: int, 
     return unlock_share + royalties
 
 
-def _claim_body(lp: dict, summary: dict, failed: list[dict], expected: int) -> dict:
+def _claim_body(lp: dict, summary: dict, failed: list[dict], expected: int, rules) -> dict:
     return {
         "unlock_tx": lp["tx_hash"] or "",
         "lead_count": summary["lead_count"],
@@ -94,10 +95,11 @@ def _claim_body(lp: dict, summary: dict, failed: list[dict], expected: int) -> d
         "shortfall": summary["claimable"],
         "verified_rate": round(summary["rate"], 4) if summary["rate"] is not None else None,
         "expected_refund_atomic": str(expected),
+        "rules": rules.to_dict(),
         "failed": [{
             "lead_id": r["lead_id"],
-            "check": next((s["check"] for s in sorted(r["signals"], key=lambda s: -s["weight"])), ""),
-            "evidence": [s["label"] for s in r["signals"] if s["weight"] > 0],
+            "check": next((s["check"] for s in sorted(verify.as_json(r["signals"]), key=lambda s: -s["weight"])), ""),
+            "evidence": [s["label"] for s in verify.as_json(r["signals"]) if s["weight"] > 0],
             "ai_reason": r["ai_reason"] or "",
         } for r in failed],
     }
@@ -151,7 +153,7 @@ def file_claim(db: Database, lead_package_id: int, user: Optional[CurrentUser], 
     client = http or lead_packages.make_http()
     try:
         response = client.post(_package_url(lp["provider"], lp["package_id"], "claims"),
-                               json=_claim_body(lp, summary, failed, expected))
+                               json=_claim_body(lp, summary, failed, expected, status["rules"]))
         data = _json_body(response) if response.is_success else None
     except (httpx.HTTPError, ValueError) as exc:
         _finish(db, claim_id, "error", user, release_leads=True, reason=f"Provider unreachable: {exc}"[:500])

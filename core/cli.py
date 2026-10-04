@@ -780,7 +780,8 @@ def packages_verify(ctx, campaign_name, ai):
         rate = f"{s['rate']:.0%}" if s["rate"] is not None else "not worked yet"
         click.echo(f"#{lp['id']} {lp['title']}: {rate} verified ({s['verified']} verified, {s['failed']} failed, "
                    f"{s['unworked']} unworked of {s['lead_count']}); "
-                   f"window {'open, ' + str(status['days_left']) + ' days left' if s['window_open'] else 'closed'}")
+                   f"window {'open, ' + str(status['days_left']) + ' days left' if s['window_open'] else 'closed'}"
+                   f"{'' if s['window_open'] or not status['window']['claims_open'] else ' (claims still accepted)'}")
         if s["claimable"]:
             click.echo(f"  ! {s['claimable']} lead(s) claimable: agency-os packages claim --id {lp['id']} --email ...")
 

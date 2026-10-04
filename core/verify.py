@@ -2,12 +2,13 @@
 The 90% guarantee: is each package lead real, judged from our own outreach.
 
 No single event fails a lead. Each piece of evidence is a weighted signal,
-and a lead fails when its score reaches FAIL_THRESHOLD:
+and a lead fails when its score reaches the rules' `fail_at` (default 1.0).
+Default weights:
 
     contact  disconnected / fax tone ................................ 1.0
-             wrong number, once reported WRONG_NUMBER_REPORTS times
+             wrong number, once reported `wrong_number_reports` times
              (or by two different callers) ........................... 1.0
-             no answer / busy, NO_ANSWER_ATTEMPTS times, never reached  0.5
+             no answer / busy `no_answer_attempts` times, never reached 0.5
              email bounced ........................................... 0.5
              mail returned ........................................... 0.5
              reached the organization by phone ...................... -1.0
@@ -20,6 +21,11 @@ A lead is `failed` at or over the threshold, `verified` once we've worked it
 without failing it, and `unworked` before that. The AI review is optional,
 one weighted signal, never the sole decider, and its reason is kept as
 evidence for a claim.
+
+The rules are part of the deal, so they're fixed when a package is unlocked
+(rules_for): the package's own stated rules, then the campaign's defaults,
+then these defaults. Every value is range-checked, so a seller can't publish
+rules that make failure impossible.
 """
 
 from __future__ import annotations
@@ -28,15 +34,11 @@ import hashlib
 import json
 import os
 import re
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields, replace
 from typing import Any, Optional, Protocol
 
 from core.contact_depth import RANK, REACHED_MACHINE, SPOKE_TO_PERSON
 
-FAIL_THRESHOLD = 1.0
-WRONG_NUMBER_REPORTS = 2
-NO_ANSWER_ATTEMPTS = 6
-DEFAULT_WINDOW_DAYS = 30
 EVENT_KINDS = {
     "email_bounced": "Email bounced",
     "mail_returned": "Mail returned undeliverable",
@@ -44,6 +46,108 @@ EVENT_KINDS = {
     "enricher_mismatch": "Enricher found a different email",
 }
 _EMAIL_RE = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,255}\.[^@\s]{2,63}$")
+
+# ── Rules ──────────────────────────────────────────────────────────────
+
+DEFAULT_WEIGHTS = {
+    "disconnected": 1.0, "fax_tone": 1.0, "wrong_number": 1.0, "no_answer": 0.5,
+    "email_bounced": 0.5, "mail_returned": 0.5,
+    "enricher_mismatch": 0.25, "enricher_mismatch_after_bounce": 0.5, "enricher_match": -0.25,
+    "reached": -1.0, "ai_not_real": 0.5, "ai_real": -0.5, "tier_below_promise": 1.0,
+}
+WEIGHT_LABELS = {
+    "disconnected": "Number disconnected", "fax_tone": "Fax tone", "wrong_number": "Wrong number (at the report count)",
+    "no_answer": "No answer / busy (at the attempt count)", "email_bounced": "Email bounced",
+    "mail_returned": "Mail returned", "enricher_mismatch": "Enricher found a different email",
+    "enricher_mismatch_after_bounce": "...after a bounce", "enricher_match": "Enricher agrees",
+    "reached": "Reached the organization", "ai_not_real": "AI review: not real", "ai_real": "AI review: real",
+    "tier_below_promise": "History below the promised tier",
+}
+UNWORKED_POLICIES = {
+    "verified": "count as verified (nothing proved them wrong)",
+    "excluded": "leave out of the rate",
+    "failed": "count as failed",
+}
+# (low, high) for each number; anything outside is clamped, so no rules can make failing impossible.
+# fail_at tops out at the largest allowed weight, so the hard failures below can always reach it.
+_WEIGHT_LIMIT = 2.0
+_LIMITS = {"fail_at": (0.5, _WEIGHT_LIMIT), "wrong_number_reports": (1, 5), "no_answer_attempts": (2, 20),
+           "window_days": (7, 120), "claim_days": (0, 30)}
+
+
+@dataclass(frozen=True)
+class Rules:
+    fail_at: float = 1.0
+    wrong_number_reports: int = 2
+    no_answer_attempts: int = 6
+    window_days: int = 30
+    claim_days: int = 7          # after the window closes, claims may still be filed this long
+    unworked_at_close: str = "verified"
+    weights: dict = field(default_factory=lambda: dict(DEFAULT_WEIGHTS))
+
+    def weight(self, key: str) -> float:
+        return self.weights.get(key, DEFAULT_WEIGHTS[key])
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    def merged(self, layer: Any) -> "Rules":
+        """These rules with a (possibly untrusted) dict of overrides applied, range-checked."""
+        if not isinstance(layer, dict):
+            return self
+        changes: dict = {}
+        for f in fields(self):
+            if f.name not in layer or f.name == "weights":
+                continue
+            low, high = _LIMITS.get(f.name, (None, None))
+            try:
+                value = type(getattr(self, f.name))(layer[f.name])
+            except (TypeError, ValueError):
+                continue
+            if f.name == "unworked_at_close":
+                if value in UNWORKED_POLICIES:
+                    changes[f.name] = value
+                continue
+            changes[f.name] = min(max(value, low), high)
+        weights = dict(self.weights)
+        for key, raw in (layer.get("weights") or {}).items() if isinstance(layer.get("weights"), dict) else ():
+            if key in DEFAULT_WEIGHTS:
+                try:
+                    weights[key] = round(min(max(float(raw), -_WEIGHT_LIMIT), _WEIGHT_LIMIT), 2)
+                except (TypeError, ValueError):
+                    pass
+        # A dead number, a fax tone, or a history below the promise must always fail a lead on its own.
+        for key in ("disconnected", "fax_tone", "tier_below_promise"):
+            weights[key] = max(weights[key], changes.get("fail_at", self.fail_at))
+        return replace(self, **changes, weights=weights)
+
+
+DEFAULT_RULES = Rules()
+
+
+def rules_for(package_guarantee: Any = None, campaign_defaults: Any = None) -> Rules:
+    """The rules for an unlock: built-in defaults < campaign defaults < the package's own terms."""
+    rules = DEFAULT_RULES.merged(campaign_defaults)
+    if isinstance(package_guarantee, dict):
+        rules = rules.merged({**({"window_days": package_guarantee["window_days"]}
+                                 if "window_days" in package_guarantee else {}),
+                              **(package_guarantee.get("rules") or {})})
+    return rules
+
+
+def stored_rules(lp: dict) -> Rules:
+    """The rules fixed on an unlocked package (older unlocks: defaults plus the package's window)."""
+    try:
+        saved = json.loads(lp.get("guarantee_rules") or "null")
+    except ValueError:
+        saved = None
+    if isinstance(saved, dict):
+        return DEFAULT_RULES.merged(saved)
+    try:
+        guarantee = json.loads(lp.get("guarantee") or "{}")
+    except ValueError:
+        guarantee = {}
+    return rules_for(guarantee)
 
 
 @dataclass
@@ -71,56 +175,59 @@ class Verdict:
 
 def score_lead(*, calls: list[dict], events: list[dict], email_statuses: list[str],
                seller_tier: str, promised_tier: str, package_email: str = "",
-               ai_verdict: str = "", ai_reason: str = "") -> Verdict:
+               ai_verdict: str = "", ai_reason: str = "", rules: Rules = DEFAULT_RULES) -> Verdict:
     """Weigh one lead's evidence. Pure: everything it needs is passed in."""
+    w = rules.weight
     signals: list[Signal] = []
     if RANK.get(seller_tier or "unworked", 0) < RANK.get(promised_tier or "unworked", 0):
-        signals.append(Signal("tier", FAIL_THRESHOLD, f"Seller's history proves only "
+        signals.append(Signal("tier", w("tier_below_promise"), f"Seller's history proves only "
                               f"{(seller_tier or 'unworked').replace('_', ' ')}, the package promised "
                               f"{promised_tier.replace('_', ' ')}"))
 
     outcomes = [c.get("outcome") or "" for c in calls]
     reached = [c for c in calls if c.get("outcome") in SPOKE_TO_PERSON | {"hung_up"}]
     if "disconnected" in outcomes:
-        signals.append(Signal("contact", 1.0, "Number disconnected / not in service"))
+        signals.append(Signal("contact", w("disconnected"), "Number disconnected / not in service"))
     if "fax_tone" in outcomes:
-        signals.append(Signal("contact", 1.0, "Number answers with a fax tone"))
+        signals.append(Signal("contact", w("fax_tone"), "Number answers with a fax tone"))
     wrong = [c for c in calls if c.get("outcome") == "wrong_number"]
     if wrong:
         callers = {(c.get("called_by") or "").strip().lower() for c in wrong} - {""}
-        if len(wrong) >= WRONG_NUMBER_REPORTS or len(callers) >= 2:
-            signals.append(Signal("contact", 1.0, f"Wrong number, reported {len(wrong)} times"))
+        if len(wrong) >= rules.wrong_number_reports or len(callers) >= 2:
+            signals.append(Signal("contact", w("wrong_number"), f"Wrong number, reported {len(wrong)} times"))
         else:
-            signals.append(Signal("contact", 0.0, f"Wrong number reported once "
-                                  f"(counts at {WRONG_NUMBER_REPORTS} reports or two callers)"))
+            signals.append(Signal("contact", 0.0, f"Wrong number reported {len(wrong)} time"
+                                  f"{'' if len(wrong) == 1 else 's'} (counts at {rules.wrong_number_reports} "
+                                  "reports or two callers)"))
     unanswered = sum(1 for o in outcomes if o in ("no_answer", "busy"))
     machine = any(o in REACHED_MACHINE for o in outcomes)
-    if unanswered >= NO_ANSWER_ATTEMPTS and not reached and not machine:
-        signals.append(Signal("contact", 0.5, f"No answer or busy on {unanswered} calls"))
+    if unanswered >= rules.no_answer_attempts and not reached and not machine:
+        signals.append(Signal("contact", w("no_answer"), f"No answer or busy on {unanswered} calls"))
     if reached:
-        signals.append(Signal("contact", -1.0, "Reached the organization by phone"))
+        signals.append(Signal("contact", w("reached"), "Reached the organization by phone"))
 
     bounced = "bounced" in email_statuses or any(
         e["kind"] == "email_bounced" and (not package_email or (e.get("value") or "").lower() == package_email)
         for e in events)
     if bounced:
-        signals.append(Signal("contact", 0.5, "Email bounced"))
+        signals.append(Signal("contact", w("email_bounced"), "Email bounced"))
     if any(e["kind"] == "mail_returned" for e in events):
-        signals.append(Signal("contact", 0.5, "Mail returned undeliverable"))
+        signals.append(Signal("contact", w("mail_returned"), "Mail returned undeliverable"))
     if any(e["kind"] == "enricher_mismatch" for e in events):
-        signals.append(Signal("fields", 0.5 if bounced else 0.25, "Enricher found a different email"))
+        signals.append(Signal("fields", w("enricher_mismatch_after_bounce") if bounced else w("enricher_mismatch"),
+                              "Enricher found a different email"))
     if any(e["kind"] == "enricher_match" for e in events):
-        signals.append(Signal("fields", -0.25, "Enricher agrees with the package's email"))
+        signals.append(Signal("fields", w("enricher_match"), "Enricher agrees with the package's email"))
 
     if ai_verdict == "not_real":
-        signals.append(Signal("person", 0.5, f"AI review: not real. {ai_reason}".strip()))
+        signals.append(Signal("person", w("ai_not_real"), f"AI review: not real. {ai_reason}".strip()))
     elif ai_verdict == "real":
-        signals.append(Signal("person", -0.5, f"AI review: real. {ai_reason}".strip()))
+        signals.append(Signal("person", w("ai_real"), f"AI review: real. {ai_reason}".strip()))
 
     score = round(max(0.0, sum(s.weight for s in signals)), 2)
     worked = bool(calls or events or ai_verdict) or any(s in ("sent", "delivered", "opened", "clicked",
                                                                "replied", "bounced") for s in email_statuses)
-    if score >= FAIL_THRESHOLD:
+    if score >= rules.fail_at:
         status = "failed"
     elif worked:
         status = "verified"
@@ -240,6 +347,7 @@ def evaluate_package(db, lead_package_id: int, *, reviewer: Optional[Reviewer] =
     if lp is None:
         return []
     promised = lp.get("guarantee_tier") or "unworked"
+    rules = stored_rules(lp)
     c = db.conn
     sql = """SELECT lc.*, p.name, p.city, p.state FROM lead_checks lc JOIN prospects p ON p.id = lc.prospect_id
              WHERE lc.lead_package_id = ?"""
@@ -259,12 +367,12 @@ def evaluate_package(db, lead_package_id: int, *, reviewer: Optional[Reviewer] =
         kwargs = dict(calls=calls.get(pid, []), events=events.get(pid, []),
                       email_statuses=[e["status"] or "" for e in emails.get(pid, [])],
                       seller_tier=check["seller_tier"] or "unworked", promised_tier=promised,
-                      package_email=check["package_email"] or "")
+                      package_email=check["package_email"] or "", rules=rules)
         ai_verdict, ai_reason, ai_hash = check["ai_verdict"] or "", check["ai_reason"] or "", check["ai_input_hash"]
         if use_ai:
             first = score_lead(**kwargs)
             has_notes = any((x.get("notes") or "").strip() for x in kwargs["calls"])
-            if has_notes or 0 < first.score < FAIL_THRESHOLD:
+            if has_notes or 0 < first.score < rules.fail_at:
                 lead_input = _ai_input(check, kwargs["calls"], kwargs["events"])
                 digest = hashlib.sha256(json.dumps(lead_input, sort_keys=True, default=str).encode()).hexdigest()
                 if digest != ai_hash:
@@ -305,17 +413,29 @@ def lead_verdict(db, prospect_id: int) -> Optional[dict]:
 # ── Summary, window and shortfall ─────────────────────────────────────
 
 
-def summarize(lp: dict, checks: list[dict], window_open: bool) -> dict:
+def summarize(lp: dict, checks: list[dict], window: dict, rules: Rules = DEFAULT_RULES) -> dict:
     """Counts, the measured rate and the shortfall for one unlocked package.
 
     The guarantee is about the leads sold (replacements are extra). The
     measured rate is verified / (verified + failed). The guarantee is broken
-    once failures alone make 90% impossible: shortfall = ceil(0.9 N) - (N - failed).
+    once failures make 90% impossible: shortfall = ceil(0.9 N) - (N - failed).
+    Once the window closes, leads nobody worked count as the rules say
+    (verified, left out, or failed).
     """
     originals = [r for r in checks if not r["replacement"]]
-    n = len(originals)
     failed = [r for r in originals if r["status"] == "failed"]
+    unworked = [r for r in originals if r["status"] == "unworked"]
     verified = sum(1 for r in originals if r["status"] == "verified")
+    n = len(originals)
+    closed = not window["open"]
+    if closed and rules.unworked_at_close == "verified":
+        verified += len(unworked)
+    elif closed and rules.unworked_at_close == "excluded":
+        n -= len(unworked)
+    elif closed and rules.unworked_at_close == "failed":
+        failed = failed + [{**r, "signals": [{"check": "contact", "weight": rules.fail_at,
+                                              "label": "Not worked during the verification window"}]}
+                           for r in unworked]
     worked = verified + len(failed)
     needed = -(-9 * n // 10)  # ceil(0.9 n) without floats
     shortfall = max(0, needed - (n - len(failed)))
@@ -323,33 +443,37 @@ def summarize(lp: dict, checks: list[dict], window_open: bool) -> dict:
         "lead_count": n,
         "verified": verified,
         "failed": len(failed),
-        "unworked": n - worked,
-        "replacements": len(checks) - n,
+        "unworked": 0 if closed else len(unworked),
+        "replacements": len(checks) - len(originals),
         "rate": (verified / worked) if worked else None,
         "shortfall": shortfall,
         "unclaimed_failed": [r for r in failed if not r["claim_id"]],
-        "window_open": window_open,
+        "window_open": window["open"],
     }
 
 
-def window_days(lp: dict) -> int:
-    try:
-        days = int(json.loads(lp.get("guarantee") or "{}").get("window_days") or DEFAULT_WINDOW_DAYS)
-    except (TypeError, ValueError):
-        days = DEFAULT_WINDOW_DAYS
-    return max(1, min(days, 365))
+def window_state(db, lp: dict, rules: Optional[Rules] = None) -> dict:
+    """Where the package is in its guarantee, by the database clock.
 
-
-def window_state(db, lp: dict) -> tuple[bool, int]:
-    """(open, days left) for the package's verification window, by the database clock."""
+    {"open": verification window open, "days_left": days left in it,
+     "claims_open": claims still accepted (window, then claim_days), "claim_days_left": ...}
+    """
+    rules = rules or stored_rules(lp)
     row = db.conn.execute(
         """SELECT CURRENT_TIMESTAMP < unlocked_at + make_interval(days => ?) AS open,
+                  CURRENT_TIMESTAMP < unlocked_at + make_interval(days => ?) AS claims_open,
                   GREATEST(0, CEIL(EXTRACT(EPOCH FROM (unlocked_at + make_interval(days => ?) - CURRENT_TIMESTAMP))
-                                   / 86400))::int AS left
+                                   / 86400))::int AS days_left,
+                  GREATEST(0, CEIL(EXTRACT(EPOCH FROM (unlocked_at + make_interval(days => ?) - CURRENT_TIMESTAMP))
+                                   / 86400))::int AS claim_days_left
            FROM lead_packages WHERE id = ?""",
-        (window_days(lp), window_days(lp), lp["id"]),
+        (rules.window_days, rules.window_days + rules.claim_days, rules.window_days,
+         rules.window_days + rules.claim_days, lp["id"]),
     ).fetchone()
-    return (bool(row["open"]), int(row["left"])) if row else (False, 0)
+    if row is None:
+        return {"open": False, "days_left": 0, "claims_open": False, "claim_days_left": 0}
+    return {k: (bool(row[k]) if k.endswith("open") else int(row[k]))
+            for k in ("open", "days_left", "claims_open", "claim_days_left")}
 
 
 # ── Contact events and refreshing a bounced email ─────────────────────
