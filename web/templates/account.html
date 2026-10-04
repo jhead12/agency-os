@@ -27,6 +27,20 @@
         {% endif %}
     </div>
 
+    {% if spending %}
+    <div class="detail-card">
+        <h3>Lead package spending</h3>
+        <div class="detail-row"><span>This month</span><span>{{ spending.month_atomic|usd }} of {{ spending.allowance_atomic|usd }}</span></div>
+        {% if not spending.allowance_atomic %}<p class="muted" style="margin-top: 12px;">Your allowance is $0, so you can't unlock packages yet. Ask an owner to set one.</p>{% endif %}
+        {% for s in spending.recent %}
+        <div class="detail-row">
+            <span>{{ s.kind|capitalize }} · {{ s.campaign_name or '—' }}<br><span class="muted">{{ s.created_at|fmt_date }}{% if s.status != 'settled' %} · {{ s.status }}{% endif %}</span></span>
+            <span>{{ s.amount_atomic|usd }}{% if s.tx_hash %} <a href="{{ explorer_url(s.network, s.tx_hash) }}" target="_blank" rel="noopener">tx</a>{% endif %}</span>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
     <div class="detail-card">
         <h3>Change password</h3>
         <form method="post" action="/account/password" class="stack-form">

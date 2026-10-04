@@ -1,10 +1,12 @@
 // agency-os dashboard — interactivity
 document.addEventListener('DOMContentLoaded', () => {
-    // Auto-submit filter form on select change
+    // Auto-submit filter forms on select change. Only GET forms are filters:
+    // a POST form (log a call, change a stage) waits for its own button, so
+    // picking an outcome doesn't save the call before the notes are written.
     document.querySelectorAll('.filter-select').forEach(sel => {
         sel.addEventListener('change', () => {
             const form = sel.closest('form');
-            if (form) form.submit();
+            if (form && (form.getAttribute('method') || 'get').toLowerCase() === 'get') form.submit();
         });
     });
 

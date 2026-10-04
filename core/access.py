@@ -131,7 +131,13 @@ ROUTE_RULES: dict[str, str] = {
     "POST /mail-templates/save": "templates.edit",
     "GET /mail-templates/preview/{script_idx}": "templates.view",
     "GET /lead-packages": "packages.view",
+    "GET /lead-packages/review": "packages.buy",
     "POST /lead-packages/unlock": "packages.buy",
+    "GET /lead-packages/unlocked/{lead_package_id}": "spend.view",
+    "POST /lead-packages/unlocked/{lead_package_id}/verify": "packages.buy",
+    "POST /lead-packages/unlocked/{lead_package_id}/claim": "packages.buy",
+    "POST /prospects/{prospect_id}/contact-event": "prospects.edit",
+    "POST /prospects/{prospect_id}/refresh-email": "prospects.edit",
 }
 
 # Pages in nav order — used to pick a landing page the user can actually open.

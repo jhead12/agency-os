@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}{{ lp.title }} — agency-os{% endblock %}
+{% block content %}
+{% set user = request.state.user %}
+{% set s = summary %}
+<div class="page-header">
+    <a href="/lead-packages" class="subtitle">← Lead Packages</a>
+    <h1>{{ lp.title }}</h1>
+    <p class="subtitle">{{ lp.provider }} · {{ lp.campaign_name or '' }} unlocked {{ lp.unlocked_at|fmt_date }}{% if lp.tx_hash %} · <a href="{{ explorer_url(lp.network, lp.tx_hash) }}" target="_blank" rel="noopener">receipt</a>{% endif %}</p>
+</div>
+
+{% if msg %}<div class="save-notice">{{ msg }}</div>{% endif %}
+{% if error %}<div class="form-error">{{ error }}</div>{% endif %}
+
+<div class="detail-grid">
+    <div class="detail-card">
+        <h3>Guarantee</h3>
+        <div class="detail-row"><span>Promise</span><span>{% if lp.guarantee_tier and lp.guarantee_tier != 'unworked' %}90% {{ lp.guarantee_tier|replace('_', ' ') }}{% else %}None{% endif %}</span></div>
+        <div class="detail-row"><span>Measured so far</span><span>
+            {% if s.rate is not none %}<span class="badge {% if s.rate >= 0.9 %}badge-success{% else %}badge-warning{% endif %}">{{ (s.rate * 100)|round(1) }}% verified</span>{% else %}Not worked yet{% endif %}
+        </span></div>
+        <div class="detail-row"><span>Leads sold</span><span>{{ s.lead_count }}</span></div>
+        <div class="detail-row"><span>Verified · failed · not worked yet</span><span>{{ s.verified }} · {{ s.failed }} · {{ s.unworked }}</span></div>
+        {% if s.replacements %}<div class="detail-row"><span>Replacement leads</span><span>{{ s.replacements }}</span></div>{% endif %}
+        <div class="detail-row"><span>Verification window</span><span>{% if s.window_open %}{{ days_left }} day{{ '' if days_left == 1 else 's' }} left{% else %}Closed{% endif %}</span></div>
+        <p class="muted" style="margin-top: 12px;">A lead fails when the evidence from your own calls, emails and mail adds up (disconnected numbers, repeated wrong numbers, bounces, enricher mismatches{% if ai_review %}, AI review{% endif %}). The guarantee is broken once failures make 90% impossible.</p>
+    </div>
+
+    <div class="detail-card">
+        <h3>Claim</h3>
+        {% if s.shortfall %}
+        <div class="detail-row"><span>Shortfall</span><span>{{ s.shortfall }} lead{{ '' if s.shortfall == 1 else 's' }} below 90%</span></div>
+        <div class="detail-row"><span>Still claimable</span><span>{{ s.claimable }}</span></div>
+        {% else %}
+        <p class="muted">No shortfall. The package is meeting its guarantee.</p>
+        {% endif %}
+        {% if user.can('packages.buy') %}
+            {% if claim_problem %}
+            <p class="muted" style="margin-top: 12px;">{{ claim_problem }}.</p>
+            {% else %}
+            <form method="post" action="/lead-packages/unlocked/{{ lp.id }}/claim" class="stack-form" style="margin-top: 12px;">
+                <label class="check-label"><input type="checkbox" name="confirm" value="yes" required> Send the provider a claim for {{ s.claimable }} lead{{ '' if s.claimable == 1 else 's' }}, with the evidence for {{ s.unclaimed_failed|length }} failed lead{{ '' if s.unclaimed_failed|length == 1 else 's' }}</label>
+                <button type="submit" class="btn">File claim</button>
+            </form>
+            {% endif %}
+            <form method="post" action="/lead-packages/unlocked/{{ lp.id }}/verify" style="margin-top: 12px;">
+                <button type="submit" class="btn btn-secondary btn-sm">Re-check leads{% if ai_review %} (with AI review){% endif %}</button>
+            </form>
+        {% endif %}
+        {% for c in claims %}
+        <div class="detail-row">
+            <span>Claim #{{ c.id }} · {{ c.created_at|fmt_date }}<br><span class="muted">{{ c.shortfall }} short · {{ c.failed_count }} failed{% if c.reason %} · {{ c.reason }}{% endif %}</span></span>
+            <span>
+                {% if c.status == 'replaced' %}{{ c.replacement_count }} replacement leads
+                {% elif c.status == 'refunded' %}Refund {{ c.refund_atomic|usd }}{% if c.refund_tx %} · <a href="{{ explorer_url(lp.network, c.refund_tx) }}" target="_blank" rel="noopener">tx</a>{% endif %}
+                {% else %}{{ c.status|capitalize }}{% endif %}
+            </span>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+<div class="campaign-section">
+    <div class="campaign-header"><h2>Leads</h2></div>
+    <div class="table-scroll">
+    <table class="data-table">
+        <thead><tr><th>Lead</th><th>Seller's history</th><th>Status</th><th>Evidence</th></tr></thead>
+        <tbody>
+        {% for r in checks %}
+        <tr>
+            <td><a href="/prospects/{{ r.prospect_id }}">{{ r.name }}</a>{% if r.replacement %} <span class="badge badge-product">replacement</span>{% endif %}<br><span class="subtitle">{{ r.lead_id }}</span></td>
+            <td>{{ (r.seller_tier or 'unworked')|replace('_', ' ') }}</td>
+            <td>
+                <span class="badge {% if r.status == 'verified' %}badge-success{% elif r.status == 'failed' %}badge-warning{% endif %}">{{ r.status }}</span>
+                {% if r.claim_id %}<br><span class="subtitle">claim #{{ r.claim_id }}</span>{% endif %}
+            </td>
+            <td>
+                {% for sig in r.signals %}<span class="{% if sig.weight > 0 %}text-warning{% elif sig.weight < 0 %}text-success{% else %}muted{% endif %}">{{ sig.label }}</span>{% if not loop.last %}<br>{% endif %}{% else %}<span class="muted">—</span>{% endfor %}
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% endblock %}

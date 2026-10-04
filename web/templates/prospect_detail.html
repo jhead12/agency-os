@@ -44,7 +44,7 @@
             <div class="detail-row"><span>Contact depth</span><span>{{ contact_tier|replace('_', ' ') }}</span></div>
             {% if lead_package %}
             <div class="detail-row"><span>Lead package</span><span>
-                {{ lead_package.package_id }} · seller's history: {{ (lead_package.tier or 'unworked')|replace('_', ' ') }}
+                {{ lead_package.title }} · seller's history: {{ (lead_package.tier or 'unworked')|replace('_', ' ') }}
                 {% if lead_package.claimed_tier and lead_package.claimed_tier != lead_package.tier %}(claimed {{ lead_package.claimed_tier|replace('_', ' ') }}){% endif %}
                 · royalty {{ (lead_package.royalty_atomic or 0)|usd }}
             </span></div>
@@ -157,9 +157,56 @@
             </fieldset>
             {% if user.can('prospects.edit') %}<button type="submit" class="btn btn-sm">Save Contact</button>{% endif %}
         </form>
+        {% if o.contact_email and user.can('prospects.edit') %}
+            {% if o.contact_email|lower in bounced %}
+            <div class="form-error" style="margin-top: 12px;">
+                <strong>Email bounced, find a new one.</strong> {{ o.contact_email }} bounced.
+                <form method="post" action="/prospects/{{ prospect.id }}/refresh-email" style="margin-top: 8px;">
+                    <input type="hidden" name="outreach_id" value="{{ o.id }}">
+                    <button type="submit" class="btn btn-sm">Find a new email</button>
+                </form>
+            </div>
+            {% else %}
+            <form method="post" action="/prospects/{{ prospect.id }}/contact-event" style="margin-top: 8px;">
+                <input type="hidden" name="outreach_id" value="{{ o.id }}">
+                <input type="hidden" name="kind" value="email_bounced">
+                <button type="submit" class="btn btn-secondary btn-sm">Mark email bounced</button>
+            </form>
+            {% endif %}
+        {% endif %}
         {% endfor %}
     </div>
 </div>
+
+{% if verification %}
+{% set v = verification %}
+<div class="detail-card full-width">
+    <h3>Package guarantee</h3>
+    <div class="detail-row"><span>Status</span><span>
+        <span class="badge {% if v.status == 'verified' %}badge-success{% elif v.status == 'failed' %}badge-warning{% endif %}">{{ v.status }}</span>
+        · score {{ v.score }} (fails at 1.0){% if v.claim_id %} · in claim #{{ v.claim_id }}{% endif %}
+    </span></div>
+    {% for sig in v.signals %}
+    <div class="detail-row"><span class="{% if sig.weight > 0 %}text-warning{% elif sig.weight < 0 %}text-success{% else %}muted{% endif %}">{{ sig.label }}</span><span>{{ '%+.2f'|format(sig.weight) }}</span></div>
+    {% else %}
+    <p class="muted">No evidence yet. Calls, bounces and returned mail you record here count toward the package's 90% guarantee.</p>
+    {% endfor %}
+    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px;">
+        {% if user.can('spend.view') %}<a href="/lead-packages/unlocked/{{ lead_package.lead_package_id }}" class="btn btn-secondary btn-sm">Package guarantee</a>{% endif %}
+        {% if user.can('prospects.edit') and outreach_rows %}
+        <form method="post" action="/prospects/{{ prospect.id }}/contact-event">
+            <input type="hidden" name="outreach_id" value="{{ outreach_rows[0].id }}">
+            <input type="hidden" name="kind" value="mail_returned">
+            <button type="submit" class="btn btn-secondary btn-sm">Mark mail returned</button>
+        </form>
+        <form method="post" action="/prospects/{{ prospect.id }}/refresh-email">
+            <input type="hidden" name="outreach_id" value="{{ outreach_rows[0].id }}">
+            <button type="submit" class="btn btn-secondary btn-sm">Compare with enrichers</button>
+        </form>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
 
 {% if portal_available or portal %}
 {% set status_labels = {
@@ -216,6 +263,7 @@
 {% if email_logs %}
 <div class="detail-card full-width">
     <h3>Email History</h3>
+    <div class="table-scroll">
     <table class="data-table compact">
         <thead>
             <tr><th>Date</th><th>Template</th><th>Subject</th><th>Status</th><th>Campaign</th><th></th></tr>
@@ -247,6 +295,7 @@
             {% endfor %}
         </tbody>
     </table>
+    </div>
 </div>
 <script>
 function toggleEmail(id) {
@@ -346,6 +395,7 @@ function toggleEmail(id) {
 {% if call_history %}
 <div class="detail-card full-width">
     <h3>📞 Call History ({{ call_history|length }})</h3>
+    <div class="table-scroll">
     <table class="data-table compact">
         <thead>
             <tr>
@@ -378,6 +428,7 @@ function toggleEmail(id) {
             {% endfor %}
         </tbody>
     </table>
+    </div>
 </div>
 {% endif %}
 

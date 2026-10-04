@@ -354,6 +354,8 @@ body {
 .detail-row:last-child { border-bottom: none; }
 .detail-row span:first-child { color: var(--text-muted); }
 .detail-row span:last-child { text-align: right; }
+.detail-row span.badge-success, .detail-row span.badge-warning { color: white; }
+.subtitle a, .detail-row a { color: var(--accent); }
 
 .outreach-block { padding-bottom: 12px; margin-bottom: 12px; border-bottom: 1px solid var(--border); }
 .outreach-block:last-child { border-bottom: none; }
@@ -885,6 +887,8 @@ table.sortable th {
 
 /* Misc */
 .muted { color: var(--text-muted); }
+.text-warning { color: var(--orange); }
+.text-success { color: var(--green); }
 .empty-state {
     text-align: center;
     padding: 40px;
@@ -1040,6 +1044,8 @@ table.sortable th {
 }
 .stack-form .filter-input, .admin-row-fields .filter-input { width: 100%; }
 .stack-form .btn { align-self: flex-start; }
+.stack-form label.check-label { flex-direction: row; align-items: center; gap: 8px; }
+.stack-form label.check-label input { width: auto; flex: none; }
 .form-error {
     background: rgba(239, 68, 68, 0.12); border: 1px solid var(--red); color: var(--text);
     padding: 10px 14px; border-radius: var(--radius); margin-bottom: 16px;

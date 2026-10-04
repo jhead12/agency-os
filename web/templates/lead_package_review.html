@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Review unlock — agency-os{% endblock %}
+{% block content %}
+{% set p = preview.package %}
+<div class="page-header">
+    <h1>Unlock {{ p.title }}</h1>
+    <p class="subtitle">{{ p.provider }} · into <strong>{{ campaign.name }}</strong> · {{ network_name }}</p>
+</div>
+
+<div class="detail-grid">
+    <div class="detail-card">
+        <h3>What you'd pay</h3>
+        <div class="detail-row"><span>Unlock, now</span><span>{{ preview.unlock_atomic|usd }}</span></div>
+        <div class="detail-row"><span>Royalties, if every lead is contacted</span><span>up to {{ preview.max_royalties_atomic|usd }}</span></div>
+        <div class="detail-row"><span>Leads</span><span>{{ p.lead_count }}</span></div>
+        <div class="detail-row"><span>Guarantee</span><span>{% if p.guaranteed %}90% {{ p.guarantee_tier|replace('_', ' ') }}{% else %}None{% endif %}</span></div>
+        {% if p.royalty_by_tier %}
+        <div class="detail-row"><span>Royalty by contact depth</span><span>{% for tier, amount in p.royalty_by_tier.items() %}{{ tier|replace('_', ' ') }} {{ amount|usd }}{% if not loop.last %} · {% endif %}{% endfor %}</span></div>
+        {% endif %}
+        <p class="muted" style="margin-top: 12px;">Each royalty is paid only when that lead is first contacted, from the campaign's budget.</p>
+    </div>
+
+    <div class="detail-card">
+        <h3>What's left this month</h3>
+        <div class="detail-row"><span>Campaign budget</span><span>{{ preview.campaign_left_atomic|usd }}</span></div>
+        <div class="detail-row"><span>Your allowance</span><span>{{ preview.allowance_left_atomic|usd }}</span></div>
+        {% if p.consent_note %}<div class="detail-row"><span>Consent</span><span>{{ p.consent_note }}{% if not p.sms_consent %} (no SMS){% endif %}</span></div>{% endif %}
+    </div>
+</div>
+
+{% if preview.already_unlocked %}
+<div class="save-notice">Already unlocked for this campaign. Nothing more to pay.</div>
+{% endif %}
+{% for problem in preview.problems %}<div class="form-error">{{ problem }}</div>{% endfor %}
+
+{% if not preview.already_unlocked %}
+<form method="post" action="/lead-packages/unlock" class="stack-form" style="margin-top: 16px;">
+    <input type="hidden" name="provider" value="{{ p.provider }}">
+    <input type="hidden" name="package_id" value="{{ p.package_id }}">
+    <input type="hidden" name="campaign" value="{{ campaign.db_name }}">
+    <label class="check-label"><input type="checkbox" name="confirm" value="yes" required> Pay {{ preview.unlock_atomic|usd }} now in USDC, plus each lead's royalty when it's first contacted</label>
+    <div>
+        <button type="submit" class="btn" {% if preview.problems %}disabled{% endif %}>Pay and unlock</button>
+        <a href="/lead-packages" class="btn btn-secondary">Back</a>
+    </div>
+</form>
+{% else %}
+<a href="/lead-packages" class="btn btn-secondary">Back</a>
+{% endif %}
+{% endblock %}

@@ -93,20 +93,23 @@
         </div>
     </div>
     {% if unlocked %}
-    <div class="table-scroll">
-    <table class="data-table">
-        <thead><tr><th>Unlocked package</th><th>Leads imported</th><th>Royalty / contact</th><th>Receipt</th></tr></thead>
-        <tbody>
+    <p style="color: var(--muted-foreground); font-size: 0.875rem;">Unlocked packages. Untick one to pause it: its leads won't be contacted (or cost royalties) until you tick it again.</p>
+    <div class="plugin-checkbox-grid">
         {% for p in unlocked %}
-        <tr>
-            <td><strong>{{ p.title }}</strong><br><span class="subtitle">{{ p.provider }}</span></td>
-            <td>{{ p.imported_count }}</td>
-            <td>{{ p.royalty_atomic|usd }}</td>
-            <td>{% if p.tx_hash %}<a href="{{ explorer_url(p.network, p.tx_hash) }}" target="_blank" rel="noopener">View tx</a>{% else %}—{% endif %}</td>
-        </tr>
+        {% set ref = package_ref(p.provider, p.package_id) %}
+        <input type="hidden" name="lp_listed" value="{{ ref }}">
+        <label class="plugin-card">
+            <input type="checkbox" name="lp_active" value="{{ ref }}" {% if ref not in paused %}checked{% endif %}>
+            <div class="plugin-card-body">
+                <strong>{{ p.title }}</strong>
+                <p>{{ p.industry or '—' }} · {{ p.region or '—' }} · {{ p.imported_count }} leads imported</p>
+                <p>{% if p.guarantee_tier and p.guarantee_tier != 'unworked' %}<span class="badge badge-success">90% {{ p.guarantee_tier|replace('_', ' ') }}</span>{% else %}<span class="badge badge-warning">No guarantee</span>{% endif %}
+                   {% set r = ratings.get((p.provider, p.package_id)) %}
+                   {% if r and r.rate is not none %}<span class="badge {% if r.rate >= 0.9 %}badge-success{% else %}badge-warning{% endif %}">{{ (r.rate * 100)|round|int }}% verified · {{ r.unlocks }} unlock{{ '' if r.unlocks == 1 else 's' }}</span>{% else %}<span class="muted">Not worked yet</span>{% endif %}
+                   <a href="/lead-packages/unlocked/{{ p.id }}">Guarantee</a></p>
+            </div>
+        </label>
         {% endfor %}
-        </tbody>
-    </table>
     </div>
     {% endif %}
 </div>

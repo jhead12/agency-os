@@ -49,7 +49,7 @@ from core.registry import PluginRegistry
 from core.pipeline import Pipeline
 from plugins.channels.lob_direct_mail import TEMPLATE_ID_RE, lob_template_url
 from core.jobs import JobRunner, configured_jobs, jobs_enabled
-from core import contact_depth, lead_packages, payments
+from core import claims, contact_depth, lead_packages, payments, verify
 from starlette.concurrency import run_in_threadpool
 
 # ── Init ────────────────────────────────────────────────────────────
@@ -1253,9 +1253,15 @@ async def prospect_detail(request: Request, prospect_id: int):
         key=lambda e: e.get("timestamp", ""), reverse=True,
     )
 
+    lead_package = lead_packages.package_info(prospect)
+    if lead_package:
+        row = db.get_lead_package(int(lead_package["lead_package_id"]))
+        lead_package = {**lead_package, "title": row["title"] if row else lead_package.get("package_id")}
     return templates.TemplateResponse(request, "prospect_detail.html", {
         "contact_tier": contact_depth.history_for_prospect(db, prospect_id)[1],
-        "lead_package": lead_packages.package_info(prospect),
+        "lead_package": lead_package,
+        "verification": verify.lead_verdict(db, prospect_id) if lead_package else None,
+        "bounced": verify.bounced_emails(db, prospect_id),
         "package_spend": db.prospect_spend(prospect_id),
         "portal": (prospect.metadata or {}).get("u9itus") or {},
         "portal_link": next((r["demo_link"] for r in outreach_rows if r["demo_link"]), None),
@@ -1471,6 +1477,8 @@ async def lead_packages_page(request: Request, msg: str = Query(default=""), err
         catalogs.append({"provider": provider, "packages": packages, "error": problem})
     buyable = [c for c in get_campaigns() if (c.lead_packages or {}).get("enabled")]
     return templates.TemplateResponse(request, "lead_packages.html", {
+        "ratings": claims.ratings(db),
+        "active": "lead-packages",
         "catalogs": catalogs,
         "campaigns": buyable,
         "unlocked": db.list_lead_packages() if user.can("spend.view") else [],
@@ -1478,6 +1486,39 @@ async def lead_packages_page(request: Request, msg: str = Query(default=""), err
         "allowance": db.spend_allowance(user.id),
         "msg": msg,
         "error": error,
+    })
+
+
+def _package_campaign(provider: str, campaign: str):
+    """(campaign config, campaign id, error) for buying from `provider` into `campaign`."""
+    if provider not in lead_packages.configured_providers():
+        return None, None, "That provider isn't on the approved list."
+    config = next((c for c in get_campaigns() if c.db_name == campaign), None)
+    if config is None or not (config.lead_packages or {}).get("enabled"):
+        return None, None, "Pick a campaign that has lead packages turned on."
+    db = get_db()
+    campaign_id = db.get_campaign_id(config.db_name) or db.upsert_campaign(
+        config.db_name, str(config.config_dir / "campaign.yaml"))
+    return config, campaign_id, ""
+
+
+@app.get("/lead-packages/review", response_class=HTMLResponse)
+async def lead_package_review(request: Request, provider: str = Query(...), package_id: str = Query(...),
+                              campaign: str = Query(...)):
+    """The confirm screen: what the unlock costs and what's left to spend. Never pays."""
+    config, campaign_id, error = _package_campaign(provider, campaign)
+    if error:
+        return _back("/lead-packages", error=error)
+    package, problem = await run_in_threadpool(lead_packages.find_package, provider, package_id)
+    if package is None:
+        return _back("/lead-packages", error=problem)
+    preview = lead_packages.preview_unlock(get_db(), config, campaign_id, current_user(request), package)
+    return templates.TemplateResponse(request, "lead_package_review.html", {
+        "active": "lead-packages",
+        "preview": preview,
+        "campaign": config,
+        "network_name": {payments.BASE_SEPOLIA: "Base Sepolia (test USDC)",
+                         payments.BASE_MAINNET: "Base (real USDC)"}.get(package.network, package.network),
     })
 
 
@@ -1493,14 +1534,10 @@ async def lead_package_unlock(
     user = current_user(request)
     if confirm != "yes":
         return _back("/lead-packages", error="Tick the box to approve the payment.")
-    if provider not in lead_packages.configured_providers():
-        return _back("/lead-packages", error="That provider isn't on the approved list.")
-    config = next((c for c in get_campaigns() if c.db_name == campaign), None)
-    if config is None or not (config.lead_packages or {}).get("enabled"):
-        return _back("/lead-packages", error="Pick a campaign that has lead packages turned on.")
+    config, campaign_id, error = _package_campaign(provider, campaign)
+    if error:
+        return _back("/lead-packages", error=error)
     db = get_db()
-    campaign_id = db.get_campaign_id(config.db_name) or db.upsert_campaign(
-        config.db_name, str(config.config_dir / "campaign.yaml"))
 
     def run():
         package, problem = lead_packages.find_package(provider, package_id)
@@ -1512,6 +1549,73 @@ async def lead_package_unlock(
     if result.ok:
         return _back("/lead-packages", msg=result.message)
     return _back("/lead-packages", error=result.message)
+
+
+@app.get("/lead-packages/unlocked/{lead_package_id}", response_class=HTMLResponse)
+async def lead_package_detail(request: Request, lead_package_id: int,
+                              msg: str = Query(default=""), error: str = Query(default="")):
+    """An unlocked package's guarantee: each lead's verdict, the measured rate, claims."""
+    status = await run_in_threadpool(claims.package_status, get_db(), lead_package_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Package not found")
+    return templates.TemplateResponse(request, "lead_package_detail.html", {
+        "active": "lead-packages", **status, "msg": msg, "error": error,
+        "ai_review": verify.default_reviewer().is_configured(),
+    })
+
+
+@app.post("/lead-packages/unlocked/{lead_package_id}/verify")
+async def lead_package_verify(request: Request, lead_package_id: int):
+    """Re-check every lead now, including the AI review when it's turned on."""
+    db = get_db()
+    if db.get_lead_package(lead_package_id) is None:
+        raise HTTPException(status_code=404, detail="Package not found")
+    await run_in_threadpool(verify.evaluate_package, db, lead_package_id, reviewer=verify.default_reviewer())
+    db.audit(current_user(request), "lead_package.verify", "lead_package", lead_package_id, {})
+    return _back(f"/lead-packages/unlocked/{lead_package_id}", msg="Leads re-checked.")
+
+
+@app.post("/lead-packages/unlocked/{lead_package_id}/claim")
+async def lead_package_claim(request: Request, lead_package_id: int, confirm: str = Form(default="")):
+    """File a guarantee claim with the provider. Needs an explicit confirm."""
+    back = f"/lead-packages/unlocked/{lead_package_id}"
+    if confirm != "yes":
+        return _back(back, error="Tick the box to file the claim.")
+    result = await run_in_threadpool(claims.file_claim, get_db(), lead_package_id, current_user(request))
+    return _back(back, msg=result.message) if result.ok else _back(back, error=result.message)
+
+
+@app.post("/prospects/{prospect_id}/contact-event")
+async def prospect_contact_event(request: Request, prospect_id: int, kind: str = Form(...),
+                                 outreach_id: int = Form(...)):
+    """Record a bounce or returned mail against the contact we have on file."""
+    db = get_db()
+    row = db.conn.execute("SELECT * FROM outreach WHERE id = ? AND prospect_id = ?",
+                          (outreach_id, prospect_id)).fetchone()
+    if row is None or kind not in ("email_bounced", "mail_returned"):
+        return _back(f"/prospects/{prospect_id}", error="Unknown contact or event.")
+    value = row["contact_email"] if kind == "email_bounced" else (db.get_prospect(prospect_id).address or "")
+    if kind == "email_bounced" and not value:
+        return _back(f"/prospects/{prospect_id}", error="There's no email on file to mark as bounced.")
+    verify.record_event(db, prospect_id, kind, value or "", campaign_id=row["campaign_id"],
+                        user=current_user(request))
+    return _back(f"/prospects/{prospect_id}", msg=f"{verify.EVENT_KINDS[kind]}: recorded.")
+
+
+@app.post("/prospects/{prospect_id}/refresh-email")
+async def prospect_refresh_email(request: Request, prospect_id: int, outreach_id: int = Form(...)):
+    """Run the campaign's enrichers to find a new email and compare with the package's."""
+    db = get_db()
+    prospect = db.get_prospect(prospect_id)
+    row = db.conn.execute(
+        """SELECT o.*, c.name AS campaign_name FROM outreach o JOIN campaigns c ON c.id = o.campaign_id
+           WHERE o.id = ? AND o.prospect_id = ?""", (outreach_id, prospect_id)).fetchone()
+    campaign = next((c for c in get_campaigns() if row and c.db_name == row["campaign_name"]), None)
+    if prospect is None or campaign is None:
+        return _back(f"/prospects/{prospect_id}", error="Campaign not found for this contact.")
+    message = await run_in_threadpool(verify.refresh_email, db, _plugin_registry(), campaign, prospect,
+                                      dict(row), user=current_user(request))
+    return _back(f"/prospects/{prospect_id}", msg=message)
 
 
 @app.get("/plugins", response_class=HTMLResponse)
@@ -1839,8 +1943,13 @@ async def logout(request: Request):
 @app.get("/account", response_class=HTMLResponse)
 async def account_page(request: Request, msg: str = Query(default=""), error: str = Query(default="")):
     user = current_user(request)
+    spending = None
+    if user.can("packages.buy"):
+        db = get_db()
+        spending = {**db.user_spend(user.id), "allowance_atomic": db.spend_allowance(user.id)}
     return templates.TemplateResponse(request, "account.html", {
         "active": "account",
+        "spending": spending,
         "permissions": [(k, v) for k, v in access.CATALOG.items() if user.can(k)],
         "msg": msg,
         "error": error,
@@ -2101,6 +2210,9 @@ async def admin_campaign_detail(request: Request, campaign_slug: str):
         "plugins": _get_registry_plugins(),
         "networks": list(payments.NETWORKS),
         "unlocked": db.list_lead_packages(campaign_id) if campaign_id else [],
+        "paused": lead_packages.paused_refs(campaign),
+        "ratings": claims.ratings(db),
+        "package_ref": lead_packages.package_ref,
     })
 
 
@@ -2122,6 +2234,8 @@ async def admin_campaign_update(
     lp_max_unlock_usd: str = Form(default="0"),
     lp_max_royalty_usd: str = Form(default="0"),
     lp_monthly_budget_usd: str = Form(default="0"),
+    lp_listed: list[str] = Form(default=[]),
+    lp_active: list[str] = Form(default=[]),
 ):
     """Update a campaign's plugin associations by rewriting campaign.yaml."""
     if not _same_origin(request):
@@ -2178,6 +2292,18 @@ async def admin_campaign_update(
             "max_royalty_per_contact_usd": dollars(lp_max_royalty_usd),
             "monthly_budget_usd": dollars(lp_monthly_budget_usd),
         })
+        # Unlocked packages left unticked are paused: their leads aren't contacted.
+        # Only packages this form listed change, so one unlocked meanwhile stays active.
+        campaign_id = get_db().get_campaign_id(campaign.db_name)
+        unlocked = get_db().list_lead_packages(campaign_id) if campaign_id else []
+        listed = set(lp_listed)
+        paused = []
+        for ref in (lead_packages.package_ref(p["provider"], p["package_id"]) for p in unlocked):
+            if (ref in listed and ref not in lp_active) or (ref not in listed and ref in lead_packages.paused_refs(campaign)):
+                paused.append(ref)
+        block.pop("paused_packages", None)
+        if paused:
+            block["paused_packages"] = paused
         raw["lead_packages"] = block
         get_db().audit(current_user(request), "campaign.lead_packages", "campaign", campaign.db_name, block)
 

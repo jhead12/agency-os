@@ -269,8 +269,57 @@ Off by default. To try it on Base Sepolia (test USDC):
    set its caps and monthly budget.
 4. Give buyers the `packages.buy` permission and an allowance:
    `python agency_os.py spend allowance --email rep@example.com --usd 50`
-5. Unlock from **Campaigns → Lead Packages**, or
-   `python agency_os.py packages unlock --campaign ... --provider ... --package ... --email ...`
+5. Unlock from **Campaigns → Lead Packages**. *Review unlock* shows the price,
+   the most the royalties can cost, and what's left in the campaign budget and
+   your allowance before you pay. From the CLI:
+   `python agency_os.py packages unlock --campaign ... --provider ... --package ... --email ... [--dry-run]`
+
+To pause a package, untick it in the campaign editor. Its leads aren't
+contacted, and no royalties are paid, until you tick it again. Spend shows on
+the Campaigns page, your Account page and in `digest`.
+
+**The guarantee.** Each package lead is judged from your own outreach
+(`core/verify.py`). No single event fails a lead; evidence is weighed and a
+lead fails at a score of 1.0:
+
+| Evidence | Weight |
+|---|---|
+| Disconnected number, fax tone | 1.0 |
+| Wrong number, once reported twice (or by two callers) | 1.0 |
+| No answer / busy on 6 calls, never reached | 0.5 |
+| Email bounced, mail returned | 0.5 each |
+| Enricher finds a different email | 0.5 after a bounce, else 0.25 |
+| AI review says not real (optional) | 0.5 |
+| Seller's history proves less than the promised tier | 1.0 |
+| Reached the organization / enricher agrees / AI says real | −1.0 / −0.25 / −0.5 |
+
+Mark bounces and returned mail on the prospect page. A bounced email shows
+*Find a new email*, which re-runs the campaign's enrichers and compares what
+they find with the package's email. Failed leads are never contacted, so no
+royalty is paid on them.
+
+Each unlocked package has a guarantee page (**Lead Packages → Unlocked**, or
+`packages verify --campaign ...`) with every lead's verdict and evidence. The
+guarantee is broken once failures make 90% impossible
+(shortfall = ⌈0.9 × leads⌉ − (leads − failed)). Within the verification window
+(30 days unless the package says otherwise) you can **File claim**
+(`packages claim --id N --email ...`). The provider answers with replacement
+leads, a refund (recorded as a pending `refund_in` until you confirm it onchain
+with `spend resolve`), or a dispute. Each package and seller shows its verified
+rate measured across the unlocks on this server.
+
+The AI review is off unless `AGENCY_OS_AI_REVIEW=on` and `ANTHROPIC_API_KEY`
+are set (`pip install anthropic`). It reads call dispositions and notes for
+leads near the threshold, counts as one signal, and runs only from *Re-check
+leads* or `packages verify --ai`. A verdict is cached until the lead's evidence
+changes.
+
+If a payment goes out but the provider never answers, it stays **pending** and
+keeps counting against the budget. Check it onchain, then close it:
+`python agency_os.py spend pending`, then
+`spend resolve --id N --status settled --tx 0x...` (or `--status failed`, which
+frees the budget and lets it be paid again). If a pending unlock had in fact
+settled, ask the provider to resend the leads.
 
 Safeguards:
 - Only allowlisted https providers can be used.
