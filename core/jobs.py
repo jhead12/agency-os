@@ -8,7 +8,7 @@ loop started in the FastAPI lifespan wakes every few minutes and runs any job
 whose interval has passed since its last run (read from the job_runs table,
 so a restart or redeploy doesn't re-run a job that just ran).
 
-Off unless AGENCY_OS_RUN_JOBS=1, so local runs and tests never call u9itus.
+Off unless AGENCY_OS_RUN_JOBS=1, so local runs and tests never call a product's API.
 Owners can also run a job now from /admin/jobs.
 
 Only jobs that are safe to repeat are here: provisioning and event pulls are
@@ -29,6 +29,7 @@ from typing import Callable
 from core.campaign import CampaignConfig
 from core.db import Database
 from core.pipeline import Pipeline
+from core.protocols import portal_product
 from core.registry import PluginRegistry
 
 
@@ -48,7 +49,7 @@ def _minutes(env: str, default: int) -> int:
 
 def configured_jobs() -> list[Job]:
     return [
-        Job("pull-events", "Pull u9itus portal events (views, claims, publishes)",
+        Job("pull-events", "Pull demo portal events (views, claims, publishes)",
             _minutes("AGENCY_OS_PULL_EVENTS_MINUTES", 60)),
         Job("provision", "Create demo pages for new prospects",
             _minutes("AGENCY_OS_PROVISION_MINUTES", 24 * 60)),
@@ -111,8 +112,7 @@ class JobRunner:
             # in every campaign, so pull once per product.
             by_product: dict[str, CampaignConfig] = {}
             for campaign in campaigns:
-                product = registry.get_product(campaign.product)
-                if product and hasattr(product, "pull_events"):
+                if portal_product(registry.get_product(campaign.product)):
                     by_product.setdefault(campaign.product, campaign)
             return {product: pipeline.pull_product_events(campaign)
                     for product, campaign in by_product.items()}
@@ -120,7 +120,7 @@ class JobRunner:
         if key == "provision":
             return {campaign.db_name: pipeline.provision_demos(campaign)
                     for campaign in campaigns
-                    if hasattr(registry.get_product(campaign.product), "provision_demo")}
+                    if portal_product(registry.get_product(campaign.product))}
 
         raise ValueError(f"Unknown job {key!r}")
 

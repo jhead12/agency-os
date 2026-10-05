@@ -68,6 +68,7 @@ class U9itusClient:
         ein: str = "",
         contact_email: str = "",
         refresh: bool = False,
+        irs_subsection: str = "",
     ) -> dict:
         """POST /api/v1/agency/demo-portals — create or return a demo portal.
 
@@ -90,6 +91,8 @@ class U9itusClient:
             payload["contact_email"] = contact_email
         if refresh:
             payload["refresh"] = True
+        if irs_subsection:
+            payload["irs_subsection"] = irs_subsection
 
         resp = self._request("POST", "/api/v1/agency/demo-portals", json=payload)
         return resp

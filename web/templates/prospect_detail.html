@@ -116,7 +116,7 @@
             <div class="detail-row"><span>Campaign</span><strong>{{ o.campaign_name }}</strong></div>
             <div class="detail-row"><span>Stage</span>
                 <span class="stage-badges"><span class="stage-badge stage-{{ o.stage }}">{{ o.stage }}</span>
-                {% if ready_to_close %}<span class="stage-badge stage-closed_won" title="They published their u9itus page">ready to close</span>{% endif %}</span>
+                {% if ready_to_close %}<span class="stage-badge stage-closed_won" title="They published their demo page">ready to close</span>{% endif %}</span>
             </div>
             <div class="detail-row"><span>Touches</span><span>{{ o.touch_count }}</span></div>
             <div class="detail-row"><span>Last Contacted</span><span>{{ o.last_contacted_at|fmt_date }}</span></div>
@@ -287,12 +287,12 @@
     'portal.viewed': 'Viewed the demo', 'portal.claimed': 'Claimed the page',
     'portal_published': 'Published the page'} %}
 <div class="detail-card full-width portal-card">
-    <h3>u9itus demo page
+    <h3>{{ portal_label }}
         {% if portal.status %}<span class="stage-badge stage-{{ {'demo': 'contacted', 'expired': 'closed_lost', 'claimed': 'demo_scheduled', 'published': 'closed_won'}[portal.status] or 'cold' }}">{{ status_labels[portal.status] or portal.status }}</span>{% endif %}
     </h3>
 
     {% if not portal.status and not portal_link %}
-    <p class="subtitle">No demo page yet. Creating one makes a private sample voter guide with this organization's name and state, and a link to send them.</p>
+    <p class="subtitle">No demo page yet. Creating one makes a private sample page with this organization's name, and a link to send them.</p>
     {% else %}
     {% if portal_link %}
     <div class="detail-row"><span>Demo link</span>

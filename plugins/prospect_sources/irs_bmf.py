@@ -114,7 +114,11 @@ class IrsBmfSource:
                 source=self.key,
                 source_url=self.URL,
                 focus_area=self._classify_focus(ntee_prefix),
-                metadata={"ntee_full": ntee, "ruling_year": row.get("RULING")},
+                metadata={
+                    "ntee_full": ntee,
+                    "ruling_year": row.get("RULING"),
+                    "irs_subsection": (row.get("SUBSECTION") or "").strip(),  # e.g. "03" = 501(c)(3)
+                },
             )
 
     def _classify_focus(self, ntee_prefix: str) -> str:
