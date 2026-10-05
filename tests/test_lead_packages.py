@@ -419,8 +419,10 @@ def test_campaign_editor_saves_policy_and_never_pays(db, x402_env, provider):
                           "lp_max_unlock_usd": "25", "lp_max_royalty_usd": "-3",
                           "lp_monthly_budget_usd": "lots"})
     saved = yaml.safe_load((config.config_dir / "campaign.yaml").read_text())["lead_packages"]
-    assert saved == {"enabled": True, "network": "base", "max_unlock_usd": 25.0,
-                     "max_royalty_per_contact_usd": 0.0, "monthly_budget_usd": 0.0}
+    assert saved["guarantee_rules"]["window_days"] == 30  # defaults saved with the section
+    assert {k: v for k, v in saved.items() if k != "guarantee_rules"} == {
+        "enabled": True, "network": "base", "max_unlock_usd": 25.0,
+        "max_royalty_per_contact_usd": 0.0, "monthly_budget_usd": 0.0}
 
     # A post without the section (older form, other tools) leaves spending settings alone.
     owner.post(url, data={"sender_name": "Joshua"})
@@ -429,3 +431,124 @@ def test_campaign_editor_saves_policy_and_never_pays(db, x402_env, provider):
     off = yaml.safe_load((config.config_dir / "campaign.yaml").read_text())["lead_packages"]
     assert off["enabled"] is False and off["network"] == "base-sepolia"
     assert provider.paid_calls == [] and spend_rows(db) == []
+
+
+# ── Finishing phase 1: money, preview, pause, pending, spend views ─────
+
+
+@pytest.mark.parametrize("usd, atomic", [
+    (8.2, 8_200_000), ("0.07", 70_000), ("19.99", 19_990_000), (0.0000019, 1),
+    (-1, 0), ("lots", 0), ("nan", 0), ("inf", 0), (None, 0), ("", 0),
+])
+def test_dollars_convert_exactly(usd, atomic):
+    assert payments.usd_to_atomic(usd) == atomic
+
+
+def test_preview_shows_cost_and_whats_left(db, x402_env, provider):
+    user = buyer(db, allowance_usd=4)
+    campaign_id = db.upsert_campaign("lp-test", "x")
+    preview = lead_packages.preview_unlock(db, campaign(), campaign_id, user, package(provider))
+    assert preview.unlock_atomic == 5_000_000
+    assert preview.max_royalties_atomic == 2 * 250_000 + 1_000_000  # from the tier mix
+    assert preview.campaign_left_atomic == 100_000_000 and preview.allowance_left_atomic == 4_000_000
+    assert not preview.ok and any("allowance" in p for p in preview.problems)
+    assert any("per-contact cap" in p for p in preview.problems)  # the $1.00 pitched lead vs a $0.50 cap
+    assert provider.paid_calls == [] and spend_rows(db) == []  # previewing never pays
+
+    db.set_spend_allowance(user.id, payments.usd_to_atomic(100), actor=None)
+    ok = lead_packages.preview_unlock(db, campaign(max_royalty_per_contact_usd=1), campaign_id, user,
+                                      package(provider))
+    assert ok.ok, ok.problems
+
+
+def test_paused_package_leads_are_not_contacted(db, x402_env, provider):
+    campaign_id, prospect = unlocked_lead(db, provider)
+    paused = campaign(paused_packages=[f"{BASE}/p1"])
+    gate = lead_packages.gate_contact(db, paused, campaign_id, prospect, 0,
+                                      http=provider.client(), payer=FakePayer())
+    assert not gate.send and "paused" in gate.reason
+    assert [c[0] for c in provider.paid_calls] == ["unlock"]  # no royalty paid while paused
+    assert lead_packages.gate_contact(db, campaign(), campaign_id, prospect, 0,
+                                      http=provider.client(), payer=FakePayer()).send
+
+
+def test_pending_payment_holds_budget_until_resolved(db, x402_env, provider):
+    def drop_paid_requests(request):
+        if "PAYMENT-SIGNATURE" in request.headers:
+            raise httpx.ReadTimeout("facilitator hung", request=request)
+        return provider.handler(request)
+
+    flaky = httpx.Client(transport=httpx.MockTransport(drop_paid_requests))
+    user = buyer(db)
+    campaign_id = db.upsert_campaign("lp-test", "x")
+    lost = lead_packages.unlock(db, campaign(), campaign_id, user, package(provider), http=flaky, payer=FakePayer())
+    assert not lost.ok and "No response after paying" in lost.message
+    [pending] = db.pending_spend()
+    assert db.campaign_spend(campaign_id)["month_atomic"] == 5_000_000  # still counts against the budget
+    blocked = lead_packages.unlock(db, campaign(), campaign_id, user, package(provider),
+                                   http=provider.client(), payer=FakePayer())
+    assert not blocked.ok and "Already paid" in blocked.message
+
+    with pytest.raises(ValueError):
+        db.resolve_spend(pending["id"], "settled", "not-a-hash", actor=None)
+    assert db.resolve_spend(pending["id"], "failed", "", actor=None)
+    assert not db.resolve_spend(pending["id"], "settled", "0x" + "1" * 64, actor=None)  # no longer pending
+    assert db.conn.execute("SELECT 1 FROM audit_log WHERE action = 'spend.resolve'").fetchone()
+
+    retry = lead_packages.unlock(db, campaign(), campaign_id, user, package(provider),
+                                 http=provider.client(), payer=FakePayer())
+    assert retry.ok and db.campaign_spend(campaign_id)["month_atomic"] == 5_000_000
+
+
+def test_review_page_account_and_editor_pause(db, x402_env, provider, monkeypatch):
+    import yaml
+
+    import web.app as webapp
+
+    monkeypatch.setattr(lead_packages, "make_http", lambda transport=None: provider.client())
+    monkeypatch.setattr(payments, "_default_payer", FakePayer())
+    config = webapp.get_campaigns()[0]
+    config_path = config.config_dir / "campaign.yaml"
+    raw = yaml.safe_load(config_path.read_text())
+    webapp.save_campaign_file(config_path, yaml.dump({**raw, "lead_packages": {**POLICY, "max_royalty_per_contact_usd": 1}}))
+    make_user(db, "viewer@x.com", "Viewer")
+    user = buyer(db, "owner@x.com")
+    owner = client_for("owner@x.com")
+    query = {"provider": BASE, "package_id": "p1", "campaign": config.db_name}
+
+    assert client_for("viewer@x.com").get("/lead-packages/review", params=query).status_code == 403
+    review = owner.get("/lead-packages/review", params=query)
+    assert review.status_code == 200 and "$5.00" in review.text and "$100.00" in review.text
+    assert "Pay and unlock" in review.text and provider.paid_calls == []
+
+    done = owner.post("/lead-packages/unlock", data={**query, "confirm": "yes"})
+    assert "Unlocked" in httpx.URL(done.headers["location"]).params["msg"]
+    account = owner.get("/account").text
+    assert "Lead package spending" in account and "$5.00 of $100.00" in account
+    assert "Already unlocked" in owner.get("/lead-packages/review", params=query).text
+
+    # Untick the package in the campaign editor: it's paused, and nothing is paid.
+    url = f"/admin/campaigns/{config.db_name}"
+    ref = f"{BASE}/p1"
+    assert f'value="{ref}"' in owner.get(url).text
+    form = {"lp_present": "1", "lp_enabled": "1", "lp_max_unlock_usd": "10", "lp_max_royalty_usd": "1",
+            "lp_monthly_budget_usd": "100", "lp_listed": ref}
+    owner.post(url, data=form)
+    assert yaml.safe_load(config_path.read_text())["lead_packages"]["paused_packages"] == [ref]
+    owner.post(url, data={**form, "lp_listed": [], "lp_active": []})  # a form that didn't list it
+    assert yaml.safe_load(config_path.read_text())["lead_packages"]["paused_packages"] == [ref]
+    owner.post(url, data={**form, "lp_active": ref})
+    assert "paused_packages" not in yaml.safe_load(config_path.read_text())["lead_packages"]
+    assert [c[0] for c in provider.paid_calls] == ["unlock"]
+    assert user.can("packages.buy")
+
+
+def test_digest_includes_package_spend(db, x402_env, provider):
+    unlocked_lead(db, provider)
+    config = CampaignConfig(name="lp-test", product="none", prospect_sources=[], channels=[],
+                            lead_packages=POLICY, config_dir=Path("/tmp"))
+    stats = Pipeline(db, SimpleNamespace()).weekly_digest(config)
+    assert stats["spend"]["month_atomic"] == 5_000_000
+    plain = CampaignConfig(name="lp-test", product="none", prospect_sources=[], channels=[],
+                           config_dir=Path("/tmp"))
+    assert "spend" not in Pipeline(db, SimpleNamespace()).weekly_digest(plain)

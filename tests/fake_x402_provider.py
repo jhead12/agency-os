@@ -63,6 +63,9 @@ class FakeProvider:
         self.quote_pay_to = ""                     # override the payee in the 402
         self.settle_success = True
         self.paid_calls: list[tuple[str, str]] = []
+        # What a guarantee claim gets back; tests swap in refund / disputed answers.
+        self.claim_response: dict = {"remedy": "replacement", "leads": [lead(20), lead(21), lead(22)]}
+        self.claims: list[dict] = []
         self.lock = threading.Lock()
 
     def add_package(self, package_id: str, price_atomic: int, royalty_atomic: int = 100000, leads=None):
@@ -109,6 +112,9 @@ class FakeProvider:
             with self.lock:
                 self.paid_calls.append(("royalty", json.loads(request.content)["lead_id"]))
             return self._settled({"ok": True})
+        if parts[2] == "claims" and request.method == "POST":
+            self.claims.append(json.loads(request.content))
+            return httpx.Response(200, json=self.claim_response)
         return httpx.Response(405)
 
     def _royalty(self, package_id: str, body: dict) -> str:

@@ -50,7 +50,7 @@
         {% if prospect.voter_engagement %}<span class="tag tag-voter">voter</span>{% endif %}
     </div>
     <div class="info-bar-right">
-        {% if scripts[0].prospect_phone %}📞 {{ scripts[0].prospect_phone }}{% endif %}
+        {% if scripts[0].prospect_phone %}{% if scripts[0].prospect_phone|tel %}<a href="{{ scripts[0].prospect_phone|tel }}" class="call-link">📞 {{ scripts[0].prospect_phone }}</a>{% else %}📞 {{ scripts[0].prospect_phone }}{% endif %}{% endif %}
         {% if scripts[0].prospect_email %}✉ {{ scripts[0].prospect_email }}{% endif %}
         {% if prospect.website_url %}🌐 <a href="{{ prospect.website_url }}" target="_blank">{{ prospect.website_url }}</a>{% endif %}
     </div>

@@ -13,6 +13,9 @@
         {% set active = nav_active(request.url.path) %}
         <div class="nav-brand">
             <a href="/">agency-os</a>
+            {% if user and (user.uses_ai('agents.use') or user.uses_ai('ai.connect')) %}
+            <a href="/account" class="ai-badge" title="AI features are on for you. Turn them off on your Account page.">AI beta</a>
+            {% endif %}
             {% if user %}
             <button class="nav-toggle" id="nav-toggle" aria-label="Toggle menu" aria-expanded="false" aria-controls="nav-links">
                 <span></span><span></span><span></span>
@@ -43,12 +46,16 @@
                 </div>
             </details>
             {% endif %}
-            {% if user.is_owner %}
-            <details class="nav-group {% if active in ['admin', 'admin-campaigns'] %}nav-group-active{% endif %}">
+            {% if user.is_owner or user.can('packages.sell') %}
+            <details class="nav-group {% if active in ['admin', 'admin-campaigns', 'admin-selling', 'admin-payouts'] %}nav-group-active{% endif %}">
                 <summary>Administration</summary>
                 <div class="nav-dropdown">
+                    {% if user.is_owner %}
                     <a href="/admin/users" class="{% if active == 'admin' %}active{% endif %}">Team</a>
                     <a href="/admin/campaigns" class="{% if active == 'admin-campaigns' %}active{% endif %}">Campaign Settings</a>
+                    {% endif %}
+                    {% if user.can('packages.sell') %}<a href="/admin/selling" class="{% if active == 'admin-selling' %}active{% endif %}">Sell Lead Packages</a>{% endif %}
+                    {% if user.is_owner %}<a href="/admin/payouts" class="{% if active == 'admin-payouts' %}active{% endif %}">Rep Payouts</a>{% endif %}
                 </div>
             </details>
             {% endif %}
@@ -69,5 +76,6 @@
     </main>
 
     <script src="/static/app.js"></script>
+    {% if user and user.uses_ai('ai.connect') %}<script src="/static/webmcp.js" defer></script>{% endif %}
 </body>
 </html>

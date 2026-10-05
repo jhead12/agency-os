@@ -28,7 +28,7 @@ import base64
 import json
 import os
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from typing import Any, Optional, Protocol
 
 import httpx
@@ -67,12 +67,17 @@ _MAX_HEADER_BYTES = 64 * 1024
 
 
 def usd_to_atomic(usd) -> int:
-    """Dollars to USDC atomic units, rounded down to a whole unit."""
+    """Dollars to USDC atomic units, rounded down to a whole unit; 0 if invalid.
+
+    Decimal, not float: float("8.2") * 10**6 is 8199999.999..., a cent short.
+    """
     try:
-        value = float(usd)
-    except (TypeError, ValueError):
+        value = Decimal(str(usd).strip())
+    except (InvalidOperation, ValueError):
         return 0
-    return max(0, int(value * 10 ** USDC_DECIMALS))
+    if not value.is_finite() or value <= 0:
+        return 0
+    return int(value.scaleb(USDC_DECIMALS))
 
 
 def atomic_to_usd(atomic) -> float:
@@ -315,9 +320,8 @@ class PaidResult:
         return self.status in ("settled", "free")
 
 
-def _month_start() -> str:
-    now = datetime.now(timezone.utc)
-    return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
+# "This month" is the database's calendar month, the same as Database.campaign_spend.
+_THIS_MONTH = "date_trunc('month', CURRENT_TIMESTAMP)"
 
 
 def reserve(db: Database, policy: SpendPolicy, *, kind: str, ref: str, campaign_id: int,
@@ -331,11 +335,11 @@ def reserve(db: Database, policy: SpendPolicy, *, kind: str, ref: str, campaign_
     try:
         with c.raw.transaction():
             c.execute("SELECT pg_advisory_xact_lock(?, ?)", (_SPEND_LOCK_NS, campaign_id))
-            since = _month_start()
             campaign_total = c.execute(
-                """SELECT COALESCE(SUM(amount_atomic), 0) AS total FROM spend
-                   WHERE campaign_id = ? AND status IN ('pending', 'settled') AND created_at >= ?""",
-                (campaign_id, since),
+                f"""SELECT COALESCE(SUM(amount_atomic), 0) AS total FROM spend
+                    WHERE campaign_id = ? AND status IN ('pending', 'settled') AND kind IN ('unlock', 'royalty')
+                      AND created_at >= {_THIS_MONTH}""",
+                (campaign_id,),
             ).fetchone()["total"]
             if campaign_total + amount_atomic > policy.monthly_budget_atomic:
                 return None, "Over the campaign's monthly budget", False
@@ -345,9 +349,10 @@ def reserve(db: Database, policy: SpendPolicy, *, kind: str, ref: str, campaign_
                     (user_id,),
                 ).fetchone()
                 user_total = c.execute(
-                    """SELECT COALESCE(SUM(amount_atomic), 0) AS total FROM spend
-                       WHERE user_id = ? AND status IN ('pending', 'settled') AND created_at >= ?""",
-                    (user_id, since),
+                    f"""SELECT COALESCE(SUM(amount_atomic), 0) AS total FROM spend
+                        WHERE user_id = ? AND status IN ('pending', 'settled') AND kind IN ('unlock', 'royalty')
+                          AND created_at >= {_THIS_MONTH}""",
+                    (user_id,),
                 ).fetchone()["total"]
                 if user_total + amount_atomic > (allowance["a"] if allowance else 0):
                     return None, "Over your monthly spend allowance", False

@@ -92,21 +92,44 @@
             <input type="number" id="lp_monthly_budget_usd" name="lp_monthly_budget_usd" value="{{ lp.monthly_budget_usd or 0 }}" min="0" step="0.01">
         </div>
     </div>
+    <details class="mcp-examples" style="margin-top: 12px;">
+        <summary>Guarantee rules for new unlocks</summary>
+        <p style="color: var(--muted-foreground); font-size: 0.875rem;">Used when a package doesn't state its own. They're fixed on each package when it's unlocked, so changing them here never changes a guarantee already running.</p>
+        <div class="form-grid">
+            <div class="form-field"><label for="lp_rule_fail_at">A lead fails at score</label>
+                <input type="number" id="lp_rule_fail_at" name="lp_rule_fail_at" value="{{ default_rules.fail_at }}" min="0.5" max="2" step="0.05"></div>
+            <div class="form-field"><label for="lp_rule_wrong_number_reports">Wrong-number reports to count</label>
+                <input type="number" id="lp_rule_wrong_number_reports" name="lp_rule_wrong_number_reports" value="{{ default_rules.wrong_number_reports }}" min="1" max="5"></div>
+            <div class="form-field"><label for="lp_rule_no_answer_attempts">No-answer calls to count</label>
+                <input type="number" id="lp_rule_no_answer_attempts" name="lp_rule_no_answer_attempts" value="{{ default_rules.no_answer_attempts }}" min="2" max="20"></div>
+            <div class="form-field"><label for="lp_rule_window_days">Verification window (days)</label>
+                <input type="number" id="lp_rule_window_days" name="lp_rule_window_days" value="{{ default_rules.window_days }}" min="7" max="120"></div>
+            <div class="form-field"><label for="lp_rule_claim_days">Days after it to file a claim</label>
+                <input type="number" id="lp_rule_claim_days" name="lp_rule_claim_days" value="{{ default_rules.claim_days }}" min="0" max="30"></div>
+            <div class="form-field"><label for="lp_rule_unworked_at_close">Leads nobody worked, at the end</label>
+                <select id="lp_rule_unworked_at_close" name="lp_rule_unworked_at_close">
+                    {% for key, label in UNWORKED_POLICIES.items() %}<option value="{{ key }}" {% if default_rules.unworked_at_close == key %}selected{% endif %}>{{ label }}</option>{% endfor %}
+                </select></div>
+        </div>
+    </details>
     {% if unlocked %}
-    <div class="table-scroll">
-    <table class="data-table">
-        <thead><tr><th>Unlocked package</th><th>Leads imported</th><th>Royalty / contact</th><th>Receipt</th></tr></thead>
-        <tbody>
+    <p style="color: var(--muted-foreground); font-size: 0.875rem;">Unlocked packages. Untick one to pause it: its leads won't be contacted (or cost royalties) until you tick it again.</p>
+    <div class="plugin-checkbox-grid">
         {% for p in unlocked %}
-        <tr>
-            <td><strong>{{ p.title }}</strong><br><span class="subtitle">{{ p.provider }}</span></td>
-            <td>{{ p.imported_count }}</td>
-            <td>{{ p.royalty_atomic|usd }}</td>
-            <td>{% if p.tx_hash %}<a href="{{ explorer_url(p.network, p.tx_hash) }}" target="_blank" rel="noopener">View tx</a>{% else %}—{% endif %}</td>
-        </tr>
+        {% set ref = package_ref(p.provider, p.package_id) %}
+        <input type="hidden" name="lp_listed" value="{{ ref }}">
+        <label class="plugin-card">
+            <input type="checkbox" name="lp_active" value="{{ ref }}" {% if ref not in paused %}checked{% endif %}>
+            <div class="plugin-card-body">
+                <strong>{{ p.title }}</strong>
+                <p>{{ p.industry or '—' }} · {{ p.region or '—' }} · {{ p.imported_count }} leads imported</p>
+                <p>{% if p.guarantee_tier and p.guarantee_tier != 'unworked' %}<span class="badge badge-success">90% {{ p.guarantee_tier|replace('_', ' ') }}</span>{% else %}<span class="badge badge-warning">No guarantee</span>{% endif %}
+                   {% set r = ratings.get((p.provider, p.package_id)) %}
+                   {% if r and r.rate is not none %}<span class="badge {% if r.rate >= 0.9 %}badge-success{% else %}badge-warning{% endif %}">{{ (r.rate * 100)|round|int }}% verified · {{ r.unlocks }} unlock{{ '' if r.unlocks == 1 else 's' }}</span>{% else %}<span class="muted">Not worked yet</span>{% endif %}
+                   <a href="/lead-packages/unlocked/{{ p.id }}">Guarantee</a></p>
+            </div>
+        </label>
         {% endfor %}
-        </tbody>
-    </table>
     </div>
     {% endif %}
 </div>

@@ -21,6 +21,8 @@
     <div class="campaign-header">
         <h2>{{ cat.provider }}</h2>
         <span class="badge badge-product">{{ cat.packages|length }} package(s)</span>
+        {% set pr = ratings.get(cat.provider) %}
+        {% if pr and pr.rate is not none %}<span class="badge {% if pr.rate >= 0.9 %}badge-success{% else %}badge-warning{% endif %}">Seller: {{ (pr.rate * 100)|round|int }}% verified</span>{% endif %}
     </div>
     {% if cat.error %}<div class="form-error">{{ cat.error }}</div>{% endif %}
     <div class="table-scroll">
@@ -44,18 +46,19 @@
             </td>
             <td>
                 {% if p.guaranteed %}<span class="badge badge-success">90% {{ p.guarantee_tier|replace('_', ' ') }}</span>{% else %}<span class="badge badge-warning">No guarantee</span>{% endif %}
+                {% set r = ratings.get((p.provider, p.package_id)) %}
+                {% if r and r.rate is not none %}<br><span class="subtitle {% if r.rate < 0.9 %}text-warning{% endif %}">{{ (r.rate * 100)|round|int }}% verified here · {{ r.unlocks }} unlock{{ '' if r.unlocks == 1 else 's' }}</span>{% endif %}
                 {% if p.tier_mix %}<br><span class="subtitle">{% for tier, n in p.tier_mix.items() %}{{ n }} {{ tier|replace('_', ' ') }}{% if not loop.last %} · {% endif %}{% endfor %}</span>{% endif %}
             </td>
             <td>
                 {% if user.can('packages.buy') and campaigns %}
-                <form method="post" action="/lead-packages/unlock" class="stack-form">
+                <form method="get" action="/lead-packages/review" class="stack-form">
                     <input type="hidden" name="provider" value="{{ p.provider }}">
                     <input type="hidden" name="package_id" value="{{ p.package_id }}">
-                    <select name="campaign" class="filter-input" required>
+                    <select name="campaign" class="filter-input" required aria-label="Campaign">
                         {% for c in campaigns %}<option value="{{ c.db_name }}">{{ c.name }}</option>{% endfor %}
                     </select>
-                    <label><input type="checkbox" name="confirm" value="yes" required> Pay {{ p.unlock_price_atomic|usd }} now, plus up to {{ p.max_royalty_atomic|usd }} per lead contacted</label>
-                    <button type="submit" class="btn btn-sm">Unlock</button>
+                    <button type="submit" class="btn btn-sm">Review unlock</button>
                 </form>
                 {% elif user.can('packages.buy') %}
                 <span class="subtitle">Turn on lead packages for a campaign first.</span>
@@ -82,7 +85,7 @@
         <tbody>
         {% for lp in unlocked %}
         <tr>
-            <td><strong>{{ lp.title }}</strong><br><span class="subtitle">{{ lp.provider }}</span></td>
+            <td><a href="/lead-packages/unlocked/{{ lp.id }}"><strong>{{ lp.title }}</strong></a><br><span class="subtitle">{{ lp.provider }}</span></td>
             <td>{{ lp.campaign_name }}</td>
             <td>{{ lp.imported_count }}</td>
             <td>{{ lp.duplicate_count }}</td>

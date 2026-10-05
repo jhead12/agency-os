@@ -348,8 +348,12 @@ class Pipeline:
     # ── Weekly Digest ──────────────────────────────────────────────────
 
     def weekly_digest(self, campaign: CampaignConfig) -> dict:
-        """Gather pipeline stats for a campaign."""
-        return self.db.get_pipeline_stats(campaign.db_name)
+        """Gather pipeline stats for a campaign, plus lead-package spend if it uses packages."""
+        stats = self.db.get_pipeline_stats(campaign.db_name)
+        campaign_id = self.db.get_campaign_id(campaign.db_name) if campaign.lead_packages else None
+        if campaign_id:
+            stats["spend"] = self.db.campaign_spend(campaign_id)
+        return stats
 
     # ── Helpers ────────────────────────────────────────────────────────
 

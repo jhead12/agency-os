@@ -21,6 +21,10 @@ Usage:
     agency-os packages unlock --campaign voter-guide-cbo --provider https://leads.example --package p1 --email you@example.com
     agency-os spend --campaign voter-guide-cbo
     agency-os spend allowance --email rep@example.com --usd 100
+    agency-os packages verify --campaign voter-guide-cbo [--ai]
+    agency-os packages claim --id 3 --email you@example.com
+    agency-os spend pending
+    agency-os spend resolve --id 12 --status settled --tx 0x...
 """
 
 from __future__ import annotations
@@ -62,12 +66,28 @@ def _setup(campaigns_dir: str = "campaigns", plugins_dir: str = "plugins", db_ur
 
 
 def _get_campaign(campaigns: list, name: str):
-    """Find a campaign by name (case-insensitive slug match)."""
+    """Find a campaign by its full name or slug, or by a short name such as
+    "voter-guide-cbo" when its words match exactly one campaign's slug."""
     name_slug = name.lower().replace(" ", "-").replace("_", "-")
     for c in campaigns:
         if c.db_name == name_slug or c.name.lower() == name.lower():
             return c
-    return None
+    words = [w for w in name_slug.split("-") if w]
+    matches = [c for c in campaigns if words and all(w in c.db_name.split("-") for w in words)]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _targets(campaigns: list, name: str, every: bool) -> list:
+    """The campaigns a command runs on; exits listing the real names if none match."""
+    if every:
+        return campaigns
+    found = _get_campaign(campaigns, name or "")
+    if found is None:
+        click.echo(f"No campaign matches '{name}'. Campaigns:", err=True)
+        for c in campaigns:
+            click.echo(f"  {c.db_name}", err=True)
+        sys.exit(1)
+    return [found]
 
 
 @click.group()
@@ -94,7 +114,7 @@ def sync(ctx, campaign_name, sync_all, dry_run):
     registry, db, campaigns = _setup(db_url=ctx.obj["db_url"])
     pipeline = Pipeline(db, registry)
 
-    targets = campaigns if sync_all else [c for c in campaigns if c.db_name == campaign_name]
+    targets = _targets(campaigns, campaign_name, sync_all)
     if not targets:
         click.echo(f"No campaigns found matching '{campaign_name}'")
         sys.exit(1)
@@ -124,7 +144,7 @@ def enrich(ctx, campaign_name, enrich_all, limit):
     registry, db, campaigns = _setup(db_url=ctx.obj["db_url"])
     pipeline = Pipeline(db, registry)
 
-    targets = campaigns if enrich_all else [c for c in campaigns if c.db_name == campaign_name]
+    targets = _targets(campaigns, campaign_name, enrich_all)
     for campaign in targets:
         click.echo(f"\nEnriching: {campaign.name}")
         stats = pipeline.enrich_contacts(campaign, limit=limit)
@@ -155,7 +175,7 @@ def enqueue(ctx, campaign_name, all_campaigns, limit, dry_run, test_email):
     if test_email:
         click.echo(f"\n  ⚠ TEST MODE — all emails redirected to: {test_email}")
 
-    targets = campaigns if all_campaigns else [c for c in campaigns if c.db_name == campaign_name]
+    targets = _targets(campaigns, campaign_name, all_campaigns)
     for campaign in targets:
         click.echo(f"\n{'='*60}")
         click.echo(f"Outreach: {campaign.name}")
@@ -186,7 +206,7 @@ def test_send(ctx, campaign_name, to_email, script_name, prospect_id):
     registry, db, campaigns = _setup(db_url=ctx.obj["db_url"])
     pipeline = Pipeline(db, registry)
 
-    campaign = next((c for c in campaigns if c.db_name == campaign_name), None)
+    campaign = _get_campaign(campaigns, campaign_name)
     if not campaign:
         click.echo(f"Error: campaign '{campaign_name}' not found")
         sys.exit(1)
@@ -343,7 +363,7 @@ def provision(ctx, campaign_name, all_campaigns, limit, dry_run):
     registry, db, campaigns = _setup(db_url=ctx.obj["db_url"])
     pipeline = Pipeline(db, registry)
 
-    targets = campaigns if all_campaigns else [c for c in campaigns if c.db_name == campaign_name]
+    targets = _targets(campaigns, campaign_name, all_campaigns)
     for campaign in targets:
         click.echo(f"\n{'='*60}")
         click.echo(f"Provisioning: {campaign.name}")
@@ -371,7 +391,7 @@ def pull_events(ctx, campaign_name, all_campaigns, dry_run):
     registry, db, campaigns = _setup(db_url=ctx.obj["db_url"])
     pipeline = Pipeline(db, registry)
 
-    targets = campaigns if all_campaigns else [c for c in campaigns if c.db_name == campaign_name]
+    targets = _targets(campaigns, campaign_name, all_campaigns)
     for campaign in targets:
         click.echo(f"\n{'='*60}")
         click.echo(f"Pulling events: {campaign.name}")
@@ -397,7 +417,7 @@ def stale(ctx, campaign_name, all_campaigns):
     registry, db, campaigns = _setup(db_url=ctx.obj["db_url"])
     pipeline = Pipeline(db, registry)
 
-    targets = campaigns if all_campaigns else [c for c in campaigns if c.db_name == campaign_name]
+    targets = _targets(campaigns, campaign_name, all_campaigns)
     for campaign in targets:
         click.echo(f"\nStale check: {campaign.name}")
         stats = pipeline.check_stale(campaign)
@@ -419,7 +439,7 @@ def bookings(ctx, campaign_name, all_campaigns, days, dry_run):
     registry, db, campaigns = _setup(db_url=ctx.obj["db_url"])
     pipeline = Pipeline(db, registry)
 
-    targets = campaigns if all_campaigns else [c for c in campaigns if c.db_name == campaign_name]
+    targets = _targets(campaigns, campaign_name, all_campaigns)
     for campaign in targets:
         if not campaign.scheduler:
             if not all_campaigns:
@@ -449,7 +469,7 @@ def digest(ctx, campaign_name, all_campaigns):
     registry, db, campaigns = _setup(db_url=ctx.obj["db_url"])
     pipeline = Pipeline(db, registry)
 
-    targets = campaigns if all_campaigns else [c for c in campaigns if c.db_name == campaign_name]
+    targets = _targets(campaigns, campaign_name, all_campaigns)
     for campaign in targets:
         click.echo(f"\n{'='*60}")
         click.echo(f"Digest: {campaign.name}")
@@ -462,6 +482,13 @@ def digest(ctx, campaign_name, all_campaigns):
         click.echo(f"  Stage breakdown:")
         for stage, count in sorted(stats["stage_counts"].items()):
             click.echo(f"    {stage:20s} {count}")
+        if "spend" in stats:
+            from core.payments import atomic_to_usd
+
+            spent = stats["spend"]
+            click.echo(f"  Lead packages:    ${atomic_to_usd(spent['month_atomic']):,.2f} this month, "
+                       f"${atomic_to_usd(spent['total_atomic']):,.2f} all time"
+                       + (f", {spent['pending']} pending" if spent["pending"] else ""))
 
 
 @cli.command()
@@ -692,10 +719,12 @@ def packages_list():
 @click.option("--package", "package_id", required=True)
 @click.option("--email", required=True, help="The user paying (their allowance applies)")
 @click.option("--yes", is_flag=True, help="Skip the confirmation prompt")
+@click.option("--dry-run", is_flag=True, help="Show the cost and budgets left; don't pay")
 @click.pass_context
-def packages_unlock(ctx, campaign_name, provider, package_id, email, yes):
+def packages_unlock(ctx, campaign_name, provider, package_id, email, yes, dry_run):
     """Pay for a package and import its leads into a campaign."""
     from core import lead_packages
+    from core.payments import atomic_to_usd
 
     _registry, db, campaigns = _setup(db_url=ctx.obj["db_url"])
     campaign = _get_campaign(campaigns, campaign_name)
@@ -708,11 +737,77 @@ def packages_unlock(ctx, campaign_name, provider, package_id, email, yes):
     package, error = lead_packages.find_package(lead_packages.normalize_provider(provider) or "", package_id)
     if package is None:
         _fail(AccessError(error))
-    if not yes:
-        click.confirm(f"Pay ${package.unlock_usd:,.2f} for '{package.title}' plus "
-                      f"${package.royalty_usd:,.2f} per lead contacted?", abort=True)
     campaign_id = db.upsert_campaign(campaign.db_name, str(campaign.config_dir / "campaign.yaml"))
+    preview = lead_packages.preview_unlock(db, campaign, campaign_id, user, package)
+    click.echo(f"{package.title}: unlock ${atomic_to_usd(preview.unlock_atomic):,.2f} now, royalties up to "
+               f"${atomic_to_usd(preview.max_royalties_atomic):,.2f} if every lead is contacted")
+    click.echo(f"Left this month: campaign ${atomic_to_usd(preview.campaign_left_atomic):,.2f}, "
+               f"you ${atomic_to_usd(preview.allowance_left_atomic):,.2f}")
+    for problem in preview.problems:
+        click.echo(f"  ! {problem}")
+    if preview.already_unlocked:
+        click.echo("Already unlocked for this campaign.")
+        return
+    if dry_run:
+        sys.exit(0 if preview.ok else 1)
+    if not yes:
+        click.confirm("Pay and unlock?", abort=True)
     result = lead_packages.unlock(db, campaign, campaign_id, user, package)
+    click.echo(result.message)
+    if not result.ok:
+        sys.exit(1)
+
+
+@packages.command("verify")
+@click.option("--campaign", "campaign_name", required=True)
+@click.option("--ai", is_flag=True, help="Include the AI review (AGENCY_OS_AI_REVIEW=on, ANTHROPIC_API_KEY)")
+@click.pass_context
+def packages_verify(ctx, campaign_name, ai):
+    """Re-check a campaign's package leads against the 90% guarantee."""
+    from core import claims, verify
+
+    _registry, db, campaigns = _setup(db_url=ctx.obj["db_url"])
+    campaign = _get_campaign(campaigns, campaign_name)
+    campaign_id = db.get_campaign_id(campaign.db_name) if campaign else None
+    if not campaign_id:
+        _fail(AccessError(f"Campaign not found: {campaign_name}"))
+    reviewer = verify.default_reviewer() if ai else None
+    if ai and not reviewer.is_configured():
+        click.echo("AI review is off (needs AGENCY_OS_AI_REVIEW=on and ANTHROPIC_API_KEY); scoring without it.")
+    for lp in db.list_lead_packages(campaign_id):
+        status = claims.package_status(db, lp["id"], reviewer=reviewer)
+        s = status["summary"]
+        rate = f"{s['rate']:.0%}" if s["rate"] is not None else "not worked yet"
+        click.echo(f"#{lp['id']} {lp['title']}: {rate} verified ({s['verified']} verified, {s['failed']} failed, "
+                   f"{s['unworked']} unworked of {s['lead_count']}); "
+                   f"window {'open, ' + str(status['days_left']) + ' days left' if s['window_open'] else 'closed'}"
+                   f"{'' if s['window_open'] or not status['window']['claims_open'] else ' (claims still accepted)'}")
+        if s["claimable"]:
+            click.echo(f"  ! {s['claimable']} lead(s) claimable: agency-os packages claim --id {lp['id']} --email ...")
+
+
+@packages.command("claim")
+@click.option("--id", "lead_package_id", type=int, required=True, help="Unlocked package id (from packages verify)")
+@click.option("--email", required=True, help="The user filing the claim")
+@click.option("--yes", is_flag=True, help="Skip the confirmation prompt")
+@click.pass_context
+def packages_claim(ctx, lead_package_id, email, yes):
+    """File a guarantee claim with the provider for failed leads."""
+    from core import claims
+
+    db = _access_db(ctx)
+    row = db.get_user_by_email(email)
+    user = db.load_current_user(row["id"]) if row else None
+    if user is None or not user.can("packages.buy"):
+        _fail(AccessError(f"{email} can't file claims (needs the packages.buy permission)"))
+    status = claims.package_status(db, lead_package_id)
+    if status is None:
+        _fail(AccessError(f"No unlocked package #{lead_package_id}"))
+    if status["claim_problem"]:
+        _fail(AccessError(status["claim_problem"]))
+    if not yes:
+        click.confirm(f"Claim {status['summary']['claimable']} lead(s) from {status['lp']['provider']}?", abort=True)
+    result = claims.file_claim(db, lead_package_id, user)
     click.echo(result.message)
     if not result.ok:
         sys.exit(1)
@@ -762,3 +857,37 @@ def spend_allowance(ctx, email, usd):
 
 if __name__ == "__main__":
     cli()
+
+
+@spend.command("pending")
+@click.pass_context
+def spend_pending(ctx):
+    """Payments sent with no settlement read back. Check each onchain, then resolve it."""
+    from core.payments import atomic_to_usd
+
+    db = _access_db(ctx)
+    rows = db.pending_spend()
+    if not rows:
+        click.echo("No pending payments.")
+    for r in rows:
+        click.echo(f"  #{r['id']:<6} {r['kind']:<8} ${atomic_to_usd(r['amount_atomic']):,.2f}  "
+                   f"{r['campaign_name'] or '-'}  to {r['pay_to']} on {r['network']}  {r['created_at']}")
+        if r["error"]:
+            click.echo(f"          {r['error']}")
+
+
+@spend.command("resolve")
+@click.option("--id", "spend_id", type=int, required=True)
+@click.option("--status", type=click.Choice(["settled", "failed"]), required=True)
+@click.option("--tx", "tx_hash", default="", help="The onchain transaction hash (needed for settled)")
+@click.pass_context
+def spend_resolve(ctx, spend_id, status, tx_hash):
+    """Close a pending payment. 'failed' frees its budget and lets it be paid again."""
+    db = _access_db(ctx)
+    try:
+        resolved = db.resolve_spend(spend_id, status, tx_hash, actor=None)
+    except ValueError as exc:
+        _fail(AccessError(str(exc)))
+    if not resolved:
+        _fail(AccessError(f"Payment #{spend_id} isn't pending"))
+    click.echo(f"Payment #{spend_id} marked {status}")

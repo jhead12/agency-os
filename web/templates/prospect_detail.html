@@ -44,11 +44,20 @@
             <div class="detail-row"><span>Contact depth</span><span>{{ contact_tier|replace('_', ' ') }}</span></div>
             {% if lead_package %}
             <div class="detail-row"><span>Lead package</span><span>
-                {{ lead_package.package_id }} · seller's history: {{ (lead_package.tier or 'unworked')|replace('_', ' ') }}
+                {{ lead_package.title }} · seller's history: {{ (lead_package.tier or 'unworked')|replace('_', ' ') }}
                 {% if lead_package.claimed_tier and lead_package.claimed_tier != lead_package.tier %}(claimed {{ lead_package.claimed_tier|replace('_', ' ') }}){% endif %}
                 · royalty {{ (lead_package.royalty_atomic or 0)|usd }}
             </span></div>
             {% endif %}
+            <div class="detail-row"><span>Do not sell</span><span>
+                {% if do_not_sell %}<span class="badge badge-warning">Yes</span>{% else %}No{% endif %}
+                {% if user.can('prospects.edit') %}
+                <form method="post" action="/prospects/{{ prospect.id }}/do-not-sell" style="display: inline;">
+                    <input type="hidden" name="flag" value="{{ '0' if do_not_sell else '1' }}">
+                    <button type="submit" class="btn btn-secondary btn-sm">{{ 'Allow selling' if do_not_sell else 'Mark do not sell' }}</button>
+                </form>
+                {% endif %}
+            </span></div>
             {% for s in package_spend if user.can('spend.view') %}
             <div class="detail-row"><span>Paid ({{ s.kind }})</span><span>{{ s.amount_atomic|usd }}{% if s.tx_hash %} · <a href="{{ explorer_url(s.network, s.tx_hash) }}" target="_blank" rel="noopener">tx</a>{% endif %}</span></div>
             {% endfor %}
@@ -149,6 +158,9 @@
             <div class="form-row">
                 <label>Phone</label>
                 <input type="text" name="contact_phone" value="{{ o.contact_phone or '' }}" placeholder="(213) 555-0100">
+                {% if o.contact_phone|tel %}
+                <a href="{{ o.contact_phone|tel }}" class="btn btn-sm call-link" data-call-log="#log-call-{{ o.id }}">📞 Call {{ o.contact_name or prospect.name }}</a>
+                {% endif %}
             </div>
             <div class="form-row">
                 <label>Title</label>
@@ -157,9 +169,116 @@
             </fieldset>
             {% if user.can('prospects.edit') %}<button type="submit" class="btn btn-sm">Save Contact</button>{% endif %}
         </form>
+        {% if o.contact_email and user.can('prospects.edit') %}
+            {% if o.contact_email|lower in bounced %}
+            <div class="form-error" style="margin-top: 12px;">
+                <strong>Email bounced, find a new one.</strong> {{ o.contact_email }} bounced.
+                <form method="post" action="/prospects/{{ prospect.id }}/refresh-email" style="margin-top: 8px;">
+                    <input type="hidden" name="outreach_id" value="{{ o.id }}">
+                    <button type="submit" class="btn btn-sm">Find a new email</button>
+                </form>
+            </div>
+            {% else %}
+            <form method="post" action="/prospects/{{ prospect.id }}/contact-event" style="margin-top: 8px;">
+                <input type="hidden" name="outreach_id" value="{{ o.id }}">
+                <input type="hidden" name="kind" value="email_bounced">
+                <button type="submit" class="btn btn-secondary btn-sm">Mark email bounced</button>
+            </form>
+            {% endif %}
+        {% endif %}
         {% endfor %}
     </div>
 </div>
+
+{% if agent_panel %}
+<div class="detail-card full-width" id="agent-panel" data-prospect="{{ prospect.id }}">
+    <h3>Ask an agent <span class="ai-badge">AI beta</span></h3>
+    {% if not agent_panel.model %}
+    <p class="muted">No AI model is set up on this server yet. An owner can set <code>ANTHROPIC_API_KEY</code>, or point <code>AGENCY_OS_LLM</code> at a local model (see README).</p>
+    {% else %}
+    <form class="agent-form" id="agent-form" method="post" action="/prospects/{{ prospect.id }}/agent">
+        <div class="form-row">
+            <label for="agent-select">Agent</label>
+            <select id="agent-select" name="agent" class="filter-select">
+                {% for p in agent_panel.personas %}<option value="{{ p.key }}" data-tasks="{{ p.tasks|join(',') }}" title="{{ p.description }}">{{ p.emoji }} {{ p.name }}</option>{% endfor %}
+            </select>
+        </div>
+        <div class="form-row">
+            <label for="agent-task">Task</label>
+            <select id="agent-task" name="task" class="filter-select">
+                {% for key, t in agent_panel.tasks.items() %}<option value="{{ key }}">{{ t[0] }}</option>{% endfor %}
+            </select>
+        </div>
+        <textarea name="instructions" rows="2" maxlength="2000" class="filter-input" placeholder="Anything to add? e.g. mention their board meeting next month" aria-label="Extra instructions"></textarea>
+        <div><button type="submit" class="btn">Draft</button></div>
+    </form>
+    <p class="muted" style="margin-top: 8px;">Uses {{ agent_panel.model }}. Drafts only; nothing is sent.</p>
+    <div id="agent-result" hidden>
+        <div class="agent-output" id="agent-output" aria-live="polite"></div>
+        <div class="agent-actions">
+            <button type="button" class="btn btn-secondary btn-sm" id="agent-copy">Copy</button>
+            {% if user.can('prospects.edit') %}<button type="button" class="btn btn-secondary btn-sm" id="agent-save">Save as note</button>{% endif %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
+{% if credit is not none %}
+<div class="detail-card full-width">
+    <h3>Who built this lead</h3>
+    <p class="muted">If this lead is sold as part of a package, these reps share its royalties: found the contact 50%, reached the decision-maker 30%, sourced it 20%.</p>
+    {% for c in credit %}
+    <div class="detail-row">
+        <span>{{ c.name }} · {{ credit_labels[c.task] }}<br><span class="muted">{{ 'from our records' if c.source == 'auto' else 'set by an owner' }}{% if not c.active %} · removed{% endif %}</span></span>
+        <span>
+            <form method="post" action="/prospects/{{ prospect.id }}/credit" style="display: inline;">
+                <input type="hidden" name="user_id" value="{{ c.user_id }}"><input type="hidden" name="task" value="{{ c.task }}">
+                <input type="hidden" name="active" value="{{ '0' if c.active else '1' }}">
+                <button type="submit" class="btn btn-secondary btn-sm">{{ 'Remove' if c.active else 'Restore' }}</button>
+            </form>
+        </span>
+    </div>
+    {% else %}
+    <p class="muted">No credit yet.</p>
+    {% endfor %}
+    <form method="post" action="/prospects/{{ prospect.id }}/credit" style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px;">
+        <select name="user_id" class="filter-select" aria-label="Rep">{% for u in team %}<option value="{{ u.id }}">{{ u.name }}</option>{% endfor %}</select>
+        <select name="task" class="filter-select" aria-label="What they did">{% for key, label in credit_labels.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select>
+        <button type="submit" class="btn btn-secondary btn-sm">Give credit</button>
+    </form>
+</div>
+{% endif %}
+
+{% if verification %}
+{% set v = verification %}
+<div class="detail-card full-width">
+    <h3>Package guarantee</h3>
+    <div class="detail-row"><span>Status</span><span>
+        <span class="badge {% if v.status == 'verified' %}badge-success{% elif v.status == 'failed' %}badge-warning{% endif %}">{{ v.status }}</span>
+        · score {{ v.score }} (fails at 1.0){% if v.claim_id %} · in claim #{{ v.claim_id }}{% endif %}
+    </span></div>
+    {% for sig in v.signals %}
+    <div class="detail-row"><span class="{% if sig.weight > 0 %}text-warning{% elif sig.weight < 0 %}text-success{% else %}muted{% endif %}">{{ sig.label }}</span><span>{{ '%+.2f'|format(sig.weight) }}</span></div>
+    {% else %}
+    <p class="muted">No evidence yet. Calls, bounces and returned mail you record here count toward the package's 90% guarantee.</p>
+    {% endfor %}
+    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px;">
+        {% if user.can('spend.view') %}<a href="/lead-packages/unlocked/{{ lead_package.lead_package_id }}" class="btn btn-secondary btn-sm">Package guarantee</a>{% endif %}
+        {% if user.can('prospects.edit') and outreach_rows %}
+        <form method="post" action="/prospects/{{ prospect.id }}/contact-event">
+            <input type="hidden" name="outreach_id" value="{{ outreach_rows[0].id }}">
+            <input type="hidden" name="kind" value="mail_returned">
+            <button type="submit" class="btn btn-secondary btn-sm">Mark mail returned</button>
+        </form>
+        <form method="post" action="/prospects/{{ prospect.id }}/refresh-email">
+            <input type="hidden" name="outreach_id" value="{{ outreach_rows[0].id }}">
+            <button type="submit" class="btn btn-secondary btn-sm">Compare with enrichers</button>
+        </form>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
 
 {% if portal_available or portal %}
 {% set status_labels = {
@@ -216,6 +335,7 @@
 {% if email_logs %}
 <div class="detail-card full-width">
     <h3>Email History</h3>
+    <div class="table-scroll">
     <table class="data-table compact">
         <thead>
             <tr><th>Date</th><th>Template</th><th>Subject</th><th>Status</th><th>Campaign</th><th></th></tr>
@@ -247,6 +367,7 @@
             {% endfor %}
         </tbody>
     </table>
+    </div>
 </div>
 <script>
 function toggleEmail(id) {
@@ -268,7 +389,7 @@ function toggleEmail(id) {
 <div class="detail-card full-width">
     <h3>📞 Log a Call</h3>
     {% for o in outreach_rows %}
-    <form method="post" action="/call-log/record" class="call-log-form">
+    <form method="post" action="/call-log/record" class="call-log-form" id="log-call-{{ o.id }}">
         <input type="hidden" name="prospect_id" value="{{ prospect.id }}">
         <input type="hidden" name="outreach_id" value="{{ o.id }}">
         <input type="hidden" name="campaign_id" value="{{ o.campaign_id }}">
@@ -346,6 +467,7 @@ function toggleEmail(id) {
 {% if call_history %}
 <div class="detail-card full-width">
     <h3>📞 Call History ({{ call_history|length }})</h3>
+    <div class="table-scroll">
     <table class="data-table compact">
         <thead>
             <tr>
@@ -378,6 +500,7 @@ function toggleEmail(id) {
             {% endfor %}
         </tbody>
     </table>
+    </div>
 </div>
 {% endif %}
 

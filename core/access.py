@@ -17,10 +17,16 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import os
 import secrets
 from dataclasses import dataclass, field
 
 OWNER_ROLE = "Owner"
+
+
+def ai_allowed() -> bool:
+    """Owner-wide kill switch: AGENCY_OS_AI=off hides every AI feature for everyone."""
+    return os.environ.get("AGENCY_OS_AI", "").strip().lower() not in ("off", "0", "false", "no")
 
 
 class AccessError(ValueError):
@@ -45,6 +51,10 @@ CATALOG: dict[str, str] = {
     "packages.view": "Browse x402 lead packages from approved providers",
     "packages.buy": "Unlock lead packages into a campaign (spends USDC, within your allowance)",
     "spend.view": "View lead-package spending and payment receipts",
+    "agents.use": "Run the built-in AI agents (drafts only; nothing is sent)",
+    "ai.connect": "Connect your own AI assistant to agency-os (WebMCP)",
+    "packages.sell": "Publish our own lists as lead packages, and handle buyers' claims and refunds",
+    "royalties.view_own": "See your own data royalties and set where they're paid",
 }
 
 # Starter roles are created once if missing. Owners may edit or delete them
@@ -53,14 +63,14 @@ STARTER_ROLES: dict[str, tuple[str, list[str]]] = {
     "Caller": (
         "Works the phones: views prospects and scripts, logs calls, moves stages",
         ["dashboard.view", "prospects.view", "pipeline.edit",
-         "calls.view", "calls.log", "calendar.view"],
+         "calls.view", "calls.log", "calendar.view", "royalties.view_own"],
     ),
     "Sales Rep": (
         "Caller access plus editing prospects and reading sent email",
         ["dashboard.view", "prospects.view", "prospects.export", "prospects.edit",
          "pipeline.edit", "calls.view", "calls.log", "calendar.view",
          "campaigns.view", "emails.view", "templates.view", "portals.manage",
-         "packages.view", "spend.view"],
+         "packages.view", "spend.view", "agents.use", "ai.connect", "royalties.view_own"],
     ),
     "Template Editor": (
         "Writes and edits outreach email templates",
@@ -88,6 +98,29 @@ ROUTE_RULES: dict[str, str] = {
     "POST /logout": ANY_USER,
     "GET /account": ANY_USER,
     "POST /account/password": ANY_USER,
+    "POST /account/ai": ANY_USER,
+    "POST /account/tokens": ANY_USER,
+    "POST /account/tokens/{token_id}/revoke": ANY_USER,
+    "GET /oauth/consent": ANY_USER,
+    "POST /oauth/consent": ANY_USER,
+    # Provider webhooks: no login; each checks a signature or a secret key (core/evidence.py).
+    "POST /webhooks/lob": PUBLIC,
+    "POST /webhooks/smartlead": PUBLIC,
+    "POST /webhooks/bounce": PUBLIC,
+    # Selling: the x402 provider endpoints are public; payment or a claim token authorizes them.
+    "GET /x402/packages": PUBLIC,
+    "GET /x402/packages/{slug}/leads": PUBLIC,
+    "POST /x402/packages/{slug}/contacts": PUBLIC,
+    "POST /x402/packages/{slug}/claims": PUBLIC,
+    "GET /admin/selling": "packages.sell",
+    "POST /admin/selling/publish": "packages.sell",
+    "POST /admin/selling/{package_id}/active": "packages.sell",
+    "POST /admin/selling/claims/{claim_id}/refund": "packages.sell",
+    "POST /prospects/{prospect_id}/do-not-sell": "prospects.edit",
+    "POST /prospects/{prospect_id}/credit": "packages.sell",
+    "POST /account/payout-address": "royalties.view_own",
+    "GET /admin/payouts": OWNER,
+    "POST /admin/payouts/{user_id}": OWNER,
     "GET /welcome/{token}": PUBLIC,   # one-time link; the token is the credential
     "POST /welcome/{token}": PUBLIC,
 
@@ -134,7 +167,17 @@ ROUTE_RULES: dict[str, str] = {
     "POST /mail-templates/save": "templates.edit",
     "GET /mail-templates/preview/{script_idx}": "templates.view",
     "GET /lead-packages": "packages.view",
+    "GET /lead-packages/review": "packages.buy",
     "POST /lead-packages/unlock": "packages.buy",
+    "GET /lead-packages/unlocked/{lead_package_id}": "spend.view",
+    "POST /lead-packages/unlocked/{lead_package_id}/verify": "packages.buy",
+    "POST /lead-packages/unlocked/{lead_package_id}/claim": "packages.buy",
+    "POST /prospects/{prospect_id}/contact-event": "prospects.edit",
+    "POST /prospects/{prospect_id}/refresh-email": "prospects.edit",
+    "POST /prospects/{prospect_id}/agent": "agents.use",
+    "POST /prospects/{prospect_id}/agent/note": "agents.use",
+    "GET /api/tools": "ai.connect",
+    "POST /api/tools/{tool_name}": "ai.connect",
 }
 
 # Pages in nav order — used to pick a landing page the user can actually open.
@@ -159,6 +202,7 @@ class CurrentUser:
     name: str
     roles: tuple[str, ...] = ()
     permissions: frozenset[str] = field(default_factory=frozenset)
+    ai_enabled: bool = False  # the user opted in to AI features (Account page)
 
     @property
     def is_owner(self) -> bool:
@@ -173,6 +217,14 @@ class CurrentUser:
         if permission not in CATALOG:
             return False
         return self.is_owner or permission in self.permissions
+
+    def uses_ai(self, permission: str) -> bool:
+        """An AI feature is on for this user: allowed on the server, opted in, and permitted.
+
+        Every AI surface checks this, so users who haven't opted in see the
+        app exactly as it was.
+        """
+        return ai_allowed() and self.ai_enabled and self.can(permission)
 
     def allows(self, rule: str) -> bool:
         """Evaluate a ROUTE_RULES value for this user."""

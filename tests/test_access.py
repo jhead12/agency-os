@@ -71,11 +71,15 @@ def test_unmapped_route_is_denied_even_for_owner(db):
     async def _unmapped():
         return {"leak": True}
 
+    # Like every real route, it must sit before the catch-all MCP mount at "/".
+    routes = webapp.app.router.routes
+    route = routes.pop()
+    routes.insert(len(routes) - 1, route)
     try:
         make_user(db, "owner@x.com", access.OWNER_ROLE)
         assert client_for("owner@x.com").get("/__unmapped_test_route").status_code == 403
     finally:
-        webapp.app.router.routes.pop()
+        routes.remove(route)
 
 
 # ── Authentication ─────────────────────────────────────────────────────

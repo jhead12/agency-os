@@ -7,7 +7,11 @@ import os
 # Ensure the project root is on the path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from core.cli import cli
+from core.env import load_dotenv
+
+load_dotenv()  # .env settings (DATABASE_URL, API keys); the shell's own values win
+
+from core.cli import cli  # noqa: E402
 
 if __name__ == "__main__":
     cli()

@@ -6,12 +6,16 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY requirements.txt requirements-payments.txt ./
+COPY requirements.txt requirements-payments.txt requirements-ai.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 # x402 lead-package payments pull in web3/solana, so they're opt-in.
 ARG WITH_PAYMENTS=0
 RUN if [ "$WITH_PAYMENTS" = "1" ]; then pip install --no-cache-dir -r requirements-payments.txt; fi
+
+# The Claude SDK for the AI features; a local model needs nothing extra.
+ARG WITH_AI=0
+RUN if [ "$WITH_AI" = "1" ]; then pip install --no-cache-dir -r requirements-ai.txt; fi
 
 COPY . .
 

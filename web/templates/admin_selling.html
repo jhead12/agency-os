@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% block title %}Sell Lead Packages — agency-os{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Sell lead packages</h1>
+    <p class="subtitle">Publish a saved prospect list as an x402 lead package. Buyers pay in USDC to unlock it, then pay each lead's royalty when they first contact it. Every package carries the 90% guarantee.</p>
+</div>
+
+{% if msg %}<div class="save-notice">{{ msg }}</div>{% endif %}
+{% if error %}<div class="form-error">{{ error }}</div>{% endif %}
+
+<div class="detail-grid">
+    <div class="detail-card">
+        <h3>Store status</h3>
+        {% if problem %}
+        <div class="form-error">{{ problem }}. You can publish now; buyers can't see or buy anything until this is fixed.</div>
+        {% else %}
+        <div class="detail-row"><span>Status</span><span><span class="badge badge-success">Open</span></span></div>
+        {% endif %}
+        <div class="detail-row"><span>Network</span><span>{{ network }}</span></div>
+        <div class="detail-row"><span>Payments go to</span><span><code>{{ pay_to or 'not set' }}</code></span></div>
+        <div class="detail-row"><span>Provider address for buyers</span><span><code>{{ catalog_url }}</code></span></div>
+        <p class="muted" style="margin-top: 12px;">Another agency-os buys from you by adding that address to its <code>AGENCY_OS_LEAD_PROVIDERS</code>.</p>
+    </div>
+
+    <div class="detail-card">
+        <h3>Before you sell</h3>
+        <p class="muted">Selling contact data can make you a California data broker under the Delete Act, which means registering and honoring deletion requests. Mark anyone who asks with <strong>Mark do not sell</strong> on their prospect page; they're never published, sold or used as a replacement. Keep a consent note on each package. Buyers still follow CAN-SPAM and the TCPA.</p>
+    </div>
+</div>
+
+<div class="campaign-section">
+    <div class="campaign-header"><h2>Publish a saved list</h2></div>
+    {% if not saved_lists %}
+    <p class="muted">You have no saved lists. Filter the <a href="/prospects">Prospects</a> page and save the view as a list first.</p>
+    {% else %}
+    <form method="post" action="/admin/selling/publish" class="stack-form">
+        <div class="form-grid">
+            <div class="form-field"><label for="saved_list_id">Saved list</label>
+                <select id="saved_list_id" name="saved_list_id" class="filter-select" required>
+                    {% for l in saved_lists %}<option value="{{ l.id }}" {% if form.saved_list_id == l.id|string %}selected{% endif %}>{{ l.name }}</option>{% endfor %}
+                </select></div>
+            <div class="form-field"><label for="guarantee_tier">Guarantee: 90% of leads at least</label>
+                <select id="guarantee_tier" name="guarantee_tier" class="filter-select" required>
+                    {% for t in tiers %}<option value="{{ t }}" {% if (form.guarantee_tier or 'phone_verified') == t %}selected{% endif %}>{{ t|replace('_', ' ') }}</option>{% endfor %}
+                </select></div>
+            <div class="form-field"><label for="title">Title</label>
+                <input type="text" id="title" name="title" maxlength="200" value="{{ form.title or '' }}" placeholder="LA civic nonprofits, phone verified"></div>
+            <div class="form-field"><label for="industry">Industry</label>
+                <input type="text" id="industry" name="industry" maxlength="100" value="{{ form.industry or '' }}"></div>
+            <div class="form-field"><label for="region">Region</label>
+                <input type="text" id="region" name="region" maxlength="100" value="{{ form.region or '' }}"></div>
+            <div class="form-field"><label for="unlock_usd">Unlock price ($)</label>
+                <input type="number" id="unlock_usd" name="unlock_usd" min="0" step="0.01" value="{{ form.unlock_usd or '' }}"></div>
+            {% for t in tiers %}
+            <div class="form-field"><label for="royalty_{{ t }}">Royalty per contact, {{ t|replace('_', ' ') }} ($)</label>
+                <input type="number" id="royalty_{{ t }}" name="royalty_{{ t }}" min="0" step="0.01" value="{{ form['royalty_' ~ t] or '' }}"></div>
+            {% endfor %}
+            <div class="form-field"><label for="window_days">Verification window (days)</label>
+                <input type="number" id="window_days" name="window_days" min="7" max="120" value="{{ form.window_days or 30 }}"></div>
+            <div class="form-field"><label for="claim_days">Days after it to claim</label>
+                <input type="number" id="claim_days" name="claim_days" min="0" max="30" value="{{ form.claim_days or 7 }}"></div>
+            <div class="form-field"><label for="contributor_pool_pct">Share for the reps who built the leads (%)</label>
+                <input type="number" id="contributor_pool_pct" name="contributor_pool_pct" min="0" max="100" value="{{ form.contributor_pool_pct or 20 }}"></div>
+        </div>
+        <label>Consent and sourcing note (shown to buyers)
+            <input type="text" name="consent_note" maxlength="500" value="{{ form.consent_note or '' }}" class="filter-input" placeholder="Public records; contacted by phone and mail in 2026">
+        </label>
+        <label class="check-label"><input type="checkbox" name="sms_consent" value="1" {% if form.sms_consent %}checked{% endif %}> These contacts agreed to receive texts</label>
+
+        {% if preview %}
+        <div class="save-notice">
+            <strong>{{ preview.eligible }} of {{ preview.matched }} prospects in "{{ preview.list }}" qualify</strong>
+            {% if preview.rate is not none %}({{ (preview.rate * 100)|round|int }}%){% endif %}.
+            Only leads with a contact on file, no bounced email, and our own contact history at or above the guarantee go in.
+            {% if preview.tier_mix %}<br>Contact depth: {% for t, n in preview.tier_mix.items() %}{{ n }} {{ t|replace('_', ' ') }}{% if not loop.last %} · {% endif %}{% endfor %}{% endif %}
+        </div>
+        <label class="check-label"><input type="checkbox" name="confirm" value="yes"> Publish {{ preview.eligible }} leads and offer them for sale</label>
+        {% endif %}
+        <div style="display: flex; gap: 8px;">
+            <button type="submit" name="action" value="preview" class="btn btn-secondary">Check the list</button>
+            {% if preview and preview.eligible %}<button type="submit" name="action" value="publish" class="btn">Publish</button>{% endif %}
+        </div>
+    </form>
+    {% endif %}
+</div>
+
+{% if packages %}
+<div class="campaign-section">
+    <div class="campaign-header"><h2>Your packages</h2></div>
+    <div class="table-scroll">
+    <table class="data-table">
+        <thead><tr><th>Package</th><th>Leads</th><th>Sales</th><th>Income</th><th></th></tr></thead>
+        <tbody>
+        {% for p in packages %}
+        <tr>
+            <td><strong>{{ p.title }}</strong><br><span class="subtitle">{{ p.slug }} · 90% {{ p.guarantee_tier|replace('_', ' ') }} · unlock {{ p.unlock_price_atomic|usd }}</span></td>
+            <td>{{ p.leads }}</td>
+            <td>{{ p.sales }}</td>
+            <td>{{ (p.unlock_income + p.royalty_income)|usd }}<br><span class="subtitle">royalties {{ p.royalty_income|usd }}</span></td>
+            <td>
+                <form method="post" action="/admin/selling/{{ p.id }}/active">
+                    <input type="hidden" name="active" value="{{ '0' if p.active else '1' }}">
+                    <button type="submit" class="btn btn-secondary btn-sm">{{ 'Withdraw' if p.active else 'List again' }}</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% endif %}
+
+{% if claims %}
+<div class="campaign-section">
+    <div class="campaign-header"><h2>Buyers' claims</h2></div>
+    <div class="table-scroll">
+    <table class="data-table">
+        <thead><tr><th>Claim</th><th>Outcome</th><th>Refund</th></tr></thead>
+        <tbody>
+        {% for c in claims %}
+        <tr>
+            <td><strong>{{ c.title }}</strong><br><span class="subtitle">#{{ c.id }} · {{ c.created_at|fmt_date }} · {{ c.shortfall }} short · buyer {{ c.payer[:10] }}…</span></td>
+            <td><span class="badge {% if c.status in ['replaced', 'refunded'] %}badge-success{% elif c.status in ['review', 'partial'] %}badge-warning{% endif %}">{{ c.status }}</span>
+                {% if c.replacement_count %}<br><span class="subtitle">{{ c.replacement_count }} replacement leads</span>{% endif %}
+                {% if c.reason %}<br><span class="subtitle">{{ c.reason }}</span>{% endif %}</td>
+            <td>
+                {% if c.status in ['review', 'partial'] %}
+                <form method="post" action="/admin/selling/claims/{{ c.id }}/refund" class="stack-form">
+                    <input type="number" name="amount_usd" min="0" step="0.01" placeholder="Amount ($)" class="filter-input" aria-label="Refund amount">
+                    <input type="text" name="tx_hash" placeholder="Refund transaction 0x…" class="filter-input" aria-label="Refund transaction hash">
+                    <button type="submit" class="btn btn-sm">Record refund</button>
+                </form>
+                {% elif c.refund_tx %}{{ c.refund_atomic|usd }} · <a href="{{ explorer_url(c.network if c.network else '', c.refund_tx) }}" target="_blank" rel="noopener">tx</a>
+                {% else %}—{% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

@@ -28,6 +28,7 @@ import tempfile
 import time
 from collections import defaultdict
 from contextlib import asynccontextmanager
+from typing import Optional
 from pathlib import Path
 from datetime import datetime, timezone
 from urllib.parse import quote, urlsplit, urlencode
@@ -35,6 +36,10 @@ from urllib.parse import quote, urlsplit, urlencode
 # Ensure project root is on path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+
+from core.env import load_dotenv  # noqa: E402
+
+load_dotenv()  # .env settings for local runs; a deploy's own environment always wins
 
 from fastapi import FastAPI, Request, Query, HTTPException, Form, Depends, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
@@ -49,7 +54,12 @@ from core.registry import PluginRegistry
 from core.pipeline import Pipeline
 from plugins.channels.lob_direct_mail import TEMPLATE_ID_RE, lob_template_url
 from core.jobs import JobRunner, configured_jobs, jobs_enabled
-from core import contact_depth, lead_packages, payments
+from core import (
+    agents, claims, contact_depth, evidence, lead_packages, llm, mcp_auth, payments, royalties, selling, tools,
+    verify,
+)
+from core.welcome import base_url as public_base_url
+from web.mcp_server import MCPMount
 from starlette.concurrency import run_in_threadpool
 
 # ── Init ────────────────────────────────────────────────────────────
@@ -75,6 +85,9 @@ def get_campaigns():
     return discover_campaigns(str(CAMPAIGNS_DIR))
 
 
+tools.campaign_source = lambda: get_campaigns()  # the AI tools read campaigns through the web app's cache
+
+
 def _invalidate_campaign_cache():
     """Force get_campaigns() to re-sync from the database on next call."""
     global _campaigns_synced
@@ -91,12 +104,21 @@ def get_job_runner() -> JobRunner:
     return JobRunner(get_db().url, str(PROJECT_ROOT / "plugins"), get_campaigns)
 
 
+def site_url() -> str:
+    """This server's public URL: AGENCY_OS_BASE_URL, Railway's domain, or the local port."""
+    return public_base_url() or f"http://127.0.0.1:{os.environ.get('PORT', '8000')}"
+
+
+mcp_mount = MCPMount(lambda: get_db(), site_url)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     bootstrap_access()
     # Background jobs (core/jobs.py): on for the deployed service only.
     task = asyncio.create_task(get_job_runner().loop()) if jobs_enabled() else None
-    yield
+    async with mcp_mount.running():  # the MCP server (/mcp) and its OAuth endpoints
+        yield
     if task:
         task.cancel()
 
@@ -208,6 +230,24 @@ def fmt_currency(val) -> str:
     return f"${val}"
 
 
+def tel_href(phone) -> str:
+    """A tel: link for a stored phone number, or "" if it isn't dialable.
+
+    US numbers get +1 (10 digits, or 11 starting with 1); numbers written with a
+    leading + keep their country code. Opening the link hands the call to the
+    device: the phone app on mobile, "Call from iPhone" on a Mac, Phone Link on Windows.
+    """
+    raw = str(phone or "").strip()
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    if raw.startswith("+") and 8 <= len(digits) <= 15:
+        return f"tel:+{digits}"
+    if len(digits) == 10:
+        return f"tel:+1{digits}"
+    if len(digits) == 11 and digits.startswith("1"):
+        return f"tel:+{digits}"
+    return ""
+
+
 def fmt_date(val) -> str:
     if not val:
         return "—"
@@ -225,12 +265,14 @@ def nav_active(path: str) -> str:
         return "dashboard"
     parts = path.strip("/").split("/")
     if parts[0] == "admin":
-        return "admin-campaigns" if parts[1:2] == ["campaigns"] else "admin"
+        return {"campaigns": "admin-campaigns", "selling": "admin-selling", "payouts": "admin-payouts"}.get(
+            parts[1] if len(parts) > 1 else "", "admin")
     return parts[0]
 
 
 templates.env.filters["currency"] = fmt_currency
 templates.env.filters["fmt_date"] = fmt_date
+templates.env.filters["tel"] = tel_href
 templates.env.globals["nav_active"] = nav_active
 templates.env.globals["CALL_OUTCOMES"] = contact_depth.CALL_OUTCOMES
 
@@ -313,40 +355,8 @@ async def prospect_list(
     campaigns = get_campaigns()
     campaign_map = {c.db_name: c for c in campaigns}
 
-    # Build query — search across multiple fields
-    where_parts = []
-    params = []
-
-    if q:
-        where_parts.append(
-            "(p.name ILIKE ? OR p.city ILIKE ? OR p.ein ILIKE ? "
-            "OR p.zip ILIKE ? OR p.focus_area ILIKE ? OR p.website_url ILIKE ? "
-            "OR p.county ILIKE ? OR p.ntee_code ILIKE ?)"
-        )
-        params.extend([f"%{q}%"] * 8)
-
-    if source:
-        where_parts.append("p.source = ?")
-        params.append(source)
-
-    if stage:
-        where_parts.append("o.stage = ?")
-        params.append(stage)
-
-    # Campaign filter — only show prospects in the selected campaign
-    if campaign:
-        where_parts.append("o.campaign_id = (SELECT id FROM campaigns WHERE name = ?)")
-        params.append(campaign)
-
-    # City filter — supports multiple cities (comma-separated)
-    if cities:
-        city_list = [c.strip() for c in cities.split(",") if c.strip()]
-        if city_list:
-            placeholders = ",".join("?" * len(city_list))
-            where_parts.append(f"p.city IN ({placeholders})")
-            params.extend(city_list)
-
-    where_clause = " AND ".join(where_parts) if where_parts else "1=1"
+    where_clause, params = db.prospect_filter(
+        {"q": q, "source": source, "stage": stage, "campaign": campaign, "cities": cities})
 
     # Count total
     count_sql = f"""
@@ -1089,6 +1099,7 @@ async def record_call(
         voicemail_left=bool(voicemail_left),
         notes=notes or None,
         called_by=current_user(request).name,
+        called_by_user_id=current_user(request).id,
     )
     db.log_call(call)
     return RedirectResponse(url=f"/prospects/{prospect_id}", status_code=303)
@@ -1259,9 +1270,22 @@ async def prospect_detail(request: Request, prospect_id: int):
         key=lambda e: e.get("timestamp", ""), reverse=True,
     )
 
+    lead_package = lead_packages.package_info(prospect)
+    if lead_package:
+        row = db.get_lead_package(int(lead_package["lead_package_id"]))
+        lead_package = {**lead_package, "title": row["title"] if row else lead_package.get("package_id")}
     return templates.TemplateResponse(request, "prospect_detail.html", {
         "contact_tier": contact_depth.history_for_prospect(db, prospect_id)[1],
-        "lead_package": lead_packages.package_info(prospect),
+        "lead_package": lead_package,
+        "verification": verify.lead_verdict(db, prospect_id) if lead_package else None,
+        "credit": royalties.credits(db, prospect_id) if current_user(request).can("packages.sell") else None,
+        "credit_labels": royalties.TASK_LABELS,
+        "team": [u for u in db.list_users() if u.get("is_active")] if current_user(request).can("packages.sell") else [],
+        "do_not_sell": bool(db.conn.execute("SELECT do_not_sell FROM prospects WHERE id = ?",
+                                            (prospect_id,)).fetchone()["do_not_sell"]),
+        "agent_panel": {"personas": list(agents.load_personas().values()), "tasks": agents.TASKS,
+                        "model": llm.describe()} if current_user(request).uses_ai("agents.use") else None,
+        "bounced": verify.bounced_emails(db, prospect_id),
         "package_spend": db.prospect_spend(prospect_id),
         "portal": (prospect.metadata or {}).get("u9itus") or {},
         "portal_link": next((r["demo_link"] for r in outreach_rows if r["demo_link"]), None),
@@ -1464,6 +1488,8 @@ def _usd(atomic) -> str:
 
 templates.env.filters["usd"] = _usd
 templates.env.globals["explorer_url"] = payments.explorer_url
+templates.env.globals["WEIGHT_LABELS"] = verify.WEIGHT_LABELS
+templates.env.globals["UNWORKED_POLICIES"] = verify.UNWORKED_POLICIES
 
 
 @app.get("/lead-packages", response_class=HTMLResponse)
@@ -1477,6 +1503,8 @@ async def lead_packages_page(request: Request, msg: str = Query(default=""), err
         catalogs.append({"provider": provider, "packages": packages, "error": problem})
     buyable = [c for c in get_campaigns() if (c.lead_packages or {}).get("enabled")]
     return templates.TemplateResponse(request, "lead_packages.html", {
+        "ratings": claims.ratings(db),
+        "active": "lead-packages",
         "catalogs": catalogs,
         "campaigns": buyable,
         "unlocked": db.list_lead_packages() if user.can("spend.view") else [],
@@ -1484,6 +1512,39 @@ async def lead_packages_page(request: Request, msg: str = Query(default=""), err
         "allowance": db.spend_allowance(user.id),
         "msg": msg,
         "error": error,
+    })
+
+
+def _package_campaign(provider: str, campaign: str):
+    """(campaign config, campaign id, error) for buying from `provider` into `campaign`."""
+    if provider not in lead_packages.configured_providers():
+        return None, None, "That provider isn't on the approved list."
+    config = next((c for c in get_campaigns() if c.db_name == campaign), None)
+    if config is None or not (config.lead_packages or {}).get("enabled"):
+        return None, None, "Pick a campaign that has lead packages turned on."
+    db = get_db()
+    campaign_id = db.get_campaign_id(config.db_name) or db.upsert_campaign(
+        config.db_name, str(config.config_dir / "campaign.yaml"))
+    return config, campaign_id, ""
+
+
+@app.get("/lead-packages/review", response_class=HTMLResponse)
+async def lead_package_review(request: Request, provider: str = Query(...), package_id: str = Query(...),
+                              campaign: str = Query(...)):
+    """The confirm screen: what the unlock costs and what's left to spend. Never pays."""
+    config, campaign_id, error = _package_campaign(provider, campaign)
+    if error:
+        return _back("/lead-packages", error=error)
+    package, problem = await run_in_threadpool(lead_packages.find_package, provider, package_id)
+    if package is None:
+        return _back("/lead-packages", error=problem)
+    preview = lead_packages.preview_unlock(get_db(), config, campaign_id, current_user(request), package)
+    return templates.TemplateResponse(request, "lead_package_review.html", {
+        "active": "lead-packages",
+        "preview": preview,
+        "campaign": config,
+        "network_name": {payments.BASE_SEPOLIA: "Base Sepolia (test USDC)",
+                         payments.BASE_MAINNET: "Base (real USDC)"}.get(package.network, package.network),
     })
 
 
@@ -1499,14 +1560,10 @@ async def lead_package_unlock(
     user = current_user(request)
     if confirm != "yes":
         return _back("/lead-packages", error="Tick the box to approve the payment.")
-    if provider not in lead_packages.configured_providers():
-        return _back("/lead-packages", error="That provider isn't on the approved list.")
-    config = next((c for c in get_campaigns() if c.db_name == campaign), None)
-    if config is None or not (config.lead_packages or {}).get("enabled"):
-        return _back("/lead-packages", error="Pick a campaign that has lead packages turned on.")
+    config, campaign_id, error = _package_campaign(provider, campaign)
+    if error:
+        return _back("/lead-packages", error=error)
     db = get_db()
-    campaign_id = db.get_campaign_id(config.db_name) or db.upsert_campaign(
-        config.db_name, str(config.config_dir / "campaign.yaml"))
 
     def run():
         package, problem = lead_packages.find_package(provider, package_id)
@@ -1518,6 +1575,347 @@ async def lead_package_unlock(
     if result.ok:
         return _back("/lead-packages", msg=result.message)
     return _back("/lead-packages", error=result.message)
+
+
+@app.get("/lead-packages/unlocked/{lead_package_id}", response_class=HTMLResponse)
+async def lead_package_detail(request: Request, lead_package_id: int,
+                              msg: str = Query(default=""), error: str = Query(default="")):
+    """An unlocked package's guarantee: each lead's verdict, the measured rate, claims."""
+    status = await run_in_threadpool(claims.package_status, get_db(), lead_package_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Package not found")
+    return templates.TemplateResponse(request, "lead_package_detail.html", {
+        "active": "lead-packages", **status, "msg": msg, "error": error,
+        "ai_review": verify.default_reviewer().is_configured(),
+    })
+
+
+@app.post("/lead-packages/unlocked/{lead_package_id}/verify")
+async def lead_package_verify(request: Request, lead_package_id: int):
+    """Re-check every lead now, including the AI review when it's turned on."""
+    db = get_db()
+    if db.get_lead_package(lead_package_id) is None:
+        raise HTTPException(status_code=404, detail="Package not found")
+    await run_in_threadpool(verify.evaluate_package, db, lead_package_id, reviewer=verify.default_reviewer())
+    db.audit(current_user(request), "lead_package.verify", "lead_package", lead_package_id, {})
+    return _back(f"/lead-packages/unlocked/{lead_package_id}", msg="Leads re-checked.")
+
+
+@app.post("/lead-packages/unlocked/{lead_package_id}/claim")
+async def lead_package_claim(request: Request, lead_package_id: int, confirm: str = Form(default="")):
+    """File a guarantee claim with the provider. Needs an explicit confirm."""
+    back = f"/lead-packages/unlocked/{lead_package_id}"
+    if confirm != "yes":
+        return _back(back, error="Tick the box to file the claim.")
+    result = await run_in_threadpool(claims.file_claim, get_db(), lead_package_id, current_user(request))
+    return _back(back, msg=result.message) if result.ok else _back(back, error=result.message)
+
+
+@app.post("/prospects/{prospect_id}/contact-event")
+async def prospect_contact_event(request: Request, prospect_id: int, kind: str = Form(...),
+                                 outreach_id: int = Form(...)):
+    """Record a bounce or returned mail against the contact we have on file."""
+    db = get_db()
+    row = db.conn.execute("SELECT * FROM outreach WHERE id = ? AND prospect_id = ?",
+                          (outreach_id, prospect_id)).fetchone()
+    if row is None or kind not in ("email_bounced", "mail_returned"):
+        return _back(f"/prospects/{prospect_id}", error="Unknown contact or event.")
+    value = row["contact_email"] if kind == "email_bounced" else (db.get_prospect(prospect_id).address or "")
+    if kind == "email_bounced" and not value:
+        return _back(f"/prospects/{prospect_id}", error="There's no email on file to mark as bounced.")
+    verify.record_event(db, prospect_id, kind, value or "", campaign_id=row["campaign_id"],
+                        user=current_user(request))
+    return _back(f"/prospects/{prospect_id}", msg=f"{verify.EVENT_KINDS[kind]}: recorded.")
+
+
+@app.post("/prospects/{prospect_id}/refresh-email")
+async def prospect_refresh_email(request: Request, prospect_id: int, outreach_id: int = Form(...)):
+    """Run the campaign's enrichers to find a new email and compare with the package's."""
+    db = get_db()
+    prospect = db.get_prospect(prospect_id)
+    row = db.conn.execute(
+        """SELECT o.*, c.name AS campaign_name FROM outreach o JOIN campaigns c ON c.id = o.campaign_id
+           WHERE o.id = ? AND o.prospect_id = ?""", (outreach_id, prospect_id)).fetchone()
+    campaign = next((c for c in get_campaigns() if row and c.db_name == row["campaign_name"]), None)
+    if prospect is None or campaign is None:
+        return _back(f"/prospects/{prospect_id}", error="Campaign not found for this contact.")
+    message = await run_in_threadpool(verify.refresh_email, db, _plugin_registry(), campaign, prospect,
+                                      dict(row), user=current_user(request))
+    return _back(f"/prospects/{prospect_id}", msg=message)
+
+
+# ── AI: agent panel and the user's own assistant (core/tools.py) ────
+
+_AI_OFF = "Turn on AI features on your Account page first."
+_MAX_TOOL_BODY = 64 * 1024
+
+
+def _ai_refusal(request: Request, permission: str) -> Optional[JSONResponse]:
+    """A JSON refusal unless this user has the AI feature on; the header blocks cross-site posts."""
+    if not current_user(request).uses_ai(permission):
+        return JSONResponse({"ok": False, "error": _AI_OFF}, status_code=403)
+    if request.method == "POST" and request.headers.get("x-aos-tool") != "1":
+        return JSONResponse({"ok": False, "error": "Missing X-AOS-Tool header"}, status_code=400)
+    return None
+
+
+@app.post("/prospects/{prospect_id}/agent")
+async def prospect_agent(request: Request, prospect_id: int, agent: str = Form(...), task: str = Form(...),
+                         instructions: str = Form(default="")):
+    """Draft with a sales persona for this prospect. Returns JSON; nothing is sent."""
+    refusal = _ai_refusal(request, "agents.use")
+    if refusal:
+        return refusal
+    result = await run_in_threadpool(
+        tools.run_tool, get_db(), current_user(request), "draft_with_agent",
+        {"prospect_id": prospect_id, "agent": agent, "task": task, "instructions": instructions}, source="panel")
+    return JSONResponse(result)
+
+
+@app.post("/prospects/{prospect_id}/agent/note")
+async def prospect_agent_note(request: Request, prospect_id: int, note: str = Form(...)):
+    """Save a draft from the panel as a note. Clicking Save is the confirmation."""
+    refusal = _ai_refusal(request, "agents.use")
+    if refusal:
+        return refusal
+    result = tools.run_tool(get_db(), current_user(request), "add_prospect_note",
+                            {"prospect_id": prospect_id, "note": note}, source="panel", confirmed=True)
+    return JSONResponse(result)
+
+
+@app.get("/api/tools")
+async def api_tools(request: Request):
+    """The tools this user's own AI may call (WebMCP)."""
+    refusal = _ai_refusal(request, "ai.connect")
+    if refusal:
+        return refusal
+    return {"tools": [t.public() for t in tools.available(current_user(request))]}
+
+
+@app.post("/api/tools/{tool_name}")
+async def api_tool_call(request: Request, tool_name: str):
+    """Run one tool for the user's own AI. Body: {"args": {...}, "confirmed": bool}."""
+    refusal = _ai_refusal(request, "ai.connect")
+    if refusal:
+        return refusal
+    raw = await request.body()
+    if len(raw) > _MAX_TOOL_BODY:
+        return JSONResponse({"ok": False, "error": "Request too large"}, status_code=413)
+    try:
+        body = json.loads(raw or b"{}")
+    except ValueError:
+        return JSONResponse({"ok": False, "error": "Body must be JSON"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"ok": False, "error": "Body must be a JSON object"}, status_code=400)
+    result = await run_in_threadpool(tools.run_tool, get_db(), current_user(request), tool_name,
+                                     body.get("args") or {}, source="webmcp", confirmed=body.get("confirmed") is True)
+    return JSONResponse(result)
+
+
+# ── Evidence webhooks (core/evidence.py): no login; signed or keyed ─
+
+
+async def _webhook_body(request: Request) -> tuple[Optional[bytes], Optional[JSONResponse]]:
+    body = await request.body()
+    if len(body) > evidence.MAX_BODY:
+        return None, JSONResponse({"ok": False, "error": "too large"}, status_code=413)
+    return body, None
+
+
+def _webhook_result(handler, body: bytes) -> JSONResponse:
+    try:
+        payload = evidence.parse(body)
+    except ValueError:
+        return JSONResponse({"ok": False, "error": "body must be JSON"}, status_code=400)
+    return JSONResponse({"ok": True, "recorded": handler(get_db(), payload)})
+
+
+@app.post("/webhooks/lob")
+async def webhook_lob(request: Request):
+    """Lob tracking events: returned mail becomes evidence for the lead guarantee."""
+    if not os.environ.get("LOB_WEBHOOK_SECRET"):
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+    body, error = await _webhook_body(request)
+    if error:
+        return error
+    if not evidence.lob_signature_ok(body, request.headers.get("lob-signature", ""),
+                                     request.headers.get("lob-signature-timestamp", "")):
+        return JSONResponse({"ok": False, "error": "bad signature"}, status_code=401)
+    return await run_in_threadpool(_webhook_result, evidence.handle_lob, body)
+
+
+@app.post("/webhooks/smartlead")
+async def webhook_smartlead(request: Request, key: str = Query(default="")):
+    """Smartlead EMAIL_BOUNCE events (Smartlead doesn't sign; the URL carries the key)."""
+    if not os.environ.get("AGENCY_OS_WEBHOOK_KEY"):
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+    if not evidence.webhook_key_ok(key):
+        return JSONResponse({"ok": False, "error": "bad key"}, status_code=401)
+    body, error = await _webhook_body(request)
+    return error or await run_in_threadpool(_webhook_result, evidence.handle_smartlead, body)
+
+
+@app.post("/webhooks/bounce")
+async def webhook_bounce(request: Request, key: str = Query(default="")):
+    """Bounces from any other sender: {"email": "...", "type": "hard", "id": "..."}."""
+    if not os.environ.get("AGENCY_OS_WEBHOOK_KEY"):
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+    if not evidence.webhook_key_ok(key):
+        return JSONResponse({"ok": False, "error": "bad key"}, status_code=401)
+    body, error = await _webhook_body(request)
+    return error or await run_in_threadpool(_webhook_result, evidence.handle_generic, body)
+
+
+# ── Selling our own lists (core/selling.py) ─────────────────────────
+
+
+def _x402_reply(reply: selling.Reply) -> JSONResponse:
+    return JSONResponse(reply.body, status_code=reply.status, headers=reply.headers)
+
+
+def _selling_off() -> Optional[JSONResponse]:
+    return JSONResponse({"detail": "Not Found"}, status_code=404) if selling.problem() else None
+
+
+@app.get("/x402/packages")
+async def x402_catalog(request: Request):
+    """Our free catalog for other agency-os instances (and any x402 lead buyer)."""
+    off = _selling_off()
+    return off or {"packages": await run_in_threadpool(selling.catalog, get_db())}
+
+
+@app.get("/x402/packages/{slug}/leads")
+async def x402_leads(request: Request, slug: str):
+    off = _selling_off()
+    if off:
+        return off
+    reply = await run_in_threadpool(selling.sell_leads, get_db(), selling.default_gate(), slug,
+                                    request.headers.get("payment-signature", ""), str(request.url))
+    return _x402_reply(reply)
+
+
+@app.post("/x402/packages/{slug}/contacts")
+async def x402_contacts(request: Request, slug: str):
+    off = _selling_off()
+    if off:
+        return off
+    try:
+        body = evidence.parse(await request.body())
+    except ValueError:
+        return JSONResponse({"error": "body must be JSON"}, status_code=400)
+    reply = await run_in_threadpool(selling.royalty, get_db(), selling.default_gate(), slug, body,
+                                    request.headers.get("payment-signature", ""), str(request.url))
+    return _x402_reply(reply)
+
+
+@app.post("/x402/packages/{slug}/claims")
+async def x402_claims(request: Request, slug: str):
+    off = _selling_off()
+    if off:
+        return off
+    try:
+        body = evidence.parse(await request.body())
+    except ValueError:
+        return JSONResponse({"error": "body must be JSON"}, status_code=400)
+    return _x402_reply(await run_in_threadpool(selling.handle_claim, get_db(), slug, body))
+
+
+@app.get("/admin/selling", response_class=HTMLResponse)
+async def admin_selling(request: Request, msg: str = Query(default=""), error: str = Query(default="")):
+    return _selling_page(request, msg=msg, error=error)
+
+
+def _selling_page(request: Request, *, msg: str = "", error: str = "", preview: Optional[dict] = None,
+                  form: Optional[dict] = None):
+    db = get_db()
+    return templates.TemplateResponse(request, "admin_selling.html", {
+        "active": "admin", **selling.overview(db), "problem": selling.problem(),
+        "network": selling.network_key(), "pay_to": selling.pay_to(), "catalog_url": f"{site_url()}/x402",
+        "saved_lists": db.list_prospect_saved_lists(current_user(request).id),
+        "tiers": [t for t in contact_depth.TIERS if t != "unworked"],
+        "preview": preview, "form": form or {}, "msg": msg, "error": error,
+    })
+
+
+@app.post("/admin/selling/publish", response_class=HTMLResponse)
+async def admin_selling_publish(request: Request):
+    """Preview a saved list as a package, then publish it (two steps; publishing needs a confirm)."""
+    form = {k: str(v) for k, v in (await request.form()).items()}
+    db = get_db()
+    try:
+        saved_list_id = int(form.get("saved_list_id", ""))
+    except ValueError:
+        return _selling_page(request, error="Pick a saved list.", form=form)
+    tier = form.get("guarantee_tier", "")
+    saved = db.get_prospect_saved_list(saved_list_id)
+    if saved is None or tier not in contact_depth.RANK:
+        return _selling_page(request, error="Pick a saved list and a contact depth.", form=form)
+    if form.get("action") != "publish" or form.get("confirm") != "yes":
+        found = await run_in_threadpool(selling.preview, db, saved["criteria"], tier)
+        return _selling_page(request, preview={**found, "eligible": len(found["eligible"]), "list": saved["name"]},
+                             form=form, error="" if form.get("action") != "publish" else "Tick the box to publish.")
+    package_id, problem = await run_in_threadpool(lambda: selling.publish(
+        db, current_user(request), saved_list_id=saved_list_id, title=form.get("title", ""),
+        industry=form.get("industry", ""), region=form.get("region", ""), unlock_usd=form.get("unlock_usd", ""),
+        royalty_usd={t: form.get(f"royalty_{t}", "") for t in contact_depth.TIERS},
+        guarantee_tier=tier, rules={"window_days": form.get("window_days", 30), "claim_days": form.get("claim_days", 7)},
+        consent_note=form.get("consent_note", ""), sms_consent=form.get("sms_consent") == "1",
+        contributor_pool_pct=form.get("contributor_pool_pct", 20)))
+    if problem:
+        return _selling_page(request, error=problem, form=form)
+    return _back("/admin/selling", msg="Package published.")
+
+
+@app.post("/admin/selling/{package_id}/active")
+async def admin_selling_active(request: Request, package_id: int, active: str = Form(default="")):
+    selling.set_active(get_db(), current_user(request), package_id, active == "1")
+    return _back("/admin/selling", msg="Package listed." if active == "1" else "Package withdrawn from the catalog.")
+
+
+@app.post("/admin/selling/claims/{claim_id}/refund")
+async def admin_selling_refund(request: Request, claim_id: int, amount_usd: str = Form(default=""),
+                               tx_hash: str = Form(default="")):
+    problem = selling.record_refund(get_db(), current_user(request), claim_id, amount_usd, tx_hash.strip())
+    return _back("/admin/selling", error=problem) if problem else _back("/admin/selling", msg="Refund recorded.")
+
+
+@app.post("/prospects/{prospect_id}/do-not-sell")
+async def prospect_do_not_sell(request: Request, prospect_id: int, flag: str = Form(default="")):
+    """Honor a request not to sell someone's data: never published, sold or used as a replacement."""
+    selling.set_do_not_sell(get_db(), current_user(request), prospect_id, flag == "1")
+    return _back(f"/prospects/{prospect_id}", msg="Marked do not sell." if flag == "1" else "Do-not-sell removed.")
+
+
+@app.post("/prospects/{prospect_id}/credit")
+async def prospect_credit(request: Request, prospect_id: int, user_id: int = Form(...), task: str = Form(...),
+                          active: str = Form(default="1")):
+    """Give or remove a rep's credit for building this lead (their share of its sales)."""
+    try:
+        royalties.set_credit(get_db(), current_user(request), prospect_id, user_id, task, active == "1")
+    except ValueError as exc:
+        return _back(f"/prospects/{prospect_id}", error=str(exc))
+    return _back(f"/prospects/{prospect_id}", msg="Credit updated.")
+
+
+@app.get("/admin/payouts", response_class=HTMLResponse)
+async def admin_payouts(request: Request, msg: str = Query(default=""), error: str = Query(default="")):
+    db = get_db()
+    return templates.TemplateResponse(request, "admin_payouts.html", {
+        "active": "admin", "balances": royalties.balances(db), "payouts": royalties.payouts(db),
+        "minimum": royalties.minimum(), "maximum": royalties.maximum(), "network": royalties.payout_network(),
+        "automatic": royalties.default_sender().is_configured(), "msg": msg, "error": error,
+    })
+
+
+@app.post("/admin/payouts/{user_id}")
+async def admin_payout(request: Request, user_id: int, confirm: str = Form(default=""), tx_hash: str = Form(default="")):
+    """Pay a rep's balance: send it from the CDP wallet, or record a payment made by hand."""
+    if not tx_hash.strip() and confirm != "yes":
+        return _back("/admin/payouts", error="Tick the box to send the payment.")
+    problem = await run_in_threadpool(
+        royalties.pay, get_db(), current_user(request), user_id,
+        sender=None if tx_hash.strip() else royalties.default_sender(), tx_hash=tx_hash.strip())
+    return _back("/admin/payouts", error=problem) if problem else _back("/admin/payouts", msg="Payout done.")
 
 
 @app.get("/plugins", response_class=HTMLResponse)
@@ -1844,13 +2242,106 @@ async def logout(request: Request):
 
 @app.get("/account", response_class=HTMLResponse)
 async def account_page(request: Request, msg: str = Query(default=""), error: str = Query(default="")):
+    return _account(request, msg=msg, error=error)
+
+
+def _account(request: Request, *, msg: str = "", error: str = "", new_token: str = ""):
     user = current_user(request)
+    spending = None
+    if user.can("packages.buy"):
+        db = get_db()
+        spending = {**db.user_spend(user.id), "allowance_atomic": db.spend_allowance(user.id)}
+    ai = None
+    if user.can("agents.use") or user.can("ai.connect"):
+        ai = {"enabled": user.ai_enabled, "allowed": access.ai_allowed(), "model": llm.describe(),
+              "mcp_url": f"{site_url()}/mcp",
+              "tokens": mcp_auth.list_tokens(get_db(), user.id) if user.uses_ai("ai.connect") else [],
+              "new_token": new_token}
+    earnings = None
+    if user.can("royalties.view_own"):
+        db = get_db()
+        mine = royalties.balances(db, user.id)
+        prefs = db.conn.execute("SELECT payout_address FROM user_prefs WHERE user_id = ?", (user.id,)).fetchone()
+        earnings = {"balance": mine[0] if mine else {"pending": 0, "payable": 0, "paid": 0},
+                    "lines": royalties.statement(db, user.id, 20), "labels": royalties.TASK_LABELS,
+                    "address": prefs["payout_address"] if prefs else None}
     return templates.TemplateResponse(request, "account.html", {
         "active": "account",
+        "spending": spending,
+        "earnings": earnings,
+        "ai": ai,
         "permissions": [(k, v) for k, v in access.CATALOG.items() if user.can(k)],
         "msg": msg,
         "error": error,
     })
+
+
+@app.post("/account/ai")
+async def account_ai(request: Request, enabled: str = Form(default="")):
+    """Turn AI features on or off for yourself. Off keeps the app exactly as before."""
+    user = current_user(request)
+    if not (user.can("agents.use") or user.can("ai.connect")):
+        return _back("/account", error="Your role doesn't include AI features. Ask an owner.")
+    get_db().set_ai_enabled(user.id, enabled == "1", actor=user)
+    return _back("/account", msg="AI features turned on." if enabled == "1" else "AI features turned off.")
+
+
+@app.post("/account/tokens")
+async def account_token_create(request: Request, name: str = Form(default=""), allow_writes: str = Form(default="")):
+    """Make a personal token for an MCP client. It's shown once."""
+    user = current_user(request)
+    if not user.uses_ai("ai.connect"):
+        return _back("/account", error="Turn on AI features first.")
+    try:
+        token = mcp_auth.create_personal_token(get_db(), user, name, allow_writes == "1")
+    except ValueError as exc:
+        return _back("/account", error=str(exc))
+    # Rendered straight into this response (never put in a URL), and never shown again.
+    return _account(request, msg="Access key created. Copy it now; it won't be shown again.", new_token=token)
+
+
+@app.post("/account/tokens/{token_id}/revoke")
+async def account_token_revoke(request: Request, token_id: int):
+    revoked = mcp_auth.revoke(get_db(), current_user(request), token_id)
+    return _back("/account", msg="Disconnected. That app or key can no longer reach agency-os.") if revoked else _back("/account", error="That connection was not found.")
+
+
+@app.get("/oauth/consent", response_class=HTMLResponse)
+async def oauth_consent(request: Request, request_id: str = Query(default="", alias="request")):
+    """An app (Claude.ai, ChatGPT...) asks to act as you in agency-os."""
+    user = current_user(request)
+    found = mcp_auth.load_request(get_db(), request_id) if request_id else None
+    client, params = found if found else (None, None)
+    return templates.TemplateResponse(request, "oauth_consent.html", {
+        "client": client, "params": params, "request_id": request_id,
+        "ai_on": user.uses_ai("ai.connect"),
+        "redirect_host": urlsplit(str(params.redirect_uri)).netloc if params else "",
+    })
+
+
+@app.post("/oauth/consent")
+async def oauth_consent_decide(request: Request, request_id: str = Form(..., alias="request"),
+                               decision: str = Form(...), allow_writes: str = Form(default="")):
+    user = current_user(request)
+    if decision == "approve" and not user.uses_ai("ai.connect"):
+        return _back("/account", error="Turn on AI features first, then connect the app again.")
+    target = mcp_auth.decide(get_db(), user, request_id, decision == "approve", allow_writes == "1")
+    if target is None:
+        return _back("/account", error="That sign-in request expired. Start the connection again from the app.")
+    return RedirectResponse(url=target, status_code=303)
+
+
+@app.post("/account/payout-address")
+async def account_payout_address(request: Request, address: str = Form(default=""),
+                                 current_password: str = Form(...)):
+    """Where your data royalties are paid. Needs your password, since it redirects money."""
+    user = current_user(request)
+    db = get_db()
+    row = db.get_user_by_email(user.email)
+    if not access.verify_password(current_password, row["password_hash"]):
+        return _back("/account", error="Current password is incorrect.")
+    problem = royalties.set_payout_address(db, user, address)
+    return _back("/account", error=problem) if problem else _back("/account", msg="Payout address saved.")
 
 
 @app.post("/account/password")
@@ -2311,6 +2802,10 @@ async def admin_campaign_detail(request: Request, campaign_slug: str):
         "plugins": _get_registry_plugins(),
         "networks": list(payments.NETWORKS),
         "unlocked": db.list_lead_packages(campaign_id) if campaign_id else [],
+        "paused": lead_packages.paused_refs(campaign),
+        "default_rules": verify.DEFAULT_RULES.merged((campaign.lead_packages or {}).get("guarantee_rules")),
+        "ratings": claims.ratings(db),
+        "package_ref": lead_packages.package_ref,
     })
 
 
@@ -2332,6 +2827,14 @@ async def admin_campaign_update(
     lp_max_unlock_usd: str = Form(default="0"),
     lp_max_royalty_usd: str = Form(default="0"),
     lp_monthly_budget_usd: str = Form(default="0"),
+    lp_rule_fail_at: str = Form(default=""),
+    lp_rule_wrong_number_reports: str = Form(default=""),
+    lp_rule_no_answer_attempts: str = Form(default=""),
+    lp_rule_window_days: str = Form(default=""),
+    lp_rule_claim_days: str = Form(default=""),
+    lp_rule_unworked_at_close: str = Form(default=""),
+    lp_listed: list[str] = Form(default=[]),
+    lp_active: list[str] = Form(default=[]),
 ):
     """Update a campaign's plugin associations by rewriting campaign.yaml."""
     if not _same_origin(request):
@@ -2388,6 +2891,27 @@ async def admin_campaign_update(
             "max_royalty_per_contact_usd": dollars(lp_max_royalty_usd),
             "monthly_budget_usd": dollars(lp_monthly_budget_usd),
         })
+        # Unlocked packages left unticked are paused: their leads aren't contacted.
+        # Only packages this form listed change, so one unlocked meanwhile stays active.
+        campaign_id = get_db().get_campaign_id(campaign.db_name)
+        unlocked = get_db().list_lead_packages(campaign_id) if campaign_id else []
+        listed = set(lp_listed)
+        paused = []
+        for ref in (lead_packages.package_ref(p["provider"], p["package_id"]) for p in unlocked):
+            if (ref in listed and ref not in lp_active) or (ref not in listed and ref in lead_packages.paused_refs(campaign)):
+                paused.append(ref)
+        block.pop("paused_packages", None)
+        if paused:
+            block["paused_packages"] = paused
+        # Default guarantee rules for this campaign's future unlocks (range-checked;
+        # weights stay as set in campaign.yaml).
+        entered = {"fail_at": lp_rule_fail_at, "wrong_number_reports": lp_rule_wrong_number_reports,
+                   "no_answer_attempts": lp_rule_no_answer_attempts, "window_days": lp_rule_window_days,
+                   "claim_days": lp_rule_claim_days, "unworked_at_close": lp_rule_unworked_at_close}
+        current = dict(block.get("guarantee_rules") or {})
+        checked = verify.DEFAULT_RULES.merged({**current, **{k: v for k, v in entered.items() if v.strip()}})
+        block["guarantee_rules"] = {**{k: v for k, v in checked.to_dict().items() if k != "weights"},
+                                    **({"weights": current["weights"]} if current.get("weights") else {})}
         raw["lead_packages"] = block
         get_db().audit(current_user(request), "campaign.lead_packages", "campaign", campaign.db_name, block)
 
@@ -2625,6 +3149,11 @@ async def api_stats():
     for c in campaigns:
         results.append(db.get_pipeline_stats(c.db_name))
     return JSONResponse(results)
+
+
+# Last, so every route above wins: /mcp, the OAuth endpoints (/authorize,
+# /token, /register, /revoke) and their /.well-known metadata (web/mcp_server.py).
+app.mount("/", mcp_mount)
 
 
 if __name__ == "__main__":

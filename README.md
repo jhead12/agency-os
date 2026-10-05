@@ -7,7 +7,10 @@ any product or service.
 ## Quick start
 
 Data lives in PostgreSQL. Point `DATABASE_URL` at a database (tables are
-created on first use):
+created on first use). Settings can go in a `.env` file in the project folder
+(copy `.env.example`); the CLI and the web app read it at startup, and anything
+already set in your shell takes precedence. Campaigns can be named by a short
+form such as `voter-guide-cbo` when it matches only one campaign.
 
 ```bash
 cd agency-os
@@ -269,8 +272,83 @@ Off by default. To try it on Base Sepolia (test USDC):
    set its caps and monthly budget.
 4. Give buyers the `packages.buy` permission and an allowance:
    `python agency_os.py spend allowance --email rep@example.com --usd 50`
-5. Unlock from **Campaigns → Lead Packages**, or
-   `python agency_os.py packages unlock --campaign ... --provider ... --package ... --email ...`
+5. Unlock from **Campaigns → Lead Packages**. *Review unlock* shows the price,
+   the most the royalties can cost, and what's left in the campaign budget and
+   your allowance before you pay. From the CLI:
+   `python agency_os.py packages unlock --campaign ... --provider ... --package ... --email ... [--dry-run]`
+
+To pause a package, untick it in the campaign editor. Its leads aren't
+contacted, and no royalties are paid, until you tick it again. Spend shows on
+the Campaigns page, your Account page and in `digest`.
+
+**The guarantee.** Each package lead is judged from your own outreach
+(`core/verify.py`). No single event fails a lead; evidence is weighed and a
+lead fails at a score of 1.0:
+
+| Evidence | Weight |
+|---|---|
+| Disconnected number, fax tone | 1.0 |
+| Wrong number, once reported twice (or by two callers) | 1.0 |
+| No answer / busy on 6 calls, never reached | 0.5 |
+| Email bounced, mail returned | 0.5 each |
+| Enricher finds a different email | 0.5 after a bounce, else 0.25 |
+| AI review says not real (optional) | 0.5 |
+| Seller's history proves less than the promised tier | 1.0 |
+| Reached the organization / enricher agrees / AI says real | −1.0 / −0.25 / −0.5 |
+
+These are the defaults. The rules are part of the deal: a package can state
+its own terms (`guarantee.rules` in the catalog), a campaign sets defaults
+for packages that don't (*Guarantee rules for new unlocks* in the campaign
+editor: the fail score, how many wrong-number reports and no-answer calls
+count, the window, the claim period after it, and how unworked leads count
+when the window closes; weights in `campaign.yaml` under
+`lead_packages.guarantee_rules.weights`). They're fixed on each package when
+it's unlocked and shown before you pay. Every value is range-checked, and a
+disconnected number, a fax tone, or a history below the promised tier always
+fails a lead on its own.
+
+Bounces and returned mail are recorded automatically from webhooks (or by
+hand on the prospect page):
+
+- **Lob**: add a webhook in the Lob dashboard for the `*.returned_to_sender`
+  events pointing at `<your agency-os URL>/webhooks/lob`, and set
+  `LOB_WEBHOOK_SECRET` to its secret. Requests are signature-checked.
+- **Smartlead**: add a webhook for `EMAIL_BOUNCE` pointing at
+  `<your agency-os URL>/webhooks/smartlead?key=<AGENCY_OS_WEBHOOK_KEY>`
+  (Smartlead doesn't sign webhooks, so the URL carries a secret key).
+- **Any other sender**: `POST /webhooks/bounce?key=<AGENCY_OS_WEBHOOK_KEY>`
+  with `{"email": "...", "type": "hard", "id": "<event id>"}`.
+
+Each endpoint is off until its secret is set. Soft bounces are ignored and
+each event is recorded once.
+
+Mark bounces and returned mail on the prospect page. A bounced email shows
+*Find a new email*, which re-runs the campaign's enrichers and compares what
+they find with the package's email. Failed leads are never contacted, so no
+royalty is paid on them.
+
+Each unlocked package has a guarantee page (**Lead Packages → Unlocked**, or
+`packages verify --campaign ...`) with every lead's verdict and evidence. The
+guarantee is broken once failures make 90% impossible
+(shortfall = ⌈0.9 × leads⌉ − (leads − failed)). Within the verification window
+(30 days unless the package says otherwise) you can **File claim**
+(`packages claim --id N --email ...`). The provider answers with replacement
+leads, a refund (recorded as a pending `refund_in` until you confirm it onchain
+with `spend resolve`), or a dispute. Each package and seller shows its verified
+rate measured across the unlocks on this server.
+
+The AI review is off unless `AGENCY_OS_AI_REVIEW=on` and an AI model is
+configured (see *AI agents* below; Claude or a local model). It reads call dispositions and notes for
+leads near the threshold, counts as one signal, and runs only from *Re-check
+leads* or `packages verify --ai`. A verdict is cached until the lead's evidence
+changes.
+
+If a payment goes out but the provider never answers, it stays **pending** and
+keeps counting against the budget. Check it onchain, then close it:
+`python agency_os.py spend pending`, then
+`spend resolve --id N --status settled --tx 0x...` (or `--status failed`, which
+frees the budget and lets it be paid again). If a pending unlock had in fact
+settled, ask the provider to resend the leads.
 
 Safeguards:
 - Only allowlisted https providers can be used.
@@ -284,6 +362,127 @@ Safeguards:
 - Package leads never overwrite existing prospects. They are only contacted in
   the campaign they were unlocked into, and they're only texted if the package
   includes SMS consent.
+
+### Selling our own lists
+
+agency-os is also an x402 lead provider, so other agency-os instances (or any
+x402 lead buyer) can buy from you. **Administration → Sell Lead Packages**
+(permission `packages.sell`, owners by default) publishes a saved prospect
+list as a package: pick the contact depth it guarantees, the unlock price,
+royalties by tier and the guarantee window, check the list (it shows how many
+prospects qualify), then publish.
+
+- Only leads we can stand behind go in: a contact on file, no bounced email,
+  and our own contact history at or above the promised tier. Leads marked
+  **do not sell** on their prospect page, and leads bought from someone else,
+  are never sold. Leads are re-checked at every sale.
+- Buyers get the leads and a private claim token. Royalties are charged only
+  for leads sold to that buyer, once each.
+- Claims are checked against our records (a lead we've reached since the sale
+  isn't dead) and capped at what breaks 90%. Replacements come from the same
+  list; what can't be replaced waits on the Selling page for an owner to
+  refund by hand and record the transaction. Nothing is refunded automatically.
+- Income and refunds go in the same `spend` ledger (`unlock_in`, `royalty_in`,
+  `refund_out`).
+
+Turn the store on with `AGENCY_OS_SELL=on` and `AGENCY_OS_SELL_PAY_TO=<your
+wallet address>` (and `pip install -r requirements-payments.txt`). Payments are
+verified and settled by an x402 facilitator: `AGENCY_OS_X402_FACILITATOR`,
+default `https://x402.org/facilitator`, which handles Base Sepolia. Mainnet
+needs `AGENCY_OS_SELL_NETWORK=base`, `AGENCY_OS_X402_ALLOW_MAINNET=1` and a
+mainnet facilitator.
+
+**Rep royalties.** The reps who built a lead share in what buyers pay for it:
+the package's contributor share (set when publishing, default 20%) of each
+lead's part of the unlock and of its royalty, split *found the contact* 50%,
+*reached the decision-maker* 30%, *sourced it* 20%. Credit comes from our
+records (the rep whose contact edit supplied the email or phone; the rep who
+logged a call that reached the decision-maker); owners add *sourced* credit,
+or adjust any credit, on the prospect page. Shares become payable once the
+buyer's guarantee period ends without a claim, and are taken back if a claim
+on that lead holds. Reps see theirs under **Account → My data royalties** and
+set a payout wallet (password required). Owners pay from **Administration →
+Rep Payouts**: by hand (record the transaction), or with
+`AGENCY_OS_PAYOUTS=on` from the CDP wallet, one confirmed payout at a time,
+above `AGENCY_OS_PAYOUT_MIN_USD` (default $5) and up to
+`AGENCY_OS_PAYOUT_MAX_USD` (default $500).
+
+**Testnet trial (dev provider).** Run two copies, each with its own
+`DATABASE_URL`. On the seller: `AGENCY_OS_SELL=on`, a test wallet in
+`AGENCY_OS_SELL_PAY_TO`, publish a list. On the buyer: the CDP wallet keys
+with test USDC, `AGENCY_OS_X402=on`, and
+`AGENCY_OS_LEAD_PROVIDERS=http://127.0.0.1:<seller port>/x402`. Unlock from the
+buyer's Lead Packages page and check both transactions on Sepolia Basescan.
+
+Selling contact data can make you a California data broker under the Delete
+Act (registration and deletion requests); keep a consent note on each package.
+
+## AI agents (beta, opt-in)
+
+Each user chooses whether to use AI. It's off by default, and anyone who
+leaves it off sees the app exactly as before. Turn it on under **Account → AI
+features**. That needs the `agents.use` and/or `ai.connect` permission (the
+Sales Rep starter role has both on new installs; on an existing install, add
+them to roles under Admin → Roles). `AGENCY_OS_AI=off` hides AI for everyone.
+
+- **Ask an agent** (prospect page): sales personas from
+  [agency-agents](https://github.com/msitarzewski/agency-agents) (`agents/`)
+  draft the next email, a text, call prep, a MEDDPICC deal review, or a
+  proposal outline from the prospect's record. Drafts only; nothing is sent.
+  *Save as note* adds the draft to the prospect.
+- **Your own AI (WebMCP)**: a browser AI that supports WebMCP
+  (`document.modelContext`, currently a Chrome origin trial) gets agency-os
+  tools: search and read prospects, calls and campaigns, draft with a persona,
+  and add notes, log calls or change stages. Every call runs as you with your
+  permissions; any change opens a confirm dialog showing exactly what will
+  change, and is recorded in the audit log.
+
+The model (`core/llm.py`):
+
+- **Claude**: set `ANTHROPIC_API_KEY` and `pip install -r requirements-ai.txt`
+  (Docker: `--build-arg WITH_AI=1`). Uses `claude-opus-5-5`.
+- **Local model, e.g. Hermes on Ollama**: `ollama pull hermes3`, then
+  `AGENCY_OS_LLM=openai_compatible`, `AGENCY_OS_LLM_BASE_URL=http://localhost:11434/v1`,
+  `AGENCY_OS_LLM_MODEL=hermes3`. Any OpenAI-compatible server works. A hosted
+  deploy can't reach a model on your laptop; use this when running agency-os
+  yourself.
+
+**Connect any MCP client (Hermes Agent, Claude Desktop/Code, Rook...).**
+agency-os is an MCP server at `<your agency-os URL>/mcp` (streamable HTTP). With
+AI features on, **Account → Connect an AI app** creates a personal token,
+shown once, read-only unless you tick *Allow changes*, and gives ready-made
+config:
+
+```yaml
+# Hermes Agent: ~/.hermes/config.yaml
+mcp_servers:
+  agency_os:
+    url: https://your-agency-os.example/mcp
+    headers:
+      Authorization: "Bearer aos_pat_..."
+```
+
+```bash
+claude mcp add --transport http agency-os https://your-agency-os.example/mcp \
+  --header "Authorization: Bearer aos_pat_..."
+```
+
+The server offers the same tools as WebMCP (changes only for tokens allowed to
+make them; your client's approval prompt is the confirmation, and every change
+is audited as `mcp:<token name>`), one prompt per persona and task so your own
+model does the drafting, and personas and prospects as resources. Hermes can
+run on a local model, so this is how a local AI works with a hosted agency-os.
+
+**Claude.ai and ChatGPT connectors.** Add a custom connector with the same
+`/mcp` URL. The app registers itself and sends you to an agency-os consent page
+(behind your normal sign-in) where you allow it, optionally with changes.
+This is standard OAuth 2.1: PKCE, single-use codes, one-hour access tokens,
+rotating 30-day refresh tokens. Revoke any token or app on your Account page.
+Set `AGENCY_OS_BASE_URL` to the public https URL (Railway's domain is used
+automatically) so the OAuth metadata points to the right place.
+
+Tokens and connected apps stop working when their user turns AI features off,
+is deactivated, or when `AGENCY_OS_AI=off`.
 
 ## API keys
 
