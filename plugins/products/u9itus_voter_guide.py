@@ -13,10 +13,13 @@ Provisioning happens in provision_demo(), called by the CLI's
 
 from __future__ import annotations
 
+import secrets
+from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import urlencode
 
 from core.models import Prospect
+from plugins.products import u9itus_client
 from plugins.products.u9itus_client import U9itusClient
 
 
@@ -26,6 +29,15 @@ class U9itusVoterGuideProduct:
     key = "u9itus_voter_guide"
     BASE_URL = "https://www.u9itus.com"
 
+    # DemoPortalProduct (core/protocols.py). "u9itus" is also what existing
+    # prospect metadata and activity-log refs use, so it must not change.
+    portal_namespace = "u9itus"
+    portal_label = "u9itus demo page"
+
+    # Plain-language reasons for the agency API's error statuses.
+    ERROR_HINTS = {401: "token rejected", 404: "agency API not deployed at this URL",
+                   503: "AGENCY_OS_TOKEN_HASH not set on u9itus"}
+
     def __init__(self):
         self._client: Optional[U9itusClient] = None
 
@@ -33,8 +45,14 @@ class U9itusVoterGuideProduct:
     def client(self) -> U9itusClient:
         """Lazily create the API client."""
         if self._client is None:
-            self._client = U9itusClient()
+            self._client = u9itus_client.U9itusClient()
         return self._client
+
+    def is_configured(self) -> bool:
+        return self.client.is_configured()
+
+    def setup_hint(self) -> str:
+        return "Set U9ITUS_BASE_URL and U9ITUS_AGENCY_TOKEN in .env"
 
     def describe_value(self, prospect: Prospect) -> str:
         """One-line value prop personalized to this prospect."""
@@ -147,6 +165,32 @@ class U9itusVoterGuideProduct:
             return {"error": True, "detail": "U9itus API not configured"}
 
         return self.client.pull_events(after=after, limit=limit)
+
+    # ── Plugins-page test buttons ─────────────────────────────────────
+
+    def check_connection(self) -> dict:
+        """Read one event (no side effects) to confirm the URL and token."""
+        return self._with_fresh_client(lambda client: client.pull_events(after=0, limit=1))
+
+    def create_test_portal(self) -> dict:
+        """Make a blank demo portal with a throwaway external_ref; it expires on
+        its own after 60 days like any unclaimed demo."""
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S") + "-" + secrets.token_hex(2)
+        return self._with_fresh_client(lambda client: client.provision_demo(
+            external_ref=f"agency-os:test:{stamp}", name=f"Test Portal {stamp}", state="CA",
+        ))
+
+    def _with_fresh_client(self, call) -> dict:
+        client = u9itus_client.U9itusClient()
+        if not client.is_configured():
+            return {"error": True, "detail": self.setup_hint()}
+        try:
+            result = call(client)
+        finally:
+            client.close()
+        if result.get("error") and result.get("status") in self.ERROR_HINTS:
+            result = {**result, "detail": self.ERROR_HINTS[result["status"]]}
+        return result
 
     def pricing_tiers(self) -> list[dict]:
         """Available pricing tiers for the voter guide product."""

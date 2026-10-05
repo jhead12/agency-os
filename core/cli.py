@@ -439,7 +439,7 @@ def test_send(ctx, campaign_name, to_email, script_name, prospect_id):
 @click.option("--dry-run", is_flag=True, help="Show what would be provisioned without calling the API")
 @click.pass_context
 def provision(ctx, campaign_name, all_campaigns, limit, dry_run):
-    """Provision personal demo portals on u9itus for prospects with contact emails."""
+    """Provision personal demo portals for prospects with contact emails."""
     if not campaign_name and not all_campaigns:
         click.echo("Error: specify --campaign <name> or --all")
         sys.exit(1)
@@ -458,7 +458,7 @@ def provision(ctx, campaign_name, all_campaigns, limit, dry_run):
         click.echo(f"  Failed:      {stats['failed']}")
         click.echo(f"  No contact:  {stats['no_contact']}")
         if stats.get("api_not_configured"):
-            click.echo(f"\n  ⚠ U9itus API not configured. Set U9ITUS_BASE_URL and U9ITUS_AGENCY_TOKEN in .env")
+            click.echo(f"\n  ⚠ Product API not configured. {stats['setup_hint']}")
 
 
 @cli.command()
@@ -467,7 +467,7 @@ def provision(ctx, campaign_name, all_campaigns, limit, dry_run):
 @click.option("--dry-run", is_flag=True, help="Show events without updating the pipeline")
 @click.pass_context
 def pull_events(ctx, campaign_name, all_campaigns, dry_run):
-    """Pull portal events from u9itus and auto-advance pipeline stages."""
+    """Pull demo portal events from the product and auto-advance pipeline stages."""
     if not campaign_name and not all_campaigns:
         click.echo("Error: specify --campaign <name> or --all")
         sys.exit(1)
@@ -485,7 +485,7 @@ def pull_events(ctx, campaign_name, all_campaigns, dry_run):
         click.echo(f"  Stage changes:    {stats['stage_changes']}")
         click.echo(f"  Already processed:{stats['already_processed']}")
         if stats.get("api_not_configured"):
-            click.echo(f"\n  ⚠ U9itus API not configured. Set U9ITUS_BASE_URL and U9ITUS_AGENCY_TOKEN in .env")
+            click.echo(f"\n  ⚠ Product API not configured. {stats['setup_hint']}")
 
 
 @cli.command()

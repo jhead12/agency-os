@@ -15,7 +15,7 @@
 <div class="campaign-section">
     <div class="campaign-header"><h2>Test portal</h2><code>{{ test_portal.slug }}</code></div>
     <p style="color: var(--muted-foreground); font-size: 0.875rem; margin: 0 0 1rem 0;">
-        A blank, unclaimed demo on u9itus. It isn't tied to a prospect and expires on its own after 60 days.
+        A blank, unclaimed demo page. It isn't tied to a prospect and expires on its own after 60 days.
     </p>
     {% if test_portal.demo_url %}<p><a href="{{ test_portal.demo_url }}" target="_blank" rel="noopener noreferrer">Open demo page</a></p>{% endif %}
     {% if test_portal.claim_url %}<p><a href="{{ test_portal.claim_url }}" target="_blank" rel="noopener noreferrer">Open claim page</a> (creates the account)</p>{% endif %}
@@ -99,12 +99,12 @@
                 </td>
                 {% if ptype_key == 'products' and user.can('portals.manage') %}
                 <td>
-                    {% if p.key == 'u9itus_voter_guide' and p.configured %}
-                    <form method="post" action="/plugins/u9itus_voter_guide/test" class="inline-form">
+                    {% if p.portal_tests and p.configured %}
+                    <form method="post" action="/plugins/{{ p.key }}/test" class="inline-form">
                         <input type="hidden" name="action" value="check">
                         <button type="submit" class="btn btn-sm btn-secondary">Check connection</button>
                     </form>
-                    <form method="post" action="/plugins/u9itus_voter_guide/test" class="inline-form">
+                    <form method="post" action="/plugins/{{ p.key }}/test" class="inline-form">
                         <input type="hidden" name="action" value="create">
                         <button type="submit" class="btn btn-sm">Create test portal</button>
                     </form>
