@@ -5,7 +5,7 @@
 <div class="page-header">
     <div>
         <h1>Campaigns</h1>
-        <p class="subtitle">View campaign configs and manage plugin associations</p>
+        <p class="subtitle">Create campaigns, manage plugin associations, and import leads</p>
     </div>
 </div>
 
@@ -16,11 +16,176 @@
 <div class="alert alert-error">{{ error }}</div>
 {% endif %}
 
+{# ── Create New Campaign ── #}
+<div class="campaign-section">
+    <details>
+        <summary><h2 style="display:inline;">+ Create New Campaign</h2></summary>
+        <p style="color: var(--muted-foreground); font-size: 0.875rem; margin: 12px 0;">
+            Create a new outreach campaign. Pick a name, select plugins, set filters, and the system
+            generates a campaign.yaml with starter email and phone scripts. You can then import leads
+            via CSV and customize scripts from the campaign detail page.
+        </p>
+        <form method="post" action="/admin/campaigns/create">
+
+        {# ── Campaign name ── #}
+        <div class="form-grid" style="margin-bottom: 16px;">
+            <div class="form-field">
+                <label>Campaign Name *</label>
+                <input type="text" name="name" required placeholder="e.g. Voter Guide — Faith Orgs (Los Angeles)"
+                       style="width: 100%;">
+            </div>
+        </div>
+
+        {# ── Product (single select) ── #}
+        <div class="campaign-header">
+            <h3>Product</h3>
+            <span class="badge badge-product">What you're selling</span>
+        </div>
+        <div class="plugin-checkbox-grid">
+            {% for p in plugins.products %}
+            <label class="plugin-card{% if not p.configured %} plugin-card-warning{% endif %}">
+                <input type="radio" name="product" value="{{ p.key }}" {% if loop.first %}checked{% endif %}>
+                <div class="plugin-card-body">
+                    <strong>{{ p.key }}</strong>
+                    <p>{{ p.description }}</p>
+                    {% if not p.configured %}<span class="badge badge-warning">⚠ Not configured</span>{% endif %}
+                </div>
+            </label>
+            {% endfor %}
+        </div>
+
+        {# ── Prospect Sources ── #}
+        <div class="campaign-header" style="margin-top: 16px;">
+            <h3>Prospect Sources</h3>
+            <span class="badge">Where leads come from</span>
+        </div>
+        <div class="plugin-checkbox-grid">
+            {% for p in plugins.prospect_sources %}
+            <label class="plugin-card{% if not p.configured %} plugin-card-warning{% endif %}">
+                <input type="checkbox" name="prospect_sources" value="{{ p.key }}">
+                <div class="plugin-card-body">
+                    <strong>{{ p.key }}</strong>
+                    <p>{{ p.description }}</p>
+                    {% if not p.configured %}<span class="badge badge-warning">⚠ Not configured</span>{% endif %}
+                </div>
+            </label>
+            {% endfor %}
+        </div>
+
+        {# ── Channels ── #}
+        <div class="campaign-header" style="margin-top: 16px;">
+            <h3>Channels</h3>
+            <span class="badge">How you reach prospects</span>
+        </div>
+        <div class="plugin-checkbox-grid">
+            {% for p in plugins.channels %}
+            <label class="plugin-card{% if not p.configured %} plugin-card-warning{% endif %}">
+                <input type="checkbox" name="channels" value="{{ p.key }}">
+                <div class="plugin-card-body">
+                    <strong>{{ p.key }}</strong>
+                    <p>{{ p.description }}</p>
+                    {% if not p.configured %}<span class="badge badge-warning">⚠ Not configured</span>{% endif %}
+                </div>
+            </label>
+            {% endfor %}
+        </div>
+
+        {# ── Enrichers ── #}
+        <div class="campaign-header" style="margin-top: 16px;">
+            <h3>Enrichers</h3>
+            <span class="badge">Find contact info</span>
+        </div>
+        <div class="plugin-checkbox-grid">
+            {% for p in plugins.enrichers %}
+            <label class="plugin-card{% if not p.configured %} plugin-card-warning{% endif %}">
+                <input type="checkbox" name="enrichers" value="{{ p.key }}">
+                <div class="plugin-card-body">
+                    <strong>{{ p.key }}</strong>
+                    <p>{{ p.description }}</p>
+                    {% if not p.configured %}<span class="badge badge-warning">⚠ Not configured</span>{% endif %}
+                </div>
+            </label>
+            {% endfor %}
+        </div>
+
+        {# ── Scheduler ── #}
+        <div class="campaign-header" style="margin-top: 16px;">
+            <h3>Scheduler</h3>
+            <span class="badge">Meeting booking (optional)</span>
+        </div>
+        <div class="plugin-checkbox-grid">
+            <label class="plugin-card">
+                <input type="radio" name="scheduler" value="" checked>
+                <div class="plugin-card-body">
+                    <strong>None</strong>
+                    <p>No automated scheduling</p>
+                </div>
+            </label>
+            {% for p in plugins.schedulers %}
+            <label class="plugin-card{% if not p.configured %} plugin-card-warning{% endif %}">
+                <input type="radio" name="scheduler" value="{{ p.key }}">
+                <div class="plugin-card-body">
+                    <strong>{{ p.key }}</strong>
+                    <p>{{ p.description }}</p>
+                    {% if not p.configured %}<span class="badge badge-warning">⚠ Not configured</span>{% endif %}
+                </div>
+            </label>
+            {% endfor %}
+        </div>
+
+        {# ── Filters & Settings ── #}
+        <div class="campaign-header" style="margin-top: 16px;">
+            <h3>Filters & Settings</h3>
+        </div>
+        <div class="form-grid">
+            <div class="form-field">
+                <label>State</label>
+                <input type="text" name="state" placeholder="CA" maxlength="3">
+            </div>
+            <div class="form-field">
+                <label>County</label>
+                <input type="text" name="county" placeholder="Los Angeles">
+            </div>
+            <div class="form-field">
+                <label>Min Revenue ($)</label>
+                <input type="number" name="min_revenue" placeholder="100000" min="0">
+            </div>
+            <div class="form-field">
+                <label>Sender Name</label>
+                <input type="text" name="sender_name" placeholder="Joshua" value="Joshua">
+            </div>
+            <div class="form-field">
+                <label>Sender Email</label>
+                <input type="email" name="sender_email" placeholder="joshua@u9itus.com" value="joshua@u9itus.com">
+            </div>
+            <div class="form-field">
+                <label>Stale Threshold (days)</label>
+                <input type="number" name="stale_threshold_days" value="14" min="1" max="90">
+            </div>
+            <div class="form-field">
+                <label>Number of Touches</label>
+                <input type="number" name="touch_count" value="4" min="1" max="8">
+            </div>
+            <div class="form-field">
+                <label>Cadence Delays (days, comma-separated)</label>
+                <input type="text" name="cadence_days" value="3,4,5" placeholder="3,4,5">
+            </div>
+        </div>
+
+        <div style="margin: 16px 0;">
+            <button type="submit" class="btn">Create Campaign</button>
+        </div>
+
+        </form>
+    </details>
+</div>
+
+{# ── Existing Campaigns ── #}
 {% for c in campaigns %}
 <div class="campaign-section">
     <div class="campaign-header">
         <h2>{{ c.config.name }}</h2>
-        <a href="/admin/campaigns/{{ c.config.db_name }}" class="btn btn-sm">Edit Plugins →</a>
+        <a href="/admin/campaigns/{{ c.config.db_name }}" class="btn btn-sm">Edit Plugins & Import Leads →</a>
     </div>
 
     <div class="campaign-grid">

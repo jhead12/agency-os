@@ -123,6 +123,7 @@ ROUTE_RULES: dict[str, str] = {
     "GET /admin/jobs": OWNER,
     "POST /admin/jobs/{job_key}/run": OWNER,
     "GET /admin/campaigns": OWNER,
+    "POST /admin/campaigns/create": OWNER,
     "GET /admin/campaigns/{campaign_slug}": OWNER,
     "POST /admin/campaigns/{campaign_slug}": OWNER,
     "POST /admin/campaigns/{campaign_slug}/import-csv": OWNER,

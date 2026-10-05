@@ -75,6 +75,12 @@ def get_campaigns():
     return discover_campaigns(str(CAMPAIGNS_DIR))
 
 
+def _invalidate_campaign_cache():
+    """Force get_campaigns() to re-sync from the database on next call."""
+    global _campaigns_synced
+    _campaigns_synced = False
+
+
 def save_campaign_file(path: Path, content: str) -> None:
     """Write a campaign file to the local cache and to the database."""
     path.write_text(content)
@@ -2064,13 +2070,217 @@ async def admin_campaigns(request: Request, msg: str = Query(default=""), error:
             "yaml": yaml_content,
         })
 
+    # Get available plugins for the create-campaign form
+    plugins = _get_registry_plugins()
+
     return templates.TemplateResponse(request, "admin_campaigns.html", {
         "active": "admin",
         "campaigns": campaign_data,
-        "plugins": _get_registry_plugins(),
+        "plugins": plugins,
         "msg": msg,
         "error": error,
     })
+
+
+@app.post("/admin/campaigns/create")
+async def admin_create_campaign(
+    request: Request,
+    name: str = Form(...),
+    product: str = Form(...),
+    prospect_sources: list[str] = Form(default=[]),
+    channels: list[str] = Form(default=[]),
+    enrichers: list[str] = Form(default=[]),
+    scheduler: str = Form(default=""),
+    sender_name: str = Form(default=""),
+    sender_email: str = Form(default=""),
+    state: str = Form(default=""),
+    county: str = Form(default=""),
+    min_revenue: str = Form(default=""),
+    stale_threshold_days: str = Form(default="14"),
+    touch_count: str = Form(default="4"),
+    cadence_days: str = Form(default="3,4,5"),
+):
+    """Create a new campaign with a campaign.yaml and starter scripts.
+
+    Generates a folder under campaigns/<slug>/ with:
+      - campaign.yaml (full config with plugins, filters, cadence, stages)
+      - scripts/00_cold_outreach.yaml (starter email script)
+      - scripts/phone_00_cold_call.yaml (starter phone script)
+
+    The admin can then edit plugins, import CSV leads, and customize scripts
+    from the campaign detail page.
+    """
+    if not _same_origin(request):
+        return _back("/admin/campaigns", error="Cross-site request blocked.")
+
+    import re
+    import yaml as _yaml
+
+    # Generate slug from name
+    slug = re.sub(r"[^a-z0-9-]", "", name.lower().replace(" ", "-"))
+    if not slug:
+        return _back("/admin/campaigns", error="Campaign name must produce a valid slug.")
+
+    # Check for duplicate
+    existing = get_campaigns()
+    for c in existing:
+        if c.db_name == slug:
+            return _back("/admin/campaigns", error=f"Campaign '{slug}' already exists.")
+
+    if not prospect_sources:
+        return _back("/admin/campaigns", error="Select at least one prospect source.")
+    if not channels:
+        return _back("/admin/campaigns", error="Select at least one channel.")
+
+    # Build filters
+    filters = {}
+    if state:
+        filters["state"] = state.upper()
+    if county:
+        filters["county"] = county
+    if min_revenue:
+        try:
+            filters["min_revenue"] = int(min_revenue)
+        except ValueError:
+            pass
+
+    # Build cadence
+    try:
+        n_touches = max(1, int(touch_count))
+    except ValueError:
+        n_touches = 4
+
+    delay_parts = cadence_days.split(",") if cadence_days else []
+    delays = []
+    for d in delay_parts:
+        d = d.strip()
+        if d:
+            try:
+                delays.append(int(d))
+            except ValueError:
+                pass
+    while len(delays) < n_touches:
+        delays.append(3)
+
+    stages = ["cold", "contacted", "engaged", "demo_scheduled", "proposal_sent", "closed_won", "closed_lost", "nurture"]
+
+    script_names = ["00_cold_outreach", "01_followup_impact", "02_followup_cobrand", "03_breakup",
+                    "04_followup_2", "05_followup_3", "06_followup_4", "07_breakup_2"]
+    next_stages = ["contacted", "contacted", "contacted", "nurture",
+                   "contacted", "contacted", "contacted", "nurture"]
+
+    cadence = []
+    cumulative = 0
+    for i in range(n_touches):
+        cumulative += delays[i] if i < len(delays) else 3
+        cadence.append({
+            "touch": i,
+            "delay_days": cumulative if i > 0 else 0,
+            "script": script_names[i] if i < len(script_names) else f"0{i}_followup",
+            "next_stage": next_stages[i] if i < len(next_stages) else "contacted",
+        })
+
+    # Build the campaign YAML
+    raw = {
+        "name": name,
+        "product": product,
+        "prospect_sources": prospect_sources,
+        "channels": channels,
+        "enrichers": enrichers if enrichers else [],
+    }
+    if scheduler:
+        raw["scheduler"] = scheduler
+    if filters:
+        raw["filters"] = filters
+    raw["stages"] = stages
+    raw["cadence"] = cadence
+    raw["stale_threshold_days"] = int(stale_threshold_days) if stale_threshold_days else 14
+    if sender_name:
+        raw["sender_name"] = sender_name
+    if sender_email:
+        raw["sender_email"] = sender_email
+
+    yaml_content = _yaml.dump(raw, default_flow_style=False, sort_keys=False, allow_unicode=True)
+
+    # Starter email script
+    cold_script = {
+        "key": f"{slug}_cold_outreach",
+        "stage": "cold",
+        "subject": "Voters in {{city}} deserve better candidate info",
+        "body": (
+            "Hi {{contact_first}},\n\n"
+            "68% of voters say they lack confidence in their candidate research.\n"
+            "That's not a voter problem — it's an information problem.\n\n"
+            "We built U9itus: one platform, verified public records, no account needed.\n"
+            "{{org_name}} can distribute a personalized, nonpartisan voter guide to your\n"
+            "constituents — candidates side-by-side, ballot measures in plain language,\n"
+            "co-branded with your logo, embeddable on your site.\n\n"
+            "Interested in learning how this works for your district?\n\n"
+            "{{your_name}}"
+        ),
+    }
+
+    # Starter phone script
+    phone_script = {
+        "key": f"{slug}_cold_call",
+        "stage": "cold",
+        "goal": "Get past the gatekeeper and schedule a 15-min demo",
+        "script": (
+            "Hi, I'm calling for {{contact_first}}. [Wait]\n\n"
+            "Hi {{contact_first}}, I'm {{your_name}} with U9itus. We build digital voter\n"
+            "guides that organizations like {{org_name}} can share with their community.\n\n"
+            "I'll keep this brief — can I send you a link to a personalized demo so you\n"
+            "can see what it looks like for your district?\n\n"
+            "[If yes]: Great, what's the best email? [Send demo link]\n"
+            "[If no]: No problem. Is there someone else I should talk to about\n"
+            "civic engagement or voter education initiatives?\n\n"
+            "[If gatekeeper]: I'm following up about a voter education resource for\n"
+            "{{org_name}}. What's the best way to reach {{contact_first}} or whoever\n"
+            "handles community programs?"
+        ),
+        "objections": {
+            "Not interested": "Totally understand. Can I at least send a one-page overview so you have it on file?",
+            "Too busy": "I respect your time — this takes 15 seconds to review. I'll send a link and follow up in a week.",
+            "We already have a voter guide": "That's great — ours is complementary, not a replacement. Can I show you how it's different?",
+            "Send me an email": "Absolutely — what's the best address? [Send demo link, schedule follow-up call]",
+        },
+    }
+
+    # Save all files to the database and local cache
+    db = get_db()
+    campaign_rel_path = f"{slug}/campaign.yaml"
+    db.save_campaign_file(campaign_rel_path, yaml_content)
+    db.save_campaign_file(f"{slug}/scripts/00_cold_outreach.yaml",
+                          _yaml.dump(cold_script, default_flow_style=False, sort_keys=False, allow_unicode=True))
+    db.save_campaign_file(f"{slug}/scripts/phone_00_cold_call.yaml",
+                          _yaml.dump(phone_script, default_flow_style=False, sort_keys=False, allow_unicode=True))
+
+    # Also write to the local cache so the campaign is immediately discoverable
+    cache_dir = CAMPAIGNS_DIR / slug
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    (cache_dir / "campaign.yaml").write_text(yaml_content)
+    (cache_dir / "scripts").mkdir(exist_ok=True)
+    (cache_dir / "scripts" / "00_cold_outreach.yaml").write_text(
+        _yaml.dump(cold_script, default_flow_style=False, sort_keys=False, allow_unicode=True))
+    (cache_dir / "scripts" / "phone_00_cold_call.yaml").write_text(
+        _yaml.dump(phone_script, default_flow_style=False, sort_keys=False, allow_unicode=True))
+
+    # Register the campaign in the campaigns table
+    db.upsert_campaign(slug, str(cache_dir))
+
+    # Invalidate cache so get_campaigns() picks up the new campaign
+    _invalidate_campaign_cache()
+
+    # Audit
+    db.audit(
+        current_user(request),
+        "campaign.create",
+        "campaign",
+        slug,
+        {"name": name, "product": product, "sources": prospect_sources, "channels": channels},
+    )
+
+    return _back("/admin/campaigns", msg=f"Campaign '{name}' created. Add leads via CSV import or sync from the detail page.")
 
 
 @app.get("/admin/campaigns/{campaign_slug}", response_class=HTMLResponse)
