@@ -49,6 +49,55 @@ class Product(Protocol):
 
 
 @runtime_checkable
+class DemoPortalProduct(Protocol):
+    """A product that hosts a personal demo page per prospect (optional).
+
+    Events from pull_events() use the shared vocabulary portal.viewed,
+    portal.claimed, portal.published and portal.expired, and identify the
+    prospect with external_ref "agency-os:prospect:<id>"; a product whose own
+    API names things differently translates them inside pull_events().
+
+    Optional extras the Plugins page uses when present:
+    check_connection() -> dict and create_test_portal() -> dict.
+    """
+
+    key: str
+    # Key for this product's details in prospect.metadata, and the prefix on
+    # its activity-log refs ("<namespace>:<event id>").
+    portal_namespace: str
+    # What the dashboard calls the page, e.g. "u9itus demo page".
+    portal_label: str
+
+    def is_configured(self) -> bool:
+        """Whether the product's API credentials are set."""
+        ...
+
+    def setup_hint(self) -> str:
+        """What to set when is_configured() is False."""
+        ...
+
+    def provision_demo(self, prospect: Prospect, contact_email: str = "", refresh: bool = False) -> dict:
+        """Create (or with refresh, renew) the prospect's demo page.
+
+        Returns demo_url, claim_url, slug, status, expires_at; or {error: True, detail}.
+        """
+        ...
+
+    def get_portal_status(self, prospect: Prospect) -> dict:
+        """Current status, expiry and traffic ({views_30d, last_viewed_on}) of the page."""
+        ...
+
+    def pull_events(self, after: int = 0, limit: int = 100) -> dict:
+        """Events after the cursor: {events: [...], next_cursor: int}."""
+        ...
+
+
+def portal_product(product) -> Optional[DemoPortalProduct]:
+    """The product if it hosts demo pages, else None."""
+    return product if isinstance(product, DemoPortalProduct) else None
+
+
+@runtime_checkable
 class Channel(Protocol):
     """A delivery mechanism for outreach messages."""
 

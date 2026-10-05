@@ -17,6 +17,7 @@ from core.campaign import CampaignConfig, discover_campaigns
 from core.db import Database
 from core import lead_packages
 from core.models import Prospect, SendResult
+from core.protocols import DemoPortalProduct, portal_product
 from core.registry import PluginRegistry
 
 
@@ -318,7 +319,7 @@ class Pipeline:
             updates: dict = {"activity_log": log}
 
             if booking.status == "canceled":
-                # A prospect who claimed their u9itus portal is still in the
+                # A prospect who claimed their demo portal is still in the
                 # product, so a canceled meeting doesn't move them back (A10).
                 claimed = any(e.get("type") == "portal.claimed" for e in log)
                 if outreach.stage == "demo_scheduled" and not claimed:
@@ -416,13 +417,12 @@ class Pipeline:
         if not campaign_id:
             return {**stats, "error": "campaign not found"}
 
-        product = self.registry.get_product(campaign.product)
-        if not product or not hasattr(product, "provision_demo"):
+        product = portal_product(self.registry.get_product(campaign.product))
+        if not product:
             return {**stats, "error": "product does not support demo provisioning"}
 
-        # Check if API is configured
-        if hasattr(product, "client") and not product.client.is_configured():
-            return {**stats, "api_not_configured": True}
+        if not product.is_configured():
+            return {**stats, "api_not_configured": True, "setup_hint": product.setup_hint()}
 
         # Find prospects that need provisioning: have email, no demo_link, in cold/contacted
         rows = self.db.conn.execute(
@@ -462,7 +462,7 @@ class Pipeline:
 
                 demo_url = result.get("demo_url", "")
                 if demo_url:
-                    self._store_portal(prospect, result, [row["id"]])
+                    self._store_portal(product, prospect, result, [row["id"]])
                     print(f"    ✓ {prospect.name} → {demo_url[:60]}...")
                     stats["provisioned"] += 1
                 else:
@@ -481,11 +481,11 @@ class Pipeline:
 
         Returns the API result, or {"error": True, "detail": ...}.
         """
-        product = self.registry.get_product(campaign.product)
-        if not product or not hasattr(product, "provision_demo"):
+        product = portal_product(self.registry.get_product(campaign.product))
+        if not product:
             return {"error": True, "detail": "This campaign's product can't create demo pages."}
-        if hasattr(product, "client") and not product.client.is_configured():
-            return {"error": True, "detail": "The u9itus API isn't configured (U9ITUS_BASE_URL, U9ITUS_AGENCY_TOKEN)."}
+        if not product.is_configured():
+            return {"error": True, "detail": f"The API isn't configured. {product.setup_hint()}."}
 
         prospect = self.db.get_prospect(prospect_id)
         if not prospect:
@@ -500,16 +500,16 @@ class Pipeline:
         if result.get("error"):
             return result
         if result.get("demo_url"):
-            self._store_portal(prospect, result, [r["id"] for r in rows])
+            self._store_portal(product, prospect, result, [r["id"] for r in rows])
         else:
-            self._merge_portal_metadata(prospect_id, {"status": result.get("status")})
+            self._merge_portal_metadata(product, prospect_id, {"status": result.get("status")})
         return result
 
     def refresh_portal_status(self, campaign: CampaignConfig, prospect_id: int) -> dict:
-        """Fetch a prospect's portal status and 30-day views from u9itus and keep them on the prospect."""
-        product = self.registry.get_product(campaign.product)
+        """Fetch a prospect's portal status and 30-day views from the product and keep them on the prospect."""
+        product = portal_product(self.registry.get_product(campaign.product))
         prospect = self.db.get_prospect(prospect_id)
-        if not product or not hasattr(product, "get_portal_status") or not prospect:
+        if not product or not prospect:
             return {"error": True, "detail": "Status isn't available for this prospect."}
 
         result = product.get_portal_status(prospect)
@@ -517,7 +517,7 @@ class Pipeline:
             return result
 
         traffic = result.get("traffic") or {}
-        self._merge_portal_metadata(prospect_id, {
+        self._merge_portal_metadata(product, prospect_id, {
             "status": result.get("status"),
             "expires_at": result.get("expires_at"),
             "views_30d": traffic.get("views_30d"),
@@ -526,24 +526,26 @@ class Pipeline:
         })
         return result
 
-    def _store_portal(self, prospect: Prospect, result: dict, outreach_ids: list[int]) -> None:
+    def _store_portal(self, product: DemoPortalProduct, prospect: Prospect, result: dict,
+                      outreach_ids: list[int]) -> None:
         """Save a provisioned portal: the demo link on the outreach rows, details on the prospect."""
         for outreach_id in outreach_ids:
             self.db.update_outreach(outreach_id, {"demo_link": result.get("demo_url")})
-        self._merge_portal_metadata(prospect.id, {
+        self._merge_portal_metadata(product, prospect.id, {
             "slug": result.get("slug"),
             "claim_url": result.get("claim_url"),
             "status": result.get("status"),
             "expires_at": result.get("expires_at"),
         })
 
-    def _merge_portal_metadata(self, prospect_id: int, values: dict) -> None:
-        """Update prospect.metadata["u9itus"], keeping keys not in `values`."""
+    def _merge_portal_metadata(self, product: DemoPortalProduct, prospect_id: int, values: dict) -> None:
+        """Update prospect.metadata[<product's portal_namespace>], keeping keys not in `values`."""
         row = self.db.conn.execute("SELECT metadata FROM prospects WHERE id = ?", (prospect_id,)).fetchone()
         if not row:
             return
         metadata = json.loads(row["metadata"] or "{}")
-        metadata["u9itus"] = {**(metadata.get("u9itus") or {}), **values}
+        ns = product.portal_namespace
+        metadata[ns] = {**(metadata.get(ns) or {}), **values}
         self.db.conn.execute(
             "UPDATE prospects SET metadata = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (json.dumps(metadata), prospect_id),
@@ -567,7 +569,7 @@ class Pipeline:
     }
 
     def pull_product_events(self, campaign: CampaignConfig, dry_run: bool = False) -> dict:
-        """Pull events from u9itus and auto-advance pipeline stages.
+        """Pull the product's portal events and auto-advance pipeline stages.
 
         Idempotent: events already processed (in product_events table) are skipped.
         """
@@ -576,12 +578,12 @@ class Pipeline:
         if not campaign_id:
             return {**stats, "error": "campaign not found"}
 
-        product = self.registry.get_product(campaign.product)
-        if not product or not hasattr(product, "pull_events"):
+        product = portal_product(self.registry.get_product(campaign.product))
+        if not product:
             return {**stats, "error": "product does not support event pulling"}
 
-        if hasattr(product, "client") and not product.client.is_configured():
-            return {**stats, "api_not_configured": True}
+        if not product.is_configured():
+            return {**stats, "api_not_configured": True, "setup_hint": product.setup_hint()}
 
         # Get last cursor from sync_cursors
         cursor = self._get_cursor(campaign.product)
@@ -643,7 +645,7 @@ class Pipeline:
             status = {"portal.claimed": "claimed", "portal.published": "published",
                       "portal.expired": "expired"}.get(event_type)
             if status:
-                self._merge_portal_metadata(prospect_id, {"status": status})
+                self._merge_portal_metadata(product, prospect_id, {"status": status})
             if event_type == "portal.expired":
                 # The link no longer works; clearing it lets provisioning issue a new one.
                 self.db.conn.execute(
@@ -658,7 +660,7 @@ class Pipeline:
                 (prospect_id,),
             ).fetchall()
             for outreach_row in outreach_rows:
-                if self._apply_portal_event(outreach_row, event):
+                if self._apply_portal_event(product, outreach_row, event):
                     print(f"    ✓ Prospect {prospect_id}: {outreach_row['stage']} → "
                           f"{self.EVENT_STAGE_MAP[event_type]} ({event_type})")
                     stats["stage_changes"] += 1
@@ -671,7 +673,7 @@ class Pipeline:
 
         return stats
 
-    def _apply_portal_event(self, outreach_row, event: dict) -> bool:
+    def _apply_portal_event(self, product: DemoPortalProduct, outreach_row, event: dict) -> bool:
         """Log one portal event on one outreach row and move its stage forward.
 
         Viewed and claimed events are always logged (A10 relies on the
@@ -684,7 +686,7 @@ class Pipeline:
         if not target_stage:
             return False
 
-        event_ref = f"u9itus:{event.get('id')}"
+        event_ref = f"{product.portal_namespace}:{event.get('id')}"
         activity = json.loads(outreach_row["activity_log"] or "[]")
         if any(a.get("ref") == event_ref for a in activity):
             return False
