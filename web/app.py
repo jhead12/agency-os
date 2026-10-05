@@ -41,7 +41,7 @@ from core.env import load_dotenv  # noqa: E402
 
 load_dotenv()  # .env settings for local runs; a deploy's own environment always wins
 
-from fastapi import FastAPI, Request, Query, HTTPException, Form, Depends
+from fastapi import FastAPI, Request, Query, HTTPException, Form, Depends, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -86,6 +86,12 @@ def get_campaigns():
 
 
 tools.campaign_source = lambda: get_campaigns()  # the AI tools read campaigns through the web app's cache
+
+
+def _invalidate_campaign_cache():
+    """Force get_campaigns() to re-sync from the database on next call."""
+    global _campaigns_synced
+    _campaigns_synced = False
 
 
 def save_campaign_file(path: Path, content: str) -> None:
@@ -2555,13 +2561,217 @@ async def admin_campaigns(request: Request, msg: str = Query(default=""), error:
             "yaml": yaml_content,
         })
 
+    # Get available plugins for the create-campaign form
+    plugins = _get_registry_plugins()
+
     return templates.TemplateResponse(request, "admin_campaigns.html", {
         "active": "admin",
         "campaigns": campaign_data,
-        "plugins": _get_registry_plugins(),
+        "plugins": plugins,
         "msg": msg,
         "error": error,
     })
+
+
+@app.post("/admin/campaigns/create")
+async def admin_create_campaign(
+    request: Request,
+    name: str = Form(...),
+    product: str = Form(...),
+    prospect_sources: list[str] = Form(default=[]),
+    channels: list[str] = Form(default=[]),
+    enrichers: list[str] = Form(default=[]),
+    scheduler: str = Form(default=""),
+    sender_name: str = Form(default=""),
+    sender_email: str = Form(default=""),
+    state: str = Form(default=""),
+    county: str = Form(default=""),
+    min_revenue: str = Form(default=""),
+    stale_threshold_days: str = Form(default="14"),
+    touch_count: str = Form(default="4"),
+    cadence_days: str = Form(default="3,4,5"),
+):
+    """Create a new campaign with a campaign.yaml and starter scripts.
+
+    Generates a folder under campaigns/<slug>/ with:
+      - campaign.yaml (full config with plugins, filters, cadence, stages)
+      - scripts/00_cold_outreach.yaml (starter email script)
+      - scripts/phone_00_cold_call.yaml (starter phone script)
+
+    The admin can then edit plugins, import CSV leads, and customize scripts
+    from the campaign detail page.
+    """
+    if not _same_origin(request):
+        return _back("/admin/campaigns", error="Cross-site request blocked.")
+
+    import re
+    import yaml as _yaml
+
+    # Generate slug from name
+    slug = re.sub(r"[^a-z0-9-]", "", name.lower().replace(" ", "-"))
+    if not slug:
+        return _back("/admin/campaigns", error="Campaign name must produce a valid slug.")
+
+    # Check for duplicate
+    existing = get_campaigns()
+    for c in existing:
+        if c.db_name == slug:
+            return _back("/admin/campaigns", error=f"Campaign '{slug}' already exists.")
+
+    if not prospect_sources:
+        return _back("/admin/campaigns", error="Select at least one prospect source.")
+    if not channels:
+        return _back("/admin/campaigns", error="Select at least one channel.")
+
+    # Build filters
+    filters = {}
+    if state:
+        filters["state"] = state.upper()
+    if county:
+        filters["county"] = county
+    if min_revenue:
+        try:
+            filters["min_revenue"] = int(min_revenue)
+        except ValueError:
+            pass
+
+    # Build cadence
+    try:
+        n_touches = max(1, int(touch_count))
+    except ValueError:
+        n_touches = 4
+
+    delay_parts = cadence_days.split(",") if cadence_days else []
+    delays = []
+    for d in delay_parts:
+        d = d.strip()
+        if d:
+            try:
+                delays.append(int(d))
+            except ValueError:
+                pass
+    while len(delays) < n_touches:
+        delays.append(3)
+
+    stages = ["cold", "contacted", "engaged", "demo_scheduled", "proposal_sent", "closed_won", "closed_lost", "nurture"]
+
+    script_names = ["00_cold_outreach", "01_followup_impact", "02_followup_cobrand", "03_breakup",
+                    "04_followup_2", "05_followup_3", "06_followup_4", "07_breakup_2"]
+    next_stages = ["contacted", "contacted", "contacted", "nurture",
+                   "contacted", "contacted", "contacted", "nurture"]
+
+    cadence = []
+    cumulative = 0
+    for i in range(n_touches):
+        cumulative += delays[i] if i < len(delays) else 3
+        cadence.append({
+            "touch": i,
+            "delay_days": cumulative if i > 0 else 0,
+            "script": script_names[i] if i < len(script_names) else f"0{i}_followup",
+            "next_stage": next_stages[i] if i < len(next_stages) else "contacted",
+        })
+
+    # Build the campaign YAML
+    raw = {
+        "name": name,
+        "product": product,
+        "prospect_sources": prospect_sources,
+        "channels": channels,
+        "enrichers": enrichers if enrichers else [],
+    }
+    if scheduler:
+        raw["scheduler"] = scheduler
+    if filters:
+        raw["filters"] = filters
+    raw["stages"] = stages
+    raw["cadence"] = cadence
+    raw["stale_threshold_days"] = int(stale_threshold_days) if stale_threshold_days else 14
+    if sender_name:
+        raw["sender_name"] = sender_name
+    if sender_email:
+        raw["sender_email"] = sender_email
+
+    yaml_content = _yaml.dump(raw, default_flow_style=False, sort_keys=False, allow_unicode=True)
+
+    # Starter email script
+    cold_script = {
+        "key": f"{slug}_cold_outreach",
+        "stage": "cold",
+        "subject": "Voters in {{city}} deserve better candidate info",
+        "body": (
+            "Hi {{contact_first}},\n\n"
+            "68% of voters say they lack confidence in their candidate research.\n"
+            "That's not a voter problem — it's an information problem.\n\n"
+            "We built U9itus: one platform, verified public records, no account needed.\n"
+            "{{org_name}} can distribute a personalized, nonpartisan voter guide to your\n"
+            "constituents — candidates side-by-side, ballot measures in plain language,\n"
+            "co-branded with your logo, embeddable on your site.\n\n"
+            "Interested in learning how this works for your district?\n\n"
+            "{{your_name}}"
+        ),
+    }
+
+    # Starter phone script
+    phone_script = {
+        "key": f"{slug}_cold_call",
+        "stage": "cold",
+        "goal": "Get past the gatekeeper and schedule a 15-min demo",
+        "script": (
+            "Hi, I'm calling for {{contact_first}}. [Wait]\n\n"
+            "Hi {{contact_first}}, I'm {{your_name}} with U9itus. We build digital voter\n"
+            "guides that organizations like {{org_name}} can share with their community.\n\n"
+            "I'll keep this brief — can I send you a link to a personalized demo so you\n"
+            "can see what it looks like for your district?\n\n"
+            "[If yes]: Great, what's the best email? [Send demo link]\n"
+            "[If no]: No problem. Is there someone else I should talk to about\n"
+            "civic engagement or voter education initiatives?\n\n"
+            "[If gatekeeper]: I'm following up about a voter education resource for\n"
+            "{{org_name}}. What's the best way to reach {{contact_first}} or whoever\n"
+            "handles community programs?"
+        ),
+        "objections": {
+            "Not interested": "Totally understand. Can I at least send a one-page overview so you have it on file?",
+            "Too busy": "I respect your time — this takes 15 seconds to review. I'll send a link and follow up in a week.",
+            "We already have a voter guide": "That's great — ours is complementary, not a replacement. Can I show you how it's different?",
+            "Send me an email": "Absolutely — what's the best address? [Send demo link, schedule follow-up call]",
+        },
+    }
+
+    # Save all files to the database and local cache
+    db = get_db()
+    campaign_rel_path = f"{slug}/campaign.yaml"
+    db.save_campaign_file(campaign_rel_path, yaml_content)
+    db.save_campaign_file(f"{slug}/scripts/00_cold_outreach.yaml",
+                          _yaml.dump(cold_script, default_flow_style=False, sort_keys=False, allow_unicode=True))
+    db.save_campaign_file(f"{slug}/scripts/phone_00_cold_call.yaml",
+                          _yaml.dump(phone_script, default_flow_style=False, sort_keys=False, allow_unicode=True))
+
+    # Also write to the local cache so the campaign is immediately discoverable
+    cache_dir = CAMPAIGNS_DIR / slug
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    (cache_dir / "campaign.yaml").write_text(yaml_content)
+    (cache_dir / "scripts").mkdir(exist_ok=True)
+    (cache_dir / "scripts" / "00_cold_outreach.yaml").write_text(
+        _yaml.dump(cold_script, default_flow_style=False, sort_keys=False, allow_unicode=True))
+    (cache_dir / "scripts" / "phone_00_cold_call.yaml").write_text(
+        _yaml.dump(phone_script, default_flow_style=False, sort_keys=False, allow_unicode=True))
+
+    # Register the campaign in the campaigns table
+    db.upsert_campaign(slug, str(cache_dir))
+
+    # Invalidate cache so get_campaigns() picks up the new campaign
+    _invalidate_campaign_cache()
+
+    # Audit
+    db.audit(
+        current_user(request),
+        "campaign.create",
+        "campaign",
+        slug,
+        {"name": name, "product": product, "sources": prospect_sources, "channels": channels},
+    )
+
+    return _back("/admin/campaigns", msg=f"Campaign '{name}' created. Add leads via CSV import or sync from the detail page.")
 
 
 @app.get("/admin/campaigns/{campaign_slug}", response_class=HTMLResponse)
@@ -2709,6 +2919,220 @@ async def admin_campaign_update(
     save_campaign_file(yaml_path, _yaml.dump(raw, default_flow_style=False, sort_keys=False))
 
     return _back("/admin/campaigns", msg=f"Updated campaign '{campaign.name}'.")
+
+
+# ── CSV Lead Import ─────────────────────────────────────────────────
+
+# Maps CSV column headers (case-insensitive) to Prospect model fields.
+# Multiple header variants are accepted for each field.
+_CSV_FIELD_MAP = {
+    "name": ["name", "organization", "organization name", "org", "company"],
+    "ein": ["ein", "tax id", "tax_id"],
+    "ntee_code": ["ntee", "ntee_code", "ntee code", "category"],
+    "website_url": ["website", "website_url", "url", "domain"],
+    "address": ["address", "street", "address1", "address_1", "street_address"],
+    "city": ["city"],
+    "state": ["state", "st"],
+    "zip": ["zip", "zip_code", "zipcode", "postal", "postal_code"],
+    "county": ["county"],
+    "focus_area": ["focus_area", "focus area", "focus", "category"],
+    "annual_revenue": ["annual_revenue", "annual revenue", "revenue", "income"],
+    "voter_engagement": ["voter_engagement", "voter engagement"],
+    "source": ["source", "lead_source", "lead source"],
+    "source_url": ["source_url", "source url", "referral", "ref"],
+    # Outreach-level contact info (goes on the outreach row, not prospect)
+    "contact_name": ["contact_name", "contact", "contact name", "first name", "firstname"],
+    "contact_email": ["contact_email", "email", "contact email", "e-mail"],
+    "contact_phone": ["contact_phone", "phone", "contact phone", "telephone", "tel"],
+    "contact_title": ["contact_title", "contact title", "title", "position"],
+}
+
+
+def _parse_csv_headers(headers: list[str]) -> dict[str, int]:
+    """Map CSV column headers to field names. Returns {field: col_index}."""
+    mapping = {}
+    normalized = [h.strip().lower() for h in headers]
+    for field, variants in _CSV_FIELD_MAP.items():
+        for i, col in enumerate(normalized):
+            if col in variants and field not in mapping:
+                mapping[field] = i
+    return mapping
+
+
+@app.post("/admin/campaigns/{campaign_slug}/import-csv")
+async def import_csv_leads(
+    request: Request,
+    campaign_slug: str,
+    file: UploadFile = File(...),
+):
+    """Upload a CSV file of leads and add them to a campaign.
+
+    Accepts any CSV with a header row. Recognized columns (case-insensitive):
+    name, organization, ein, ntee, website, address, city, state, zip,
+    county, focus_area, annual_revenue, voter_engagement, source,
+    contact_name, contact_email, contact_phone, contact_title
+
+    Minimum required: name (and state recommended for dedup).
+
+    Prospects are upserted (matched by EIN or name+state). If the prospect
+    is new to this campaign, an outreach row is created at 'cold' stage.
+    Contact info from the CSV is written to the outreach row.
+    """
+    if not _same_origin(request):
+        return _back("/admin/campaigns", error="Cross-site request blocked.")
+
+    # Find campaign
+    campaigns = get_campaigns()
+    campaign = next((c for c in campaigns if c.db_name == campaign_slug), None)
+    if not campaign:
+        return _back("/admin/campaigns", error=f"Campaign '{campaign_slug}' not found.")
+
+    # Read and parse the CSV
+    import csv as _csv
+    import io
+
+    raw = await file.read()
+    if not raw:
+        return _back(f"/admin/campaigns/{campaign_slug}", error="Empty file.")
+
+    try:
+        text = raw.decode("utf-8-sig")  # handles BOM
+    except UnicodeDecodeError:
+        try:
+            text = raw.decode("latin-1")
+        except Exception:
+            return _back(f"/admin/campaigns/{campaign_slug}", error="Could not decode file. Use UTF-8.")
+
+    reader = _csv.reader(io.StringIO(text))
+    rows = list(reader)
+    if len(rows) < 2:
+        return _back(f"/admin/campaigns/{campaign_slug}", error="CSV needs a header row and at least one data row.")
+
+    field_map = _parse_csv_headers(rows[0])
+    if "name" not in field_map:
+        return _back(
+            f"/admin/campaigns/{campaign_slug}",
+            error="CSV must have a 'name' or 'organization' column.",
+        )
+
+    db = get_db()
+    from core.models import Prospect
+    import json as _json
+
+    campaign_id = db.get_campaign_id(campaign.db_name) or db.upsert_campaign(campaign.db_name, str(campaign.config_dir))
+
+    imported = 0
+    updated = 0
+    skipped = 0
+    errors = []
+
+    for row_idx, row in enumerate(rows[1:], start=2):
+        if not row or all(not c.strip() for c in row):
+            skipped += 1
+            continue
+
+        def get(field):
+            idx = field_map.get(field)
+            if idx is None or idx >= len(row):
+                return ""
+            return row[idx].strip()
+
+        org_name = get("name")
+        if not org_name:
+            skipped += 1
+            continue
+
+        # Parse annual_revenue as int
+        rev_str = get("annual_revenue").replace(",", "").replace("$", "")
+        try:
+            annual_revenue = int(rev_str) if rev_str else None
+        except ValueError:
+            annual_revenue = None
+
+        # Parse voter_engagement as bool
+        ve_str = get("voter_engagement").lower()
+        voter_engagement = ve_str in ("1", "true", "yes", "y")
+
+        prospect = Prospect(
+            name=org_name,
+            ein=get("ein") or None,
+            ntee_code=get("ntee_code") or None,
+            website_url=get("website_url") or None,
+            address=get("address") or None,
+            city=get("city") or None,
+            state=get("state") or None,
+            zip=get("zip") or None,
+            county=get("county") or None,
+            focus_area=get("focus_area") or None,
+            annual_revenue=annual_revenue,
+            voter_engagement=voter_engagement,
+            source=get("source") or "csv_upload",
+            source_url=get("source_url") or None,
+            metadata={},
+        )
+
+        try:
+            prospect_id = db.upsert_prospect(prospect)
+            # Check if this was an insert or update
+            existing = db.conn.execute(
+                "SELECT created_at, updated_at FROM prospects WHERE id = ?",
+                (prospect_id,),
+            ).fetchone()
+            is_new = existing and existing["created_at"] == existing["updated_at"]
+
+            # Create outreach row for this campaign
+            outreach_id = db.upsert_outreach(prospect_id, campaign_id)
+
+            # If CSV has contact info, update the outreach row
+            contact_name = get("contact_name")
+            contact_email = get("contact_email")
+            contact_phone = get("contact_phone")
+            contact_title = get("contact_title")
+            if contact_name or contact_email or contact_phone:
+                db.update_outreach(outreach_id, {
+                    "contact_name": contact_name,
+                    "contact_email": contact_email,
+                    "contact_phone": contact_phone,
+                    "contact_title": contact_title,
+                })
+
+            if is_new:
+                imported += 1
+            else:
+                updated += 1
+        except Exception as exc:
+            errors.append(f"Row {row_idx}: {exc}")
+            skipped += 1
+
+    db.audit(
+        current_user(request),
+        "csv_import",
+        "campaign",
+        campaign.db_name,
+        {"file": file.filename, "imported": imported, "updated": updated, "skipped": skipped, "errors": errors[:10]},
+    )
+
+    msg = f"Imported {imported} new, updated {updated} existing, skipped {skipped}."
+    if errors:
+        msg += f" {len(errors)} error(s): {errors[0]}"
+    return _back(f"/admin/campaigns/{campaign_slug}", msg=msg)
+
+
+@app.get("/admin/campaigns/{campaign_slug}/import-template")
+async def download_csv_template():
+    """Download a blank CSV template with the recognized column headers."""
+    from fastapi.responses import PlainTextResponse
+    headers = [
+        "name", "ein", "ntee_code", "website_url", "address",
+        "city", "state", "zip", "county", "focus_area",
+        "annual_revenue", "voter_engagement", "source",
+        "contact_name", "contact_email", "contact_phone", "contact_title",
+    ]
+    return PlainTextResponse(
+        ",".join(headers) + "\n",
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=lead_import_template.csv"},
+    )
 
 
 @app.get("/healthz")

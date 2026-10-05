@@ -225,6 +225,47 @@
     </div>
 </div>
 
+<div style="margin: 1.5rem 0;">
+    <button type="submit" class="btn">Save Campaign</button>
+    <a href="/admin/campaigns" class="btn btn-secondary">Cancel</a>
+</div>
+
+</form>
+
+{# ── CSV Lead Import ── #}
+<div class="campaign-section">
+    <div class="campaign-header">
+        <h2>Import Leads from CSV</h2>
+        <span class="badge badge-product">Bulk upload</span>
+    </div>
+    <p style="color: var(--muted-foreground); font-size: 0.875rem; margin-bottom: 12px;">
+        Upload a CSV file with a header row. The system recognizes these columns (case-insensitive):
+        <strong>name</strong> (required), ein, ntee_code, website_url, address, city, state, zip,
+        county, focus_area, annual_revenue, voter_engagement, source, contact_name, contact_email,
+        contact_phone, contact_title. Unknown columns are ignored.
+    </p>
+    <p style="color: var(--muted-foreground); font-size: 0.8rem; margin-bottom: 12px;">
+        Prospects are matched by EIN (or name+state if no EIN). New prospects are added to this
+        campaign at the "cold" stage. Existing prospects are updated. Contact info from the CSV
+        is written to the outreach row.
+    </p>
+    <div style="display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap;">
+        <form method="post" action="/admin/campaigns/{{ campaign.db_name }}/import-csv" enctype="multipart/form-data" id="csv-import-form">
+            <input type="file" name="file" accept=".csv,text/csv" required
+                   style="margin-bottom: 8px; font-size: 0.875rem;">
+            <br>
+            <button type="submit" class="btn">Upload & Import</button>
+            <a href="/admin/campaigns/{{ campaign.db_name }}/import-template" class="btn btn-sm btn-secondary">Download Template</a>
+        </form>
+    </div>
+    {% if request.query_params.get('msg') %}
+    <div class="alert alert-success" style="margin-top: 12px;">{{ request.query_params.get('msg') }}</div>
+    {% endif %}
+    {% if request.query_params.get('error') %}
+    <div class="alert alert-error" style="margin-top: 12px;">{{ request.query_params.get('error') }}</div>
+    {% endif %}
+</div>
+
 {# ── Current YAML ── #}
 <div class="campaign-section">
     <details class="yaml-viewer">
@@ -234,10 +275,7 @@
 </div>
 
 <div style="margin: 1.5rem 0;">
-    <button type="submit" class="btn">Save Campaign</button>
-    <a href="/admin/campaigns" class="btn btn-secondary">Cancel</a>
+    <a href="/admin/campaigns" class="btn btn-secondary">← Back to Campaigns</a>
 </div>
-
-</form>
 
 {% endblock %}
