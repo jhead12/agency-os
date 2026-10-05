@@ -68,6 +68,28 @@ class U9itusVoterGuideProduct:
 
     # ── Demo portal provisioning (A2) ─────────────────────────────────
 
+    def _to_org_type(self, prospect: Prospect) -> str:
+        """Map IRS subsection (from prospect.metadata) to a u9itus org_type.
+
+        The IRS BMF stores subsection as a 2-digit code ("03" = 501(c)(3)).
+        Falls back to 'cbo' when unknown — cbo refuses candidate endorsements,
+        which is the safe default. See doc/AGENCY_OS_INTEGRATION.md section 12
+        ('Pre-seed org_type from IRS data').
+        """
+        import json
+        try:
+            metadata = json.loads(prospect.metadata) if isinstance(prospect.metadata, str) else (prospect.metadata or {})
+        except (ValueError, TypeError):
+            metadata = {}
+        subsection = (metadata.get("irs_subsection") or "").lower().replace(" ", "").lstrip("0")
+        if subsection in ("3", "501(c)(3)", "501c3", "c3"):
+            return "c3_nonprofit"
+        if subsection in ("4", "501(c)(4)", "501c4", "c4"):
+            return "c4_nonprofit"
+        if subsection in ("5", "501(c)(5)", "501c5", "c5"):
+            return "union"
+        return "cbo"
+
     def provision_demo(
         self,
         prospect: Prospect,
@@ -86,15 +108,23 @@ class U9itusVoterGuideProduct:
 
         external_ref = f"agency-os:prospect:{prospect.id}"
 
+        import json
+        try:
+            metadata = json.loads(prospect.metadata) if isinstance(prospect.metadata, str) else (prospect.metadata or {})
+        except (ValueError, TypeError):
+            metadata = {}
+        irs_subsection = metadata.get("irs_subsection") or ""
+
         return self.client.provision_demo(
             external_ref=external_ref,
             name=prospect.name,
             state=prospect.state or "CA",
-            org_type="cbo",
+            org_type=self._to_org_type(prospect),
             website_url=prospect.website_url or "",
             ein=prospect.ein or "",
             contact_email=contact_email,
             refresh=refresh,
+            irs_subsection=irs_subsection,
         )
 
     def get_portal_status(self, prospect: Prospect) -> dict:
