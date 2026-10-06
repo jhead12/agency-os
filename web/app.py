@@ -382,6 +382,30 @@ async def delete_prospect_list(request: Request, list_id: int):
     return RedirectResponse(url="/prospects?" + urlencode(prospect_list_criteria(await request.form())), status_code=303)
 
 
+PROSPECT_SORTS = {
+    "name": "p.name",
+    "city": "p.city",
+    "source": "p.source",
+    "focus": "p.focus_area",
+    "revenue": "p.annual_revenue",
+    "stage": "o.stage",
+    "touch": "o.touch_count",
+    "contact": "o.contact_email",
+    "voter": "p.voter_engagement",
+    "followup": "o.next_follow_up_at",
+}
+
+
+def prospect_list_order(sort: str, direction: str, sort_given: bool) -> tuple[str, str]:
+    """(ORDER BY clause, "ASC"/"DESC") for the prospect list. Every column is
+    sortable, nulls last; revenue defaults to biggest first."""
+    sort_col = PROSPECT_SORTS.get(sort, "p.name")
+    sort_dir = "DESC" if direction.lower() == "desc" else "ASC"
+    if sort == "revenue" and direction == "asc" and not sort_given:
+        sort_dir = "DESC"
+    return f"CASE WHEN {sort_col} IS NULL THEN 1 ELSE 0 END, {sort_col} {sort_dir}", sort_dir
+
+
 @app.get("/prospects", response_class=HTMLResponse)
 async def prospect_list(
     request: Request,
@@ -416,30 +440,7 @@ async def prospect_list(
     """
     total = db.conn.execute(count_sql, params).fetchone()[0]
 
-    # Sort — every column is sortable, with direction toggle
-    sort_map = {
-        "name": "p.name",
-        "city": "p.city",
-        "source": "p.source",
-        "focus": "p.focus_area",
-        "revenue": "p.annual_revenue",
-        "stage": "o.stage",
-        "touch": "o.touch_count",
-        "contact": "o.contact_email",
-        "voter": "p.voter_engagement",
-        "followup": "o.next_follow_up_at",
-    }
-    sort_col = sort_map.get(sort, "p.name")
-    sort_dir = "DESC" if dir.lower() == "desc" else "ASC"
-    if sort == "revenue" and dir == "asc" and sort not in request.query_params:
-        sort_dir = "DESC"
-    order = f"{sort_col} {sort_dir}"
-
-    # Nulls last for DESC, nulls first for ASC
-    if sort_dir == "DESC":
-        order = f"CASE WHEN {sort_col} IS NULL THEN 1 ELSE 0 END, {sort_col} DESC"
-    else:
-        order = f"CASE WHEN {sort_col} IS NULL THEN 1 ELSE 0 END, {sort_col} ASC"
+    order, sort_dir = prospect_list_order(sort, dir, sort in request.query_params)
 
     # Print mode: show all rows (up to 1000), no pagination
     if print:
@@ -1287,6 +1288,38 @@ async def call_scripts(
         "stage_filter": stage,
         "now": _dt.now().strftime("%B %d, %Y at %I:%M %p"),
     })
+
+
+@app.get("/api/prospects/{prospect_id}/neighbors")
+async def prospect_neighbors(
+    request: Request,
+    prospect_id: int,
+    q: str = "", source: str = "", stage: str = "", cities: str = "", campaign: str = "",
+    sort: str = "name", dir: str = "asc",
+):
+    """The previous and next prospect in the list the user came from (same
+    filters and sort as /prospects), so the detail page can move between records."""
+    db = get_db()
+    where, params = db.prospect_filter(
+        {"q": q, "source": source, "stage": stage, "campaign": campaign, "cities": cities}, hidden_for(request))
+    order, _ = prospect_list_order(sort, dir, sort in request.query_params)
+    order += ", p.id"
+    row = db.conn.execute(f"""
+        SELECT prev_id, next_id, position, total FROM (
+            SELECT p.id,
+                   LAG(p.id) OVER (ORDER BY {order}) AS prev_id,
+                   LEAD(p.id) OVER (ORDER BY {order}) AS next_id,
+                   ROW_NUMBER() OVER (ORDER BY {order}) AS position,
+                   COUNT(*) OVER () AS total
+            FROM prospects p
+            LEFT JOIN outreach o ON p.id = o.prospect_id
+            WHERE {where}
+        ) ranked WHERE id = ? ORDER BY position LIMIT 1
+    """, params + [prospect_id]).fetchone()
+    if not row:  # not in that list (filters changed since): no neighbors
+        return {"in_list": False}
+    return {"in_list": True, "prev": row["prev_id"], "next": row["next_id"],
+            "position": row["position"], "total": row["total"]}
 
 
 @app.get("/prospects/{prospect_id}", response_class=HTMLResponse)

@@ -145,6 +145,7 @@ ROUTE_RULES: dict[str, str] = {
     "POST /prospects/saved-lists/{list_id}/delete": "prospects.view",
     "GET /prospects": "prospects.view",  # print=1 additionally needs prospects.export
     "GET /prospects/{prospect_id}": "prospects.view",
+    "GET /api/prospects/{prospect_id}/neighbors": "prospects.view",
     "POST /prospects/{prospect_id}/stage": "pipeline.edit",
     "POST /prospects/{prospect_id}/contact": "prospects.edit",
     "POST /prospects/{prospect_id}/info": "prospects.edit",

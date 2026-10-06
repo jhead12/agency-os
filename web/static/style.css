@@ -347,6 +347,7 @@ body {
 .detail-row {
     display: flex;
     justify-content: space-between;
+    gap: 12px;
     padding: 8px 0;
     border-bottom: 1px solid var(--border);
     font-size: 13px;
@@ -357,7 +358,7 @@ body {
 .detail-row span.badge-success, .detail-row span.badge-warning { color: white; }
 .subtitle a, .detail-row a { color: var(--accent); }
 .detail-row code { overflow-wrap: anywhere; }
-.detail-row > span:last-child { min-width: 0; }
+.detail-row > span:last-child { min-width: 0; overflow-wrap: anywhere; }
 
 .outreach-block { padding-bottom: 12px; margin-bottom: 12px; border-bottom: 1px solid var(--border); }
 .outreach-block:last-child { border-bottom: none; }
@@ -1312,3 +1313,20 @@ body:has(#console-launcher) main.container { padding-bottom: 72px; }
 
 /* Jump links (#members, #cli, ...) land below the sticky navbar, not under it. */
 :target { scroll-margin-top: 72px; }
+
+/* ── Moving between prospect records (record_nav.js) ── */
+.record-breadcrumb { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.record-nav { display: flex; align-items: center; gap: 8px; }
+.record-nav[hidden] { display: none; }
+.record-nav a[aria-disabled="true"] { opacity: 0.4; pointer-events: none; }
+.record-pos { color: var(--text-muted); font-size: 13px; font-variant-numeric: tabular-nums; min-width: 72px; text-align: center; }
+main.container.record-moving {
+    transition-property: transform, opacity;
+    transition-duration: 220ms;
+    transition-timing-function: cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+html[data-record-enter="next"] main.container { transform: translateX(64px); opacity: 0; }
+html[data-record-enter="prev"] main.container { transform: translateX(-64px); opacity: 0; }
+@media (prefers-reduced-motion: reduce) {
+    main.container.record-moving { transition: none; }
+}

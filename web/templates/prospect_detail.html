@@ -2,10 +2,26 @@
 {% block title %}{{ prospect.name }} — agency-os{% endblock %}
 {% block content %}
 <div class="active" style="display:none"></div>
+<script>/* arriving from the previous/next record: start off to the side, then slide in (record_nav.js) */
+try { var enter = sessionStorage.getItem("aos.recordEnter"); sessionStorage.removeItem("aos.recordEnter");
+  if (enter && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    document.documentElement.setAttribute("data-record-enter", enter);
+    requestAnimationFrame(function () { requestAnimationFrame(function () {
+      document.querySelector("main.container").classList.add("record-moving");
+      document.documentElement.removeAttribute("data-record-enter"); }); });
+  } } catch (e) {}
+</script>
 {% set user = request.state.user %}
 
 <div class="page-header">
-    <div class="breadcrumb"><a href="/prospects">← Prospects</a></div>
+    <div class="breadcrumb record-breadcrumb">
+        <a href="/prospects" data-record-back>← Prospects</a>
+        <nav class="record-nav" data-record-nav="{{ prospect.id }}" aria-label="Move between prospects" hidden>
+            <a class="btn btn-sm btn-secondary" data-record-go="prev" aria-disabled="true" title="Previous prospect (←)">‹ Prev</a>
+            <span class="record-pos" data-record-pos></span>
+            <a class="btn btn-sm btn-secondary" data-record-go="next" aria-disabled="true" title="Next prospect (→)">Next ›</a>
+        </nav>
+    </div>
     <div class="page-header-row">
         <div>
             <h1>{{ prospect.name }}</h1>
@@ -527,4 +543,5 @@ document.querySelectorAll('[data-copy]').forEach(function (button) {
     });
 });
 </script>
+<script src="/static/record_nav.js" defer></script>
 {% endblock %}
