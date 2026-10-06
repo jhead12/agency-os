@@ -76,6 +76,27 @@
         {% block content %}{% endblock %}
     </main>
 
+    {% if user and user.can('cli.use') %}
+    {% if request.url.path != '/console' %}
+    {% set console_prompt = user.email.split('@')[0] ~ '@agency-os $' %}
+    <button type="button" class="console-launcher" id="console-launcher" aria-controls="console-dock" aria-expanded="false" title="Console (Ctrl+`)">&gt;_ Console</button>
+    <section class="console-dock" id="console-dock" aria-label="Console" hidden>
+        <div class="console-dock-bar">
+            <span class="console-dock-title">&gt;_ Console</span>
+            <a href="/console" class="console-dock-btn" title="Open as a full page" aria-label="Open as a full page">&#x2922;</a>
+            <button type="button" class="console-dock-btn" data-console-close title="Close (Ctrl+`)" aria-label="Close console">&times;</button>
+        </div>
+        <div class="console console-docked" data-prompt="{{ console_prompt }}">
+            <pre class="console-output" aria-live="polite"></pre>
+            <form class="console-line" autocomplete="off">
+                <label class="console-prompt" for="console-dock-input">{{ console_prompt }}</label>
+                <input id="console-dock-input" class="console-input" spellcheck="false" autocapitalize="off" aria-label="Command">
+            </form>
+        </div>
+    </section>
+    {% endif %}
+    <script src="/static/console.js" defer></script>
+    {% endif %}
     <script src="/static/app.js"></script>
     {% if user and user.uses_ai('ai.connect') %}<script src="/static/webmcp.js" defer></script>{% endif %}
 </body>
