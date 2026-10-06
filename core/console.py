@@ -49,10 +49,14 @@ HINTS = [
 ]
 
 
+GROUPS = ("users", "workflows")  # commands typed as "<group> <action>"
+
+
 def _command(tool: tools.Tool) -> str:
     """users_create_owner → "users create-owner"; search_prospects → "search-prospects"."""
-    if tool.name.startswith("users_"):
-        return "users " + tool.name.removeprefix("users_").replace("_", "-")
+    group = tool.name.split("_", 1)[0]
+    if group in GROUPS:
+        return f"{group} " + tool.name.removeprefix(group + "_").replace("_", "-")
     return tool.name.replace("_", "-")
 
 
@@ -342,4 +346,11 @@ def run_line(db, user: CurrentUser, line: str, *, confirmed: bool = False, sourc
     result = tools.run_tool(db, user, tool.name, args, source=source, confirmed=confirmed, surface="console")
     if not result.get("ok"):
         return {"ok": False, "output": _explain(tool, result.get("error", "failed"), user)}
+    play = result.pop("play", None)
+    if play is not None:  # the browser's player acts it out
+        if source == "cli":
+            return {"ok": True, "output": f"{result['playing']} plays in the browser: open agency-os and run "
+                                          f"this from the console window (Ctrl+`)."}
+        return {"ok": True, "output": f"Playing {result['playing']}. Watch the page; the controls are at the bottom.",
+                "play": play}
     return {"ok": True, "output": format_result(result)}

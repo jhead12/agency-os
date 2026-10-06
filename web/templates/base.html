@@ -65,6 +65,7 @@
                     <div class="nav-account-id" title="{{ user.email }}">Signed in as<strong>{{ user.name }}</strong></div>
                     <a href="/account" class="{% if active == 'account' %}active{% endif %}">My Account</a>
                     {% if user.can('cli.use') %}<a href="/console" class="{% if request.url.path == '/console' %}active{% endif %}">Console</a>{% endif %}
+                    <a href="/workflows" class="{% if active == 'workflows' %}active{% endif %}">Tutorials &amp; workflows</a>
                     <form method="post" action="/logout" class="nav-logout"><button type="submit">Sign out</button></form>
                 </div>
             </details>
@@ -98,6 +99,7 @@
     <script src="/static/console.js" defer></script>
     {% endif %}
     <script src="/static/app.js"></script>
+    {% if user %}<script src="/static/player.js" defer></script>{% endif %}
     {% if user and user.uses_ai('ai.connect') %}<script src="/static/webmcp.js" defer></script>{% endif %}
 </body>
 </html>

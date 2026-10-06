@@ -1,0 +1,16 @@
+name: Log a call
+description: Where calls are recorded on a prospect's page. Nothing is saved.
+requires: calls.log
+steps:
+  - goto: /prospects
+    say: Calls are logged from the prospect you called.
+  - click: 'table.data-table tbody a[href^="/prospects/"]'
+    say: Open the prospect.
+  - wait: {for: .call-log-form}
+  - highlight: .call-log-form
+    say: After a call, fill in this form. It's further down the page.
+  - highlight: '.call-log-form select[name="outcome"]'
+    say: Pick the outcome. Disconnected numbers and wrong numbers matter for lead guarantees, so record them honestly.
+  - highlight: '.call-log-form textarea, .call-log-form input[name="next_step"]'
+    say: Add notes and the next step for whoever calls them next.
+  - pause: The tutorial stops before saving. Log your next real call here.

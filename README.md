@@ -298,6 +298,21 @@ command list: [CLI_REFERENCE.md](CLI_REFERENCE.md#command-console-browser-and-re
 Run the tests against a scratch database (it is wiped, and its name must
 contain "test"): `TEST_DATABASE_URL=postgresql://localhost/agency_os_test python -m pytest tests/`.
 
+## Tutorials & workflows
+
+**Account → Tutorials & workflows** plays a workflow on your own screen, like a
+visible Playwright: a cursor moves to each element, fields are typed into, pages
+change, console commands run, and a caption explains each step. Built-in
+tutorials (`workflows/tutorials/`) show each role how to use the app; users save
+their own workflows, and back them up with Export/Import (one JSON file).
+
+Workflows are data, never code (`core/workflows.py` validates them; the player is
+`web/static/player.js`), which keeps sharing them safe and is the basis for a
+future marketplace: a workflow can only do what the person playing it could do
+by hand, can only open this app's pages, and anything that changes data asks
+first. The format and step list are in
+[CLI_REFERENCE.md](CLI_REFERENCE.md#tutorials--workflows).
+
 ## Lead packages (x402)
 
 Buy lead lists from approved providers and pay in USDC over

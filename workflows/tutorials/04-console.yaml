@@ -1,0 +1,15 @@
+name: Use the console
+description: Run agency-os commands, and learn from the errors. Opens the console window.
+requires: cli.use
+steps:
+  - say: The console runs agency-os commands as you, with your permissions. It isn't a server shell.
+  - run: help
+    say: help lists the commands your role can run.
+  - run: search-prospects --q food --limit 3
+    say: Commands take flags. Quote values with spaces.
+  - run: serch-prospects --q food
+    say: Typos are fine; the console suggests what you meant.
+  - run: get-prospect 42
+    say: Forgot a flag? It shows the right way, with an example.
+  - say: Press Ctrl+` on any page to open or close the console window.
+  - pause: Your turn. Try help get-prospect.

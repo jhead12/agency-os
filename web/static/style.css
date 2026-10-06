@@ -1252,3 +1252,60 @@ a.call-link:not(.btn) { color: var(--accent); }
     }
     .console-dock-bar { cursor: default; }
 }
+
+/* ── Workflows page ── */
+.section-title { font-size: 15px; margin: 28px 0 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; }
+.workflow-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
+.workflow-card { display: flex; flex-direction: column; }
+.workflow-card p { flex: 1; }
+.workflow-card-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; }
+.workflow-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.workflow-actions form { margin: 0; }
+.workflow-source { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; line-height: 1.5; width: 100%; resize: vertical; }
+.workflow-editor-actions { display: flex; gap: 8px; }
+
+/* ── Workflow player (player.js): never blocks the page; above the console window ── */
+.player-spot {
+    position: fixed; z-index: 1000; display: none; pointer-events: none;
+    border: 2px solid var(--accent); border-radius: 8px;
+    box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.35), 0 0 18px rgba(59, 130, 246, 0.6);
+    transition: left .35s, top .35s, width .35s, height .35s;
+}
+.player-cursor {
+    position: fixed; z-index: 1002; display: none; pointer-events: none; left: 50%; top: 50%;
+    transition-property: left, top; transition-timing-function: cubic-bezier(.3, .7, .3, 1);
+    filter: drop-shadow(0 2px 3px rgba(0, 0, 0, .5));
+}
+.player-cursor-press { transform: scale(.8); }
+.player-caption {
+    position: fixed; z-index: 1001; left: 50%; bottom: 72px; transform: translateX(-50%);
+    width: min(420px, calc(100vw - 32px)); padding: 12px 14px;
+    background: var(--surface); color: var(--text); border: 1px solid var(--accent); border-radius: 10px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, .5);
+}
+.player-caption[hidden] { display: none; }
+.player-caption-floating { bottom: auto; transform: none; width: min(360px, calc(100vw - 32px)); }
+.player-caption-text { margin: 0; white-space: pre-line; line-height: 1.5; }
+.player-caption-actions { display: flex; gap: 8px; margin-top: 10px; }
+.player-caption-actions:empty { display: none; }
+.player-bar {
+    position: fixed; z-index: 1001; left: 50%; bottom: 16px; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 8px; max-width: calc(100vw - 32px);
+    padding: 6px 8px 6px 14px; background: #0a0c11; border: 1px solid var(--border); border-radius: 999px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, .5); font-size: 13px;
+}
+.player-bar[hidden] { display: none; }
+.player-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
+.player-count { color: var(--text-muted); white-space: nowrap; }
+.player-btn {
+    background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 999px;
+    padding: 5px 10px; cursor: pointer; font-size: 12px; white-space: nowrap;
+}
+.player-btn:hover { background: var(--surface-hover); }
+@media (max-width: 640px) {
+    .player-title { max-width: 90px; }
+    .player-count { display: none; }
+    body.player-active .console-launcher { display: none; } /* the player bar sits there */
+}
+/* Room to scroll the last of the page out from under the console button. */
+body:has(#console-launcher) main.container { padding-bottom: 72px; }

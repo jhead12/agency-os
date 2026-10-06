@@ -19,6 +19,7 @@ user's permission, and never raises.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable
@@ -328,6 +329,31 @@ def _users_set_roles(db, user, args):
     return {"ok": True, "email": row["email"], "roles": ", ".join(args.get("role", [])) or "(none)"}
 
 
+def _workflows_list(db, user, args):
+    from core import workflows
+
+    return {"ok": True, "workflows": [
+        {"name": w["slug"], "kind": "tutorial" if w["source"] == "tutorial" else "yours", "steps": len(w["steps"]),
+         "about": w.get("description", "")}
+        for w in workflows.tutorials(user) + workflows.mine(db, user)]}
+
+
+def _workflows_play(db, user, args):
+    from core import workflows
+
+    key = workflows.slugify(args["name"])
+    found = workflows.get_mine(db, user, key) or workflows.tutorial(user, key)
+    if found is None:
+        raise ToolError(f"No workflow named {args['name']}")
+    return {"ok": True, "playing": found["name"], "play": {k: found[k] for k in ("name", "steps")}}
+
+
+def _workflows_export(db, user, args):
+    from core import workflows
+
+    return {"ok": True, "backup": json.dumps(workflows.export(db, user), indent=2) + "\n"}
+
+
 EMAIL = {"type": "string", "maxLength": 254, "description": "The user's email"}
 NAME = {"type": "string", "maxLength": 200, "description": "Display name (defaults to the email's local part)"}
 ROLES = {"type": "array", "items": {"type": "string", "maxLength": 100}, "maxItems": 20,
@@ -384,6 +410,13 @@ TOOLS: dict[str, Tool] = {t.name: t for t in [
     Tool("users_set_roles", "Replace a team member's roles (none removes them all). "
          "Only a Super Admin can grant or remove Owner or Super Admin.",
          _obj({"email": EMAIL, "role": ROLES}, ["email"]), access.OWNER, "write", _users_set_roles, CONSOLE),
+    Tool("workflows_list", "Tutorials and your own workflows (play one with workflows play --name ...).",
+         _obj({}), access.ANY_USER, "read", _workflows_list, CONSOLE),
+    Tool("workflows_play", "Play a tutorial or workflow in your browser: it moves around the app and explains each step.",
+         _obj({"name": {"type": "string", "maxLength": 120, "description": "Its name, from workflows list"}}, ["name"]),
+         access.ANY_USER, "read", _workflows_play, CONSOLE),
+    Tool("workflows_export", "Back up all your workflows as JSON (e.g. agency_os.py remote workflows export > backup.json).",
+         _obj({}), access.ANY_USER, "read", _workflows_export, CONSOLE),
 ]}
 
 

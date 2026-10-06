@@ -163,11 +163,50 @@ for you to share instead of emailing it.
 | `users invite --email E [--name N] [--role R ...] [--no-send]` | Owner | Add a member and email a one-time set-password link (`--no-send` shows the link instead). Inviting with Owner or Super Admin needs a Super Admin |
 | `users create-owner --email E [--name N] [--no-send]` | Super Admin | Add a new Owner (they set their own password from the link) |
 | `users set-roles --email E [--role R ...]` | Owner | Replace a member's roles; Owner/Super Admin changes need a Super Admin |
+| `workflows list` | everyone | Tutorials and your own workflows |
+| `workflows play --name N` | everyone | Play one in the browser (the remote CLI tells you to open the browser) |
+| `workflows export` | everyone | Print a backup of your workflows: `agency_os.py remote workflows export > backup.json` |
 | `search-prospects`, `get-prospect`, `list-calls`, `get-campaign`, `log-call`, `set-stage`, `add-prospect-note`, ... | per permission | Every tool in `core/tools.py` the user's role allows |
 
 Commands come from the tool registry (`core/tools.py`): a new tool shows up in the
 console, the remote CLI and (unless it's console-only) AI assistants automatically.
 Team-administration tools are console-only; AI assistants never see them.
+
+---
+
+## Tutorials & Workflows
+
+**Account → Tutorials & workflows** (`/workflows`). Press Play and a player acts the
+workflow out on your own screen: a cursor moves to each element, fields are typed into,
+pages change, console commands run in the console window, and a caption explains each
+step. Pause, Next and Stop sit in a bar at the bottom; it keeps its place across pages.
+
+- **Tutorials** are built in (`workflows/tutorials/*.yaml`) and only shown to roles
+  that can do what they teach.
+- **Your workflows** are saved per user. Write one on the page (YAML or JSON), press
+  *Try it* to watch it before saving.
+- **Backup:** *Export all* downloads one JSON file; *Import* reads it back (here or on
+  another agency-os). Same-named workflows are replaced, and a file with any problem
+  imports nothing.
+
+A workflow is data, never code, so it's safe to import one from someone else: it can
+only do what the person playing it could do by hand. Pages are limited to this app,
+and anything that changes data asks first (a click that submits a form shows
+*Do it / Skip*; a console command asks `Run this? [y/N]`).
+
+```yaml
+name: My morning check
+description: Cold leads first.
+steps:
+  - goto: /prospects?stage=cold              # open a page of this app
+    say: These are today's cold leads.        # a caption (any step can have one)
+  - fill: {target: 'input[name="q"]', value: food}   # type into a field
+  - click: '#filter-form button[type="submit"]'      # click (a saving click asks first)
+  - wait: {for: table.data-table}            # or wait: 1000 (milliseconds)
+  - highlight: table.data-table              # point at something
+  - run: search-prospects --stage cold --limit 5     # run a console command
+  - pause: Call the first one, then log it.  # wait for Next
+```
 
 ---
 
@@ -478,6 +517,7 @@ Pages:
 - `/lead-packages` — Browse and unlock x402 lead packages
 - `/account` — Your roles, password, AI features, MCP keys and CLI keys
 - `/console` — Command console (needs `cli.use`)
+- `/workflows` — Tutorials, your workflows, backup (export/import)
 - `/admin/users`, `/admin/roles`, `/admin/audit` — Team administration (Owners)
 
 ---

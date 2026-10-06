@@ -193,6 +193,13 @@ ROUTE_RULES: dict[str, str] = {
     "POST /prospects/{prospect_id}/agent/note": "agents.use",
     "GET /api/tools": "ai.connect",
     "POST /api/tools/{tool_name}": "ai.connect",
+    "GET /workflows": ANY_USER,  # tutorials (filtered by permission) and the user's own workflows
+    "GET /api/workflows/{source}/{slug}": ANY_USER,
+    "POST /api/workflows/preview": ANY_USER,  # validates an unsaved workflow for "Try it"
+    "POST /workflows/save": ANY_USER,
+    "POST /workflows/import": ANY_USER,
+    "GET /workflows/export": ANY_USER,
+    "POST /workflows/{slug}/delete": ANY_USER,
     "GET /console": "cli.use",
     "POST /api/console": "cli.use",  # also accepts a CLI key (Authorization: Bearer aos_cli_...)
     "POST /account/cli-keys": "cli.use",

@@ -1,0 +1,12 @@
+name: Back up your workflows
+description: Export your workflows to a file and import them again.
+steps:
+  - goto: /workflows
+    say: Tutorials and your own workflows live here.
+  - highlight: '#workflow-export'
+    say: Export downloads all your workflows as one file. Keep it somewhere safe.
+  - highlight: '#workflow-import'
+    say: Import reads that file back, here or on another agency-os. Workflows with the same name are replaced.
+  - highlight: '#workflow-editor'
+    say: Write or paste a workflow here to save it. Each step does one thing, like goto, fill, click or run.
+  - pause: From your own terminal, agency_os.py remote workflows export also makes a backup.

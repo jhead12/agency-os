@@ -33,6 +33,8 @@ from pathlib import Path
 from datetime import datetime, timezone
 from urllib.parse import quote, urlsplit, urlencode
 
+import yaml
+
 # Ensure project root is on path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -42,7 +44,7 @@ from core.env import load_dotenv  # noqa: E402
 load_dotenv()  # .env settings for local runs; a deploy's own environment always wins
 
 from fastapi import FastAPI, Request, Query, HTTPException, Form, Depends, UploadFile, File
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -57,7 +59,7 @@ from plugins.channels.lob_direct_mail import TEMPLATE_ID_RE, lob_template_url
 from core.jobs import JobRunner, configured_jobs, jobs_enabled
 from core import (
     agents, claims, console, contact_depth, evidence, lead_packages, llm, mcp_auth, payments, royalties, selling, tools,
-    verify,
+    verify, workflows,
 )
 from core.welcome import base_url as public_base_url
 from web.mcp_server import MCPMount
@@ -1717,6 +1719,7 @@ async def prospect_refresh_email(request: Request, prospect_id: int, outreach_id
 
 _AI_OFF = "Turn on AI features on your Account page first."
 _MAX_TOOL_BODY = 64 * 1024
+MAX_WORKFLOW_UPLOAD = 1024 * 1024
 
 
 def _ai_refusal(request: Request, permission: str) -> Optional[JSONResponse]:
@@ -1817,6 +1820,108 @@ async def account_cli_key_create(request: Request, name: str = Form(default=""))
     except ValueError as exc:
         return _back("/account", error=str(exc))
     return _account(request, msg="CLI key created. Copy it now; it won't be shown again.", new_cli_key=key)
+
+
+# ── Workflows: tutorials and the user's own replayable recipes (core/workflows.py) ─
+
+WORKFLOW_EXAMPLE = """name: My morning check
+description: Open the prospect list filtered to cold leads.
+steps:
+  - goto: /prospects?stage=cold
+    say: These are today's cold leads.
+  - highlight: table.data-table
+    say: Start from the top.
+  - pause: Call the first one, then log the call on their page.
+"""
+
+
+def _workflows_page(request: Request, *, msg: str = "", error: str = "", editor: str = "", status_code: int = 200):
+    user = current_user(request)
+    edit = request.query_params.get("edit", "")
+    if not editor and edit:
+        found = workflows.get_mine(get_db(), user, edit)
+        if found:
+            editor = yaml.safe_dump({k: found[k] for k in ("name", "description", "steps") if found.get(k)},
+                                    sort_keys=False, allow_unicode=True, width=100)
+    return templates.TemplateResponse(request, "workflows.html", {
+        "active": "workflows",
+        "tutorials": workflows.tutorials(user),
+        "mine": workflows.mine(get_db(), user),
+        "editor": editor or WORKFLOW_EXAMPLE,
+        "msg": msg or request.query_params.get("msg", ""),
+        "error": error or request.query_params.get("error", ""),
+    }, status_code=status_code)
+
+
+@app.get("/workflows", response_class=HTMLResponse)
+async def workflows_page(request: Request):
+    return _workflows_page(request)
+
+
+@app.get("/api/workflows/{source}/{slug}")
+async def workflow_definition(request: Request, source: str, slug: str):
+    """A workflow for the player: a tutorial this user may see, or one of their own."""
+    user = current_user(request)
+    found = (workflows.tutorial(user, slug) if source == "tutorial"
+             else workflows.get_mine(get_db(), user, slug) if source == "mine" else None)
+    if found is None:
+        return JSONResponse({"ok": False, "error": "Workflow not found"}, status_code=404)
+    return {"ok": True, "workflow": {k: found[k] for k in ("name", "steps")}}
+
+
+@app.post("/api/workflows/preview")
+async def workflow_preview(request: Request):
+    """Check an unsaved workflow from the editor and hand it to the player ("Try it")."""
+    if request.headers.get("x-aos-workflow") != "1":
+        return JSONResponse({"ok": False, "error": "Missing X-AOS-Workflow header"}, status_code=400)
+    raw = await request.body()
+    if len(raw) > MAX_WORKFLOW_UPLOAD:
+        return JSONResponse({"ok": False, "error": "That workflow is too large"}, status_code=413)
+    try:
+        body = json.loads(raw or b"{}")
+        wf = workflows.parse(body.get("definition", "") if isinstance(body, dict) else "")
+    except ValueError as exc:  # WorkflowError, or a body that isn't JSON
+        return JSONResponse({"ok": False, "error": str(exc) if isinstance(exc, workflows.WorkflowError)
+                             else "Body must be JSON"}, status_code=400)
+    return {"ok": True, "workflow": {k: wf[k] for k in ("name", "steps")}}
+
+
+@app.post("/workflows/save")
+async def workflow_save(request: Request, definition: str = Form(default="")):
+    try:
+        wf = workflows.parse(definition)
+        slug = workflows.save(get_db(), current_user(request), wf)
+    except workflows.WorkflowError as exc:
+        return _workflows_page(request, error=str(exc), editor=definition, status_code=400)
+    return RedirectResponse(url=f"/workflows?edit={quote(slug)}&msg={quote('Saved ' + wf['name'] + '.')}",
+                            status_code=303)
+
+
+@app.post("/workflows/import")
+async def workflow_import(request: Request, file: UploadFile = File(...)):
+    raw = await file.read(MAX_WORKFLOW_UPLOAD + 1)
+    if len(raw) > MAX_WORKFLOW_UPLOAD:
+        return _back("/workflows", error="That file is too large (1 MB max).")
+    try:
+        saved = workflows.import_text(get_db(), current_user(request), raw.decode("utf-8", errors="replace"))
+    except workflows.WorkflowError as exc:
+        return _back("/workflows", error=f"Nothing was imported. {exc}")
+    return _back("/workflows", msg=f"Imported {len(saved)} workflow{'s' if len(saved) != 1 else ''}.")
+
+
+@app.get("/workflows/export")
+async def workflow_export(request: Request):
+    backup = workflows.export(get_db(), current_user(request))
+    name = f"agency-os-workflows-{datetime.now():%Y-%m-%d}.json"
+    return Response(json.dumps(backup, indent=2), media_type="application/json",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@app.post("/workflows/{slug}/delete")
+async def workflow_delete(request: Request, slug: str):
+    if workflows.delete(get_db(), current_user(request), slug):
+        return _back("/workflows", msg="Deleted.")
+    return _back("/workflows", error="That workflow was not found.")
 
 
 # ── Evidence webhooks (core/evidence.py): no login; signed or keyed ─
