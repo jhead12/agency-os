@@ -216,8 +216,8 @@ def test_last_owner_cannot_be_demoted_or_deactivated(db):
 
 def test_second_owner_allows_demoting_first(db):
     first = make_user(db, "first@x.com", access.OWNER_ROLE)
-    make_user(db, "second@x.com", access.OWNER_ROLE)
-    r = client_for("first@x.com").post(f"/admin/users/{first}", data={
+    make_user(db, "second@x.com", access.SUPER_ADMIN_ROLE)  # only a Super Admin may remove Owner
+    r = client_for("second@x.com").post(f"/admin/users/{first}", data={
         "name": "first", "is_active": "1", "role_ids": [role_id(db, "Viewer")],
     })
     assert "msg=" in r.headers["location"]

@@ -1362,7 +1362,7 @@ class Database:
             yield c
 
     def install_access(self) -> None:
-        """Create the protected Owner role and any missing starter roles.
+        """Create the protected Owner and Super Admin roles and any missing starter roles.
 
         Idempotent. Never touches a role that already exists, so owner edits
         to starter roles survive restarts.
@@ -1372,6 +1372,11 @@ class Database:
                 """INSERT INTO roles (name, description, is_protected) VALUES (?, ?, 1)
                    ON CONFLICT DO NOTHING""",
                 (access.OWNER_ROLE, "Full access, including managing users and roles"),
+            )
+            c.execute(
+                """INSERT INTO roles (name, description, is_protected) VALUES (?, ?, 1)
+                   ON CONFLICT DO NOTHING""",
+                (access.SUPER_ADMIN_ROLE, "Everything an Owner can do, plus creating and promoting Owners"),
             )
             for name, (description, permissions) in access.STARTER_ROLES.items():
                 created = c.execute(
@@ -1465,9 +1470,24 @@ class Database:
             """SELECT COUNT(DISTINCT u.id) FROM users u
                JOIN user_roles ur ON ur.user_id = u.id
                JOIN roles r ON r.id = ur.role_id
-               WHERE r.name = ? AND u.is_active = 1""",
-            (access.OWNER_ROLE,),
+               WHERE r.name IN (?, ?) AND u.is_active = 1""",
+            access.PROTECTED_ROLES,
         ).fetchone()[0]
+
+    @staticmethod
+    def _guard_protected(actor: Optional[CurrentUser], before: list[str], after: list[str]) -> None:
+        """Only a Super Admin (or the server-side CLI, actor=None) may touch Owner/Super Admin.
+
+        That covers granting or removing either role, and any change to a
+        Super Admin's account.
+        """
+        if actor is None or actor.is_super_admin:
+            return
+        if access.SUPER_ADMIN_ROLE in before:
+            raise AccessError("Only a Super Admin can change a Super Admin's account.")
+        protected = set(access.PROTECTED_ROLES)
+        if protected & set(before) != protected & set(after):
+            raise AccessError("Only a Super Admin can grant or remove the Owner or Super Admin role.")
 
     def _user_role_names(self, c: Connection, user_id: int) -> list[str]:
         return [r["name"] for r in c.execute(
@@ -1493,6 +1513,7 @@ class Database:
             )
             user_id = cur.fetchone()["id"]
             self._set_roles(c, user_id, role_ids)
+            self._guard_protected(actor, [], self._user_role_names(c, user_id))
             self._audit(c, actor, "user.create", "user", user_id, {
                 "email": email, "name": name, "roles": self._user_role_names(c, user_id),
             })
@@ -1517,6 +1538,7 @@ class Database:
                 (name, int(is_active), user_id),
             )
             self._set_roles(c, user_id, role_ids)
+            self._guard_protected(actor, roles_before, self._user_role_names(c, user_id))
             if self._active_owner_count(c) == 0:
                 raise AccessError("At least one active Owner is required.")
             if not is_active:
@@ -1560,21 +1582,22 @@ class Database:
             )
             self._audit(c, actor, "user.password", "user", user_id)
 
-    def grant_owner(self, email: str, actor: Optional[CurrentUser]) -> None:
-        """Recovery path (CLI only): make an existing user an active Owner."""
+    def grant_owner(self, email: str, actor: Optional[CurrentUser], role: str = access.OWNER_ROLE) -> None:
+        """Recovery path (CLI only): make an existing user an active Owner (or Super Admin)."""
         with self.transaction() as c:
             row = c.execute("SELECT id FROM users WHERE email = ?", (email.strip(),)).fetchone()
             if not row:
                 raise AccessError(f"No user with email {email}.")
             owner_role = c.execute(
-                "SELECT id FROM roles WHERE name = ?", (access.OWNER_ROLE,)
+                "SELECT id FROM roles WHERE name = ?", (role,)
             ).fetchone()
+            self._guard_protected(actor, self._user_role_names(c, row["id"]), [role])
             c.execute("UPDATE users SET is_active = 1 WHERE id = ?", (row["id"],))
             c.execute(
                 "INSERT INTO user_roles (user_id, role_id) VALUES (?, ?) ON CONFLICT DO NOTHING",
                 (row["id"], owner_role["id"]),
             )
-            self._audit(c, actor, "user.grant_owner", "user", row["id"], {"email": email})
+            self._audit(c, actor, "user.grant_owner", "user", row["id"], {"email": email, "role": role})
 
     # Roles
 

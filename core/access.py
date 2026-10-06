@@ -7,6 +7,9 @@ Modeled on the u9itus.dev staff permission system:
   by picking from it; a role name alone never grants anything.
 - The protected Owner role bypasses permission checks and is the only role
   that can manage users, roles, and the audit log.
+- The protected Super Admin role sits above Owner: it has every Owner power,
+  and only a Super Admin can grant or remove Owner or Super Admin, or change a
+  Super Admin's account. (The server-side CLI can too, for bootstrap/recovery.)
 - Every web route must appear in ROUTE_RULES. Unlisted routes are denied.
 - New users get no access until an owner assigns them a role.
 
@@ -22,6 +25,8 @@ import secrets
 from dataclasses import dataclass, field
 
 OWNER_ROLE = "Owner"
+SUPER_ADMIN_ROLE = "Super Admin"
+PROTECTED_ROLES = (SUPER_ADMIN_ROLE, OWNER_ROLE)
 
 
 def ai_allowed() -> bool:
@@ -56,6 +61,7 @@ CATALOG: dict[str, str] = {
     "packages.sell": "Publish our own lists as lead packages, and handle buyers' claims and refunds",
     "royalties.view_own": "See your own data royalties and set where they're paid",
     "recruiting.view": "See recruiting campaigns and their leads (e.g. attorneys), and buy lists into them",
+    "cli.use": "Use the command console (in the browser and the remote CLI); commands still need their own permissions",
 }
 
 # Starter roles are created once if missing. Owners may edit or delete them
@@ -98,6 +104,7 @@ STARTER_ROLES: dict[str, tuple[str, list[str]]] = {
 PUBLIC = "@public"   # no login (login page, health check)
 ANY_USER = "@user"   # any signed-in active user (own account, logout)
 OWNER = "@owner"     # owners only (user/role administration)
+SUPER_ADMIN = "@super_admin"  # super admins only (creating and promoting owners)
 
 ROUTE_RULES: dict[str, str] = {
     "GET /healthz": PUBLIC,
@@ -186,6 +193,9 @@ ROUTE_RULES: dict[str, str] = {
     "POST /prospects/{prospect_id}/agent/note": "agents.use",
     "GET /api/tools": "ai.connect",
     "POST /api/tools/{tool_name}": "ai.connect",
+    "GET /console": "cli.use",
+    "POST /api/console": "cli.use",  # also accepts a CLI key (Authorization: Bearer aos_cli_...)
+    "POST /account/cli-keys": "cli.use",
 }
 
 # Pages in nav order — used to pick a landing page the user can actually open.
@@ -213,8 +223,13 @@ class CurrentUser:
     ai_enabled: bool = False  # the user opted in to AI features (Account page)
 
     @property
+    def is_super_admin(self) -> bool:
+        return SUPER_ADMIN_ROLE in self.roles
+
+    @property
     def is_owner(self) -> bool:
-        return OWNER_ROLE in self.roles
+        """Owners, and Super Admins (who hold every Owner power)."""
+        return OWNER_ROLE in self.roles or self.is_super_admin
 
     def can(self, permission: str) -> bool:
         """True if this user holds a catalog permission (owners hold all).
@@ -249,6 +264,8 @@ class CurrentUser:
             return True
         if rule == OWNER:
             return self.is_owner
+        if rule == SUPER_ADMIN:
+            return self.is_super_admin
         return self.can(rule)
 
     def landing_page(self) -> str:

@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Console — agency-os{% endblock %}
+{% block content %}
+{% set user = request.state.user %}
+<div class="page-header">
+    <h1>Console</h1>
+    <p class="subtitle">Runs agency-os commands as {{ user.email }}, with your permissions. This is not a server shell. Type <code>help</code> to start.</p>
+</div>
+
+<div class="console" id="console" data-prompt="{{ user.email.split('@')[0] }}@agency-os $">
+    <pre class="console-output" id="console-output" aria-live="polite"></pre>
+    <form class="console-line" id="console-form" autocomplete="off">
+        <label for="console-input" class="console-prompt" id="console-prompt">{{ user.email.split('@')[0] }}@agency-os $</label>
+        <input id="console-input" class="console-input" spellcheck="false" autocapitalize="off" autofocus
+               aria-label="Command">
+    </form>
+</div>
+<p class="muted" style="margin-top: 8px;">↑/↓ for history · Ctrl+L or <code>clear</code> to clear · Changes ask you to confirm first · On any other page, Ctrl+` (or the Console button) opens a small console window.</p>
+{% endblock %}

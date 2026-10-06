@@ -1183,3 +1183,71 @@ table.sortable th {
 .call-link { margin-top: 6px; display: inline-flex; gap: 6px; align-items: center; text-decoration: none; }
 a.call-link:not(.btn) { color: var(--accent); }
 .call-log-highlight { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 8px; transition: outline-color 0.5s; }
+
+/* ── Command console (/console) ── */
+.console {
+    background: #0a0c11;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    height: min(70vh, 640px);
+    overflow-y: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    cursor: text;
+}
+.console-output { margin: 0; white-space: pre-wrap; word-break: break-word; color: var(--text); font: inherit; }
+.console-line { display: flex; gap: 8px; align-items: baseline; }
+.console-prompt { color: #4ade80; white-space: nowrap; }
+.console-input {
+    flex: 1; min-width: 0; background: transparent; border: none; outline: none;
+    color: var(--text); font: inherit; padding: 0;
+}
+.console-echo { color: var(--text-muted); }
+.console-muted { color: var(--text-muted); }
+.console-error { color: #f87171; }
+.console-table { display: block; white-space: pre; overflow-x: auto; }
+
+/* ── Floating console window (base.html; for users with cli.use) ── */
+.console-launcher {
+    position: fixed; right: 16px; bottom: 16px; z-index: 90;
+    background: var(--surface); color: var(--text); border: 1px solid var(--border);
+    border-radius: 999px; padding: 8px 14px; cursor: pointer;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+.console-launcher:hover { background: var(--surface-hover); }
+.console-dock {
+    position: fixed; z-index: 90; /* below the navbar and its menus (99-100) */
+    display: flex; flex-direction: column;
+    width: 560px; height: 340px; min-width: 300px; min-height: 160px;
+    background: #0a0c11; border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+    resize: both; overflow: hidden;
+}
+.console-dock[hidden] { display: none; }
+.console-dock-bar {
+    display: flex; align-items: center; gap: 4px; flex: none;
+    padding: 4px 6px 4px 12px; background: var(--surface); border-bottom: 1px solid var(--border);
+    cursor: move; user-select: none; touch-action: none;
+}
+.console-dock-title {
+    flex: 1; color: var(--text-muted); font-size: 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.console-dock-btn {
+    background: none; border: none; color: var(--text-muted); cursor: pointer;
+    width: 28px; height: 28px; border-radius: 4px; font-size: 16px; line-height: 28px;
+    text-align: center; text-decoration: none;
+}
+.console-dock-btn:hover { background: var(--surface-hover); color: var(--text); }
+.console-docked { flex: 1; height: auto; border: none; border-radius: 0; }
+@media (max-width: 640px) {
+    .console-dock {
+        left: 0 !important; right: 0; bottom: 0; top: auto !important;
+        width: auto !important; height: 55dvh !important; resize: none;
+        border-radius: 12px 12px 0 0;
+    }
+    .console-dock-bar { cursor: default; }
+}

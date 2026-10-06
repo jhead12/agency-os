@@ -104,6 +104,55 @@ def revoke(db, user, token_id: int) -> bool:
     return True
 
 
+# ── CLI keys (Account page → Command console) ──────────────────────────
+# A separate kind from personal MCP tokens: they work only on /api/console
+# (the browser console's endpoint, used by `agency_os.py remote`), never on /mcp.
+
+CLI_CLIENT = "cli"
+CLI_PREFIX = "aos_cli_"
+
+
+def create_cli_key(db, user, name: str) -> str:
+    """Make a CLI key and return it; it's never retrievable again."""
+    name = (name or "").strip()[:80] or "CLI"
+    c = db.conn
+    count = c.execute("""SELECT COUNT(*) AS n FROM api_tokens
+                         WHERE user_id = ? AND kind = 'cli' AND revoked_at IS NULL""", (user.id,)).fetchone()["n"]
+    if count >= MAX_PERSONAL_TOKENS:
+        raise ValueError(f"You already have {MAX_PERSONAL_TOKENS} CLI keys; revoke one first.")
+    token = _new(CLI_PREFIX)
+    with c.raw.transaction():
+        token_id = c.execute(
+            """INSERT INTO api_tokens (user_id, kind, name, token_hash, client_id, scopes)
+               VALUES (?, 'cli', ?, ?, ?, '') RETURNING id""",
+            (user.id, name, hash_token(token), CLI_CLIENT),
+        ).fetchone()["id"]
+        db._audit(c, user, "token.create", "api_token", token_id, {"name": name, "kind": "cli"})
+    return token
+
+
+def list_cli_keys(db, user_id: int) -> list[dict]:
+    return [dict(r) for r in db.conn.execute(
+        """SELECT id, name, created_at, last_used_at FROM api_tokens
+           WHERE user_id = ? AND kind = 'cli' AND revoked_at IS NULL ORDER BY created_at DESC""",
+        (user_id,)).fetchall()]
+
+
+def cli_key_user_id(db, token: str) -> Optional[int]:
+    """The user a live CLI key belongs to, or None."""
+    if not token.startswith(CLI_PREFIX):
+        return None
+    row = db.conn.execute(
+        """SELECT id, user_id, (last_used_at IS NULL OR last_used_at < CURRENT_TIMESTAMP - INTERVAL '1 minute') AS stale
+           FROM api_tokens WHERE token_hash = ? AND kind = 'cli' AND revoked_at IS NULL""",
+        (hash_token(token),)).fetchone()
+    if row is None:
+        return None
+    if row["stale"]:  # record use at most once a minute
+        db.conn.execute("UPDATE api_tokens SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?", (row["id"],))
+    return row["user_id"]
+
+
 # ── Consent requests (the /oauth/consent page) ─────────────────────────
 
 
