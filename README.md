@@ -25,6 +25,10 @@ python agency_os.py digest --campaign voter-guide-cbo
 ```
 
 Every command and option is listed in [CLI_REFERENCE.md](CLI_REFERENCE.md).
+Introspection and environment-check helpers live in [tools/](tools/README.md)
+(`python -m tools.doctor`, `python -m tools.inspect all`). A documentation wiki
+(guides, concept explainers, per-plugin reference) is maintained at
+`~/wiki/agency-os` — serve it locally with `python -m tools.wiki_serve`.
 
 ## Deploying to Railway
 
