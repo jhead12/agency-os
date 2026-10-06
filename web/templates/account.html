@@ -14,7 +14,9 @@
     <div class="detail-card">
         <h3>Your access</h3>
         <div class="detail-row"><span>Roles</span><span>{{ user.roles|join(', ') or 'None' }}</span></div>
-        {% if user.is_owner %}
+        {% if user.is_super_admin %}
+        <p class="muted" style="margin-top: 12px;">Super Admins have every permission, manage the team, and create Owners.</p>
+        {% elif user.is_owner %}
         <p class="muted" style="margin-top: 12px;">Owners have every permission and manage the team.</p>
         {% elif permissions %}
         <ul class="perm-list">
@@ -159,6 +161,47 @@
             <span>{{ s.amount_atomic|usd }}{% if s.tx_hash %} <a href="{{ explorer_url(s.network, s.tx_hash) }}" target="_blank" rel="noopener">tx</a>{% endif %}</span>
         </div>
         {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if cli %}
+    <div class="detail-card full-width" id="cli">
+        <h3>Command console</h3>
+        <p class="muted">Run agency-os commands such as <code>users invite</code> or <code>search-prospects</code>. Each command runs as you, with your permissions. Type <code>help</code> to see the commands you can run.</p>
+        <p><a href="/console" class="btn">Open the console</a></p>
+
+        <h4 class="mcp-step">Use it from your own terminal</h4>
+        <p class="muted">Create a key, then in a checkout of agency-os run:</p>
+        <pre class="agent-output">python3 agency_os.py connect --url {{ cli.url }} --key aos_cli_...
+python3 agency_os.py remote users list     # one command
+python3 agency_os.py remote                # interactive</pre>
+        {% if cli.new_key %}
+        <div class="save-notice mcp-new-key">
+            <strong>Your CLI key is ready. Copy it now: for your security it is shown only this once.</strong>
+            <div class="copy-field"><code>{{ cli.new_key }}</code><button type="button" class="btn btn-sm" data-copy="{{ cli.new_key }}">Copy</button></div>
+            <div class="copy-field"><code>python3 agency_os.py connect --url {{ cli.url }} --key {{ cli.new_key }}</code><button type="button" class="btn btn-secondary btn-sm" data-copy="python3 agency_os.py connect --url {{ cli.url }} --key {{ cli.new_key }}">Copy command</button></div>
+        </div>
+        {% endif %}
+        <form method="post" action="/account/cli-keys" class="stack-form" style="margin-top: 12px;">
+            <label>Key name <input type="text" name="name" maxlength="80" placeholder="e.g. My laptop" class="filter-input"></label>
+            <button type="submit" class="btn btn-secondary">Create CLI key</button>
+        </form>
+        {% if cli.saved_keys %}
+        <div class="table-scroll" style="margin-top: 12px;">
+        <table class="data-table">
+            <thead><tr><th>CLI keys</th><th>Last used</th><th></th></tr></thead>
+            <tbody>
+            {% for k in cli.saved_keys %}
+            <tr>
+                <td><strong>{{ k.name }}</strong><br><span class="subtitle">created {{ k.created_at|fmt_date }}</span></td>
+                <td>{{ k.last_used_at|fmt_date if k.last_used_at else 'Never' }}</td>
+                <td><form method="post" action="/account/tokens/{{ k.id }}/revoke"><button type="submit" class="btn btn-secondary btn-sm">Revoke</button></form></td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        </div>
+        {% endif %}
     </div>
     {% endif %}
 

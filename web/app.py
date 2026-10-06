@@ -56,7 +56,7 @@ from core.protocols import portal_product
 from plugins.channels.lob_direct_mail import TEMPLATE_ID_RE, lob_template_url
 from core.jobs import JobRunner, configured_jobs, jobs_enabled
 from core import (
-    agents, claims, contact_depth, evidence, lead_packages, llm, mcp_auth, payments, royalties, selling, tools,
+    agents, claims, console, contact_depth, evidence, lead_packages, llm, mcp_auth, payments, royalties, selling, tools,
     verify,
 )
 from core.welcome import base_url as public_base_url
@@ -87,6 +87,7 @@ def get_campaigns():
 
 
 tools.campaign_source = lambda: get_campaigns()  # the AI tools read campaigns through the web app's cache
+tools.site_url = lambda: site_url()  # invite links from the console's user tools
 
 
 def visible_campaigns(request: Request) -> list:
@@ -155,6 +156,8 @@ SESSION_COOKIE = "aos_session"
 SESSION_TTL_DAYS = 14
 LOGIN_WINDOW_SECONDS = 15 * 60
 LOGIN_MAX_FAILURES = 5
+# Routes that also accept a CLI key (Authorization: Bearer aos_cli_...) instead of a session.
+KEY_ROUTES = {"POST /api/console"}
 _login_failures: dict[str, list[float]] = defaultdict(list)
 _DUMMY_HASH = access.hash_password(secrets.token_hex(16))
 
@@ -200,15 +203,22 @@ async def authorize(request: Request) -> None:
     if rule == access.PUBLIC:
         return
     db = get_db()
-    token = request.cookies.get(SESSION_COOKIE)
-    user_id = db.session_user_id(access.hash_token(token)) if token else None
+    scheme, _, key = request.headers.get("authorization", "").partition(" ")
+    request.state.via_key = (scheme.lower() == "bearer" and bool(key)
+                             and f"{request.method} {request.scope['route'].path}" in KEY_ROUTES)
+    if request.state.via_key:
+        user_id = mcp_auth.cli_key_user_id(db, key.strip())
+    else:
+        token = request.cookies.get(SESSION_COOKIE)
+        user_id = db.session_user_id(access.hash_token(token)) if token else None
     user = db.load_current_user(user_id) if user_id else None
     if user is None:
         raise LoginRequired()
     request.state.user = user
     if rule is None or not user.allows(rule):
         raise Forbidden()
-    if request.method not in ("GET", "HEAD", "OPTIONS") and not _same_origin(request):
+    # A key isn't sent by browsers on their own, so only cookie requests need the CSRF check.
+    if request.method not in ("GET", "HEAD", "OPTIONS") and not request.state.via_key and not _same_origin(request):
         raise Forbidden()
     # Campaign-restricted leads (e.g. attorneys for recruiters): every route
     # taking one of these ids in its path is covered here.
@@ -1771,6 +1781,44 @@ async def api_tool_call(request: Request, tool_name: str):
     return JSONResponse(result)
 
 
+# ── Command console (core/console.py) ─────────────────────────────
+
+
+@app.get("/console", response_class=HTMLResponse)
+async def console_page(request: Request):
+    return templates.TemplateResponse(request, "console.html", {"active": "account"})
+
+
+@app.post("/api/console")
+async def api_console(request: Request):
+    """Run one console line. Body: {"line": "...", "confirmed": bool}. Used by /console and `agency_os.py remote`."""
+    if not request.state.via_key and request.headers.get("x-aos-console") != "1":
+        return JSONResponse({"ok": False, "output": "Missing X-AOS-Console header"}, status_code=400)
+    raw = await request.body()
+    if len(raw) > _MAX_TOOL_BODY:
+        return JSONResponse({"ok": False, "output": "Request too large"}, status_code=413)
+    try:
+        body = json.loads(raw or b"{}")
+    except ValueError:
+        body = None
+    if not isinstance(body, dict) or not isinstance(body.get("line", ""), str):
+        return JSONResponse({"ok": False, "output": "Body must be a JSON object with a \"line\""}, status_code=400)
+    source = "cli" if request.state.via_key else "console"
+    result = await run_in_threadpool(console.run_line, get_db(), current_user(request), body.get("line", ""),
+                                     confirmed=body.get("confirmed") is True, source=source)
+    return JSONResponse(result)
+
+
+@app.post("/account/cli-keys")
+async def account_cli_key_create(request: Request, name: str = Form(default="")):
+    """Make a key for the remote CLI. It's shown once."""
+    try:
+        key = mcp_auth.create_cli_key(get_db(), current_user(request), name)
+    except ValueError as exc:
+        return _back("/account", error=str(exc))
+    return _account(request, msg="CLI key created. Copy it now; it won't be shown again.", new_cli_key=key)
+
+
 # ── Evidence webhooks (core/evidence.py): no login; signed or keyed ─
 
 
@@ -2292,8 +2340,11 @@ async def account_page(request: Request, msg: str = Query(default=""), error: st
     return _account(request, msg=msg, error=error)
 
 
-def _account(request: Request, *, msg: str = "", error: str = "", new_token: str = ""):
+def _account(request: Request, *, msg: str = "", error: str = "", new_token: str = "", new_cli_key: str = ""):
     user = current_user(request)
+    cli = None
+    if user.can("cli.use"):
+        cli = {"saved_keys": mcp_auth.list_cli_keys(get_db(), user.id), "new_key": new_cli_key, "url": site_url()}
     spending = None
     if user.can("packages.buy"):
         db = get_db()
@@ -2317,6 +2368,7 @@ def _account(request: Request, *, msg: str = "", error: str = "", new_token: str
         "spending": spending,
         "earnings": earnings,
         "ai": ai,
+        "cli": cli,
         "permissions": [(k, v) for k, v in access.CATALOG.items() if user.can(k)],
         "msg": msg,
         "error": error,

@@ -1183,3 +1183,27 @@ table.sortable th {
 .call-link { margin-top: 6px; display: inline-flex; gap: 6px; align-items: center; text-decoration: none; }
 a.call-link:not(.btn) { color: var(--accent); }
 .call-log-highlight { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 8px; transition: outline-color 0.5s; }
+
+/* ── Command console (/console) ── */
+.console {
+    background: #0a0c11;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    height: min(70vh, 640px);
+    overflow-y: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    cursor: text;
+}
+.console-output { margin: 0; white-space: pre-wrap; word-break: break-word; color: var(--text); font: inherit; }
+.console-line { display: flex; gap: 8px; align-items: baseline; }
+.console-prompt { color: #4ade80; white-space: nowrap; }
+.console-input {
+    flex: 1; min-width: 0; background: transparent; border: none; outline: none;
+    color: var(--text); font: inherit; padding: 0;
+}
+.console-echo { color: var(--text-muted); }
+.console-muted { color: var(--text-muted); }
+.console-error { color: #f87171; }

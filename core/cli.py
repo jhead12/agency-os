@@ -15,6 +15,7 @@ Usage:
     agency-os users list
     agency-os users create-owner --email you@example.com
     agency-os users grant-owner --email someone@example.com
+    agency-os users grant-super-admin --email you@example.com
     agency-os users set-password --email someone@example.com
     agency-os users invite --email rep@example.com --name "Jane Rep" --role "Sales Rep"
     agency-os packages list
@@ -25,6 +26,8 @@ Usage:
     agency-os packages claim --id 3 --email you@example.com
     agency-os spend pending
     agency-os spend resolve --id 12 --status settled --tx 0x...
+    agency-os connect --url https://your-app.up.railway.app --key aos_cli_...
+    agency-os remote users invite --email rep@example.com --role Caller
 """
 
 from __future__ import annotations
@@ -38,7 +41,7 @@ from pathlib import Path
 import click
 
 from core import access
-from core.access import AccessError, OWNER_ROLE
+from core.access import AccessError, OWNER_ROLE, SUPER_ADMIN_ROLE
 from core.campaign import discover_campaigns, sync_campaign_files
 from core.db import Database, redact_url
 from core.pipeline import Pipeline
@@ -689,6 +692,18 @@ def users_grant_owner(ctx, email):
     click.echo(f"{email} is now an active owner")
 
 
+@users.command("grant-super-admin")
+@click.option("--email", required=True)
+@click.pass_context
+def users_grant_super_admin(ctx, email):
+    """Bootstrap/recovery: make an existing user an active Super Admin (can create and promote Owners)."""
+    try:
+        _access_db(ctx).grant_owner(email, actor=None, role=SUPER_ADMIN_ROLE)
+    except AccessError as e:
+        _fail(e)
+    click.echo(f"{email} is now an active Super Admin")
+
+
 @users.command("set-password")
 @click.option("--email", required=True)
 @click.password_option(help="New password (prompted if omitted)")
@@ -975,3 +990,110 @@ def spend_resolve(ctx, spend_id, status, tx_hash):
     if not resolved:
         _fail(AccessError(f"Payment #{spend_id} isn't pending"))
     click.echo(f"Payment #{spend_id} marked {status}")
+
+
+# ── Remote console ─────────────────────────────────────────────────────
+# Runs console commands (core/console.py) on a deployed agency-os as you,
+# with a CLI key from Account → Command console. No database access needed.
+
+REMOTE_CONFIG = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "agency-os" / "cli.json"
+
+
+def _remote_settings() -> tuple[str, str]:
+    saved = {}
+    try:
+        saved = json.loads(REMOTE_CONFIG.read_text())
+    except (OSError, ValueError):
+        pass
+    url = os.environ.get("AGENCY_OS_URL") or saved.get("url", "")
+    key = os.environ.get("AGENCY_OS_KEY") or saved.get("key", "")
+    if not url or not key:
+        _fail(AccessError("Not connected. Run: agency_os.py connect --url https://... --key aos_cli_... "
+                          "(create a key on your Account page)."))
+    return url.rstrip("/"), key
+
+
+def _remote_call(url: str, key: str, line: str, confirmed: bool = False) -> dict:
+    import urllib.error
+    import urllib.request
+
+    request = urllib.request.Request(
+        f"{url}/api/console", method="POST",
+        data=json.dumps({"line": line, "confirmed": confirmed}).encode(),
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            return json.loads(response.read())
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            return {"ok": False, "output": "Key not accepted (revoked, or your account was deactivated). "
+                                           "Create a new one on your Account page."}
+        if e.code == 403:
+            return {"ok": False, "output": "Your account doesn't include the command console (cli.use). Ask an owner."}
+        return {"ok": False, "output": f"agency-os answered HTTP {e.code}."}
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        return {"ok": False, "output": f"Couldn't reach {url}: {e}"}
+
+
+def _remote_run(url: str, key: str, line: str, yes: bool) -> bool:
+    result = _remote_call(url, key, line)
+    if result.get("needs_confirmation"):
+        click.echo(result.get("output", ""))
+        if not (yes or click.confirm("Run this?", default=False)):
+            click.echo("Cancelled.")
+            return False
+        result = _remote_call(url, key, line, confirmed=True)
+    if result.get("output"):
+        click.echo(result["output"], err=not result.get("ok"))
+    return bool(result.get("ok"))
+
+
+@cli.command()
+@click.option("--url", required=True, help="Your agency-os dashboard, e.g. https://your-app.up.railway.app")
+@click.option("--key", required=True, help="A CLI key (aos_cli_...) from Account → Command console")
+def connect(url, key):
+    """Save the server and CLI key used by `remote`."""
+    url = url.rstrip("/")
+    result = _remote_call(url, key, "whoami")
+    if not result.get("ok"):
+        _fail(AccessError(result.get("output", "Couldn't connect.")))
+    REMOTE_CONFIG.parent.mkdir(parents=True, exist_ok=True)
+    REMOTE_CONFIG.touch(mode=0o600, exist_ok=True)
+    REMOTE_CONFIG.chmod(0o600)
+    REMOTE_CONFIG.write_text(json.dumps({"url": url, "key": key}))
+    click.echo(f"Connected to {url} as {result['output'].splitlines()[0]}")
+
+
+@cli.command(context_settings={"ignore_unknown_options": True, "allow_interspersed_args": False})
+@click.option("--yes", "-y", is_flag=True, help="Don't ask before running a change")
+@click.argument("words", nargs=-1, type=click.UNPROCESSED)
+def remote(yes, words):
+    """Run console commands on your agency-os server (none given: interactive).
+
+    \b
+    Examples:
+      agency_os.py remote help
+      agency_os.py remote users invite --email jane@example.com --name "Jane" --role Caller
+      agency_os.py remote
+    """
+    import shlex
+
+    url, key = _remote_settings()
+    if words:
+        sys.exit(0 if _remote_run(url, key, shlex.join(words), yes) else 1)
+    try:
+        import readline  # noqa: F401  (history and line editing for input())
+    except ImportError:
+        pass
+    click.echo(f"agency-os at {url}. Type help, or exit to quit.")
+    while True:
+        try:
+            line = input("agency-os $ ").strip()
+        except (EOFError, KeyboardInterrupt):
+            click.echo()
+            return
+        if line in ("exit", "quit"):
+            return
+        if line:
+            _remote_run(url, key, line, yes)

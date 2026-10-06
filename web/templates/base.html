@@ -64,6 +64,7 @@
                 <div class="nav-dropdown">
                     <div class="nav-account-id" title="{{ user.email }}">Signed in as<strong>{{ user.name }}</strong></div>
                     <a href="/account" class="{% if active == 'account' %}active{% endif %}">My Account</a>
+                    {% if user.can('cli.use') %}<a href="/console" class="{% if request.url.path == '/console' %}active{% endif %}">Console</a>{% endif %}
                     <form method="post" action="/logout" class="nav-logout"><button type="submit">Sign out</button></form>
                 </div>
             </details>

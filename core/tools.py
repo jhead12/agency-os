@@ -1,9 +1,12 @@
 """
-The AI tool layer: one registry of what an AI may do in agency-os, used by
-the built-in agent panel and by the user's own assistant over WebMCP
-(/api/tools, web/static/webmcp.js).
+The tool layer: one registry of what can be done in agency-os on a user's
+behalf, used by the built-in agent panel, the user's own assistant over
+WebMCP (/api/tools, web/static/webmcp.js) and MCP, and the command console
+(core/console.py).
 
-Each tool names the catalog permission it needs and its kind:
+Each tool names the permission it needs (a catalog permission, or the
+@owner / @super_admin sentinels), the surfaces it appears on ("ai",
+"console"; team administration is console-only), and its kind:
 
 - read:  looks things up
 - draft: produces text with the app's model; changes nothing
@@ -20,8 +23,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable
 
-from core import agents, llm, verify
-from core.access import CurrentUser
+from core import access, agents, llm, verify
+from core.access import AccessError, CurrentUser
 from core.campaign import hidden_campaigns
 from core.contact_depth import CALL_OUTCOMES
 from core.models import CallLog
@@ -29,6 +32,8 @@ from core.models import CallLog
 # Campaign configs come from the web app (it syncs campaign files from the
 # database); it sets this at import. Tests may replace it.
 campaign_source: Callable[[], list] = lambda: []
+# This server's public URL, for invite links; the web app sets it at import.
+site_url: Callable[[], str] = lambda: ""
 
 STAGES = ["cold", "contacted", "engaged", "demo_scheduled", "proposal_sent", "closed_won", "closed_lost", "nurture"]
 MAX_NOTE = 4000
@@ -42,6 +47,7 @@ class Tool:
     permission: str
     kind: str  # read | draft | write
     handler: Callable[[Any, CurrentUser, dict], dict]
+    surfaces: tuple[str, ...] = ("ai", "console")
 
     def public(self) -> dict:
         return {"name": self.name, "description": self.description, "inputSchema": self.input_schema,
@@ -72,6 +78,13 @@ def _check(value: Any, schema: dict, path: str) -> Any:
             raise ToolError(f"{path} must be text")
         if len(value) > schema.get("maxLength", 10_000):
             raise ToolError(f"{path} is too long")
+    elif kind == "boolean":
+        if not isinstance(value, bool):
+            raise ToolError(f"{path} must be true or false")
+    elif kind == "array":
+        if not isinstance(value, list) or len(value) > schema.get("maxItems", 50):
+            raise ToolError(f"{path} must be a list of at most {schema.get('maxItems', 50)}")
+        return [_check(v, schema.get("items", {}), f"{path}[{i}]") for i, v in enumerate(value)]
     if "enum" in schema and value not in schema["enum"]:
         raise ToolError(f"{path} must be one of: {', '.join(map(str, schema['enum']))}")
     return value
@@ -247,6 +260,81 @@ def _set_stage(db, user, args):
     return {"ok": True, "outreach_id": row["id"], "from": row["stage"], "to": args["stage"]}
 
 
+# ── Team administration (console only) ─────────────────────────────────
+# The database enforces who may grant Owner/Super Admin (Database._guard_protected);
+# these tools only add the permission gate and the invite email.
+
+
+def _role_ids(db, names: list[str]) -> list[int]:
+    by_name = {r["name"].lower(): r["id"] for r in db.list_roles()}
+    unknown = [n for n in names if n.lower() not in by_name]
+    if unknown:
+        raise ToolError(f"Unknown role(s): {', '.join(unknown)}. "
+                        f"Choose from: {', '.join(r['name'] for r in db.list_roles())}")
+    return [by_name[n.lower()] for n in names]
+
+
+def _users_list(db, user, args):
+    names = {r["id"]: r["name"] for r in db.list_roles()}
+    return {"ok": True, "users": [
+        {"email": u["email"], "name": u["name"], "roles": ", ".join(sorted(names[r] for r in u["role_ids"])),
+         "active": bool(u["is_active"])}
+        for u in db.list_users()]}
+
+
+def _invite(db, user, email: str, name: str, role_names: list[str], send: bool) -> dict:
+    """Create a user with a throwaway password and give them a one-time set-password link."""
+    from core import welcome
+
+    url = site_url() or welcome.base_url()
+    if not url:
+        raise ToolError("This server doesn't know its public URL. Set AGENCY_OS_BASE_URL.")
+    if db.get_user_by_email(email.strip().lower()):
+        raise ToolError(f"A user with email {email.strip().lower()} already exists.")
+    try:
+        user_id = db.create_user(email, name or email.split("@")[0], access.new_session_token(),
+                                 _role_ids(db, role_names), actor=user)
+        link, expires_at = welcome.issue_invite(db, user_id, url, actor=user)
+    except AccessError as exc:
+        raise ToolError(str(exc)) from exc
+    invited = db.load_current_user(user_id)
+    result = {"ok": True, "email": invited.email, "roles": ", ".join(invited.roles) or "(none)"}
+    if send and welcome.smtp_configured():
+        subject, body = welcome.compose(invited, link, expires_at, url)
+        if welcome.send(invited.email, subject, body).status == "sent":
+            return {**result, "sent": f"Welcome email sent (link expires {expires_at:%b %d, %Y})"}
+    # Not sent (asked not to, or no SMTP): hand the one-time link to the admin to share.
+    return {**result, "link": link, "expires": f"{expires_at:%b %d, %Y}"}
+
+
+def _users_invite(db, user, args):
+    return _invite(db, user, args["email"], args.get("name", ""), args.get("role", []), not args.get("no_send"))
+
+
+def _users_create_owner(db, user, args):
+    # No password on the command line: it would sit in history and the audit log.
+    return _invite(db, user, args["email"], args.get("name", ""), [access.OWNER_ROLE], not args.get("no_send"))
+
+
+def _users_set_roles(db, user, args):
+    row = db.get_user_by_email(args["email"].strip().lower())
+    if row is None:
+        raise ToolError(f"No user with email {args['email']}.")
+    try:
+        db.update_user(row["id"], name=row["name"], is_active=bool(row["is_active"]),
+                       role_ids=_role_ids(db, args.get("role", [])), actor=user)
+    except AccessError as exc:
+        raise ToolError(str(exc)) from exc
+    return {"ok": True, "email": row["email"], "roles": ", ".join(args.get("role", [])) or "(none)"}
+
+
+EMAIL = {"type": "string", "maxLength": 254, "description": "The user's email"}
+NAME = {"type": "string", "maxLength": 200, "description": "Display name (defaults to the email's local part)"}
+ROLES = {"type": "array", "items": {"type": "string", "maxLength": 100}, "maxItems": 20,
+         "description": "Role name; repeat for several"}
+NO_SEND = {"type": "boolean", "description": "Don't email it; show the one-time link to share yourself"}
+CONSOLE = ("console",)
+
 CAMPAIGN = {"type": "string", "maxLength": 200, "description": "Campaign name; defaults to the most recent"}
 
 TOOLS: dict[str, Tool] = {t.name: t for t in [
@@ -284,19 +372,36 @@ TOOLS: dict[str, Tool] = {t.name: t for t in [
     Tool("set_stage", "Move a prospect to another pipeline stage.",
          _obj({"prospect_id": PROSPECT_ID, "stage": {"type": "string", "enum": STAGES}, "campaign": CAMPAIGN},
               ["prospect_id", "stage"]), "pipeline.edit", "write", _set_stage),
+    Tool("users_list", "List team members, their roles and whether they're active.",
+         _obj({}), access.OWNER, "read", _users_list, CONSOLE),
+    Tool("users_invite", "Add a team member and send them a one-time set-password link. "
+         "Only a Super Admin can invite with the Owner or Super Admin role.",
+         _obj({"email": EMAIL, "name": NAME, "role": ROLES, "no_send": NO_SEND}, ["email"]),
+         access.OWNER, "write", _users_invite, CONSOLE),
+    Tool("users_create_owner", "Add a new Owner and send them a one-time set-password link.",
+         _obj({"email": EMAIL, "name": NAME, "no_send": NO_SEND}, ["email"]),
+         access.SUPER_ADMIN, "write", _users_create_owner, CONSOLE),
+    Tool("users_set_roles", "Replace a team member's roles (none removes them all). "
+         "Only a Super Admin can grant or remove Owner or Super Admin.",
+         _obj({"email": EMAIL, "role": ROLES}, ["email"]), access.OWNER, "write", _users_set_roles, CONSOLE),
 ]}
 
 
-def available(user: CurrentUser) -> list[Tool]:
-    """The tools this user may call (drafting only when a model is configured)."""
+def available(user: CurrentUser, surface: str = "ai") -> list[Tool]:
+    """The tools this user may call on a surface (drafting only when a model is configured).
+
+    On the console, drafting also needs the user's own AI opt-in, as it does in the app.
+    """
     return [t for t in TOOLS.values()
-            if user.can(t.permission) and (t.kind != "draft" or llm.backend())]
+            if surface in t.surfaces and user.allows(t.permission)
+            and (t.kind != "draft" or (llm.backend() and (surface == "ai" or user.uses_ai(t.permission))))]
 
 
-def run_tool(db, user: CurrentUser, name: str, args: Any, *, source: str, confirmed: bool = False) -> dict:
+def run_tool(db, user: CurrentUser, name: str, args: Any, *, source: str, confirmed: bool = False,
+             surface: str = "ai") -> dict:
     """Run one tool as `user`. Returns {ok, ...}; never raises."""
     tool = TOOLS.get(name)
-    if tool is None or tool not in available(user):
+    if tool is None or tool not in available(user, surface):
         return {"ok": False, "error": f"No tool named {name} for you"}
     if tool.kind == "write" and not confirmed:
         return {"ok": False, "error": "This change needs your confirmation", "needs_confirmation": True}
@@ -310,5 +415,6 @@ def run_tool(db, user: CurrentUser, name: str, args: Any, *, source: str, confir
     except Exception as exc:  # a tool bug must not leak a traceback to an AI client
         return {"ok": False, "error": f"{name} failed: {type(exc).__name__}"}
     if tool.kind == "write" and result.get("ok"):
-        db.audit(user, f"tool.{name}", "prospect", clean.get("prospect_id"), {"source": source, "args": clean})
+        target = ("prospect", clean.get("prospect_id")) if "prospect_id" in clean else ("user", clean.get("email"))
+        db.audit(user, f"tool.{name}", *target, {"source": source, "args": clean})
     return result
