@@ -163,6 +163,9 @@ for you to share instead of emailing it.
 | `users invite --email E [--name N] [--role R ...] [--no-send]` | Owner | Add a member and email a one-time set-password link (`--no-send` shows the link instead). Inviting with Owner or Super Admin needs a Super Admin |
 | `users create-owner --email E [--name N] [--no-send]` | Super Admin | Add a new Owner (they set their own password from the link) |
 | `users set-roles --email E [--role R ...]` | Owner | Replace a member's roles; Owner/Super Admin changes need a Super Admin |
+| `campaigns members --campaign C` | Owner | Who works a campaign (members only, or everyone) |
+| `campaigns assign --campaign C --user E` / `--role R` | Owner | Limit a campaign to its members: a person, or everyone with a role |
+| `campaigns unassign --campaign C --user E` / `--role R` | Owner | Remove a member; with none left, everyone whose role allows it sees it again |
 | `workflows list` | everyone | Tutorials and your own workflows |
 | `workflows play --name N` | everyone | Play one in the browser (the remote CLI tells you to open the browser) |
 | `workflows export` | everyone | Print a backup of your workflows: `agency_os.py remote workflows export > backup.json` |
@@ -255,6 +258,7 @@ steps:
 
 - **Owner** is a protected role — it bypasses all permission checks and manages users, roles, and the audit log (but can't grant or remove Owner or Super Admin).
 - **Super Admin** is a protected role above Owner. Only Super Admins (or the server-side `users` commands) can grant or remove Owner or Super Admin. Create the first one with `users grant-super-admin`.
+- **Campaign members:** a campaign with no members is seen by everyone whose role allows it. Add people or roles under **Administration → Campaign Settings → (campaign) → Who works this campaign** (or `campaigns assign` in the console) and only they see it and its leads, everywhere (lists, detail pages, call log, stats, AI tools). Owners and Super Admins always see every campaign, and a campaign's `requires_permission` still applies to members.
 - No starter role includes `cli.use`; add it to a role on Team → Roles to give its members the console.
 - New users get **no access** until an owner assigns them a role.
 - Owners can create custom roles by picking from the permission catalog via the dashboard's Team → Roles page.

@@ -34,7 +34,7 @@ BUILTINS = {"help": "This list", "whoami": "Who you're signed in as", "clear": "
 SHELL_WORDS = {"ls", "cd", "rm", "cat", "sudo", "curl", "wget", "python", "python3", "pip", "git", "bash",
                "sh", "echo", "mkdir", "cp", "mv", "chmod", "kill", "ps", "top", "vim", "nano", "exit", "quit"}
 # Example values for flags, by name; anything else gets a placeholder.
-SAMPLES = {"email": "jane@example.com", "name": '"Jane Doe"', "prospect_id": "42", "q": '"food bank"',
+SAMPLES = {"campaign": "voter-guide-cbo", "user": "jane@example.com", "email": "jane@example.com", "name": '"Jane Doe"', "prospect_id": "42", "q": '"food bank"',
            "note": '"Left a voicemail"', "notes": '"Asked for a callback"', "role": "Caller",
            "limit": "10", "decision_maker_name": '"Pat Lee"', "instructions": '"Keep it short"'}
 # Hints for errors a command returns: (text in the error, command that helps, what it's for).
@@ -49,7 +49,7 @@ HINTS = [
 ]
 
 
-GROUPS = ("users", "workflows")  # commands typed as "<group> <action>"
+GROUPS = ("users", "workflows", "campaigns")  # commands typed as "<group> <action>"
 
 
 def _command(tool: tools.Tool) -> str:

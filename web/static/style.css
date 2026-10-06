@@ -1309,3 +1309,6 @@ a.call-link:not(.btn) { color: var(--accent); }
 }
 /* Room to scroll the last of the page out from under the console button. */
 body:has(#console-launcher) main.container { padding-bottom: 72px; }
+
+/* Jump links (#members, #cli, ...) land below the sticky navbar, not under it. */
+:target { scroll-margin-top: 72px; }

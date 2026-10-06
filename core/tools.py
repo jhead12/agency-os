@@ -354,12 +354,75 @@ def _workflows_export(db, user, args):
     return {"ok": True, "backup": json.dumps(workflows.export(db, user), indent=2) + "\n"}
 
 
+def _campaign_named(name: str):
+    """A campaign by its full name, or by words that match exactly one (e.g. "voter-guide-cbo")."""
+    slug = name.strip().lower().replace(" ", "-").replace("_", "-")
+    campaigns = campaign_source()
+    exact = [c for c in campaigns if c.db_name == slug or c.name.lower() == name.strip().lower()]
+    words = [w for w in slug.split("-") if w]
+    found = exact or [c for c in campaigns if words and all(w in c.db_name.split("-") for w in words)]
+    if len(found) != 1:
+        names = ", ".join(c.db_name for c in campaigns)
+        raise ToolError(f"{'Several campaigns match' if found else 'No campaign matches'} {name!r}. Campaigns: {names}")
+    return found[0]
+
+
+def _member_target(db, args) -> dict:
+    if bool(args.get("user")) == bool(args.get("role")):
+        raise ToolError("Give --user <email> or --role <role name> (one of them)")
+    if args.get("user"):
+        row = db.get_user_by_email(args["user"].strip().lower())
+        if row is None:
+            raise ToolError(f"No user with email {args['user']}.")
+        return {"user_id": row["id"], "label": row["email"]}
+    role = next((r for r in db.list_roles() if r["name"].lower() == args["role"].strip().lower()), None)
+    if role is None:
+        raise ToolError(f"Unknown role {args['role']}. Choose from: {', '.join(r['name'] for r in db.list_roles())}")
+    return {"role_id": role["id"], "label": f"everyone with {role['name']}"}
+
+
+def _campaigns_members(db, user, args):
+    campaign = _campaign_named(args["campaign"])
+    members = db.campaign_members(campaign.db_name)
+    return {"ok": True, "campaign": campaign.db_name,
+            "access": "members only (and Owners)" if members else "everyone whose role allows it",
+            "members": [{"member": m["name"], "kind": m["kind"], "email": m["email"] or ""} for m in members]}
+
+
+def _campaigns_assign(db, user, args):
+    campaign = _campaign_named(args["campaign"])
+    target = _member_target(db, args)
+    label = target.pop("label")
+    try:
+        added = db.add_campaign_member(campaign.db_name, user, **target)
+    except AccessError as exc:
+        raise ToolError(str(exc)) from exc
+    return {"ok": True, "campaign": campaign.db_name,
+            "result": f"Added {label}. Only members (and Owners) see this campaign now."
+            if added else f"{label} was already on it."}
+
+
+def _campaigns_unassign(db, user, args):
+    campaign = _campaign_named(args["campaign"])
+    target = _member_target(db, args)
+    label = target.pop("label")
+    member = next((m for m in db.campaign_members(campaign.db_name)
+                   if m["user_id"] == target.get("user_id") and m["role_id"] == target.get("role_id")), None)
+    if member is None or not db.remove_campaign_member(campaign.db_name, member["id"], user):
+        raise ToolError(f"{label} isn't a member of {campaign.db_name}.")
+    left = db.campaign_members(campaign.db_name)
+    return {"ok": True, "campaign": campaign.db_name, "result": f"Removed {label}." + (
+        "" if left else " No members left: everyone whose role allows it sees this campaign again.")}
+
+
 EMAIL = {"type": "string", "maxLength": 254, "description": "The user's email"}
 NAME = {"type": "string", "maxLength": 200, "description": "Display name (defaults to the email's local part)"}
 ROLES = {"type": "array", "items": {"type": "string", "maxLength": 100}, "maxItems": 20,
          "description": "Role name; repeat for several"}
 NO_SEND = {"type": "boolean", "description": "Don't email it; show the one-time link to share yourself"}
 CONSOLE = ("console",)
+CAMPAIGN_NAME = {"type": "string", "maxLength": 200,
+                 "description": "Campaign name, or words matching one (e.g. voter-guide-cbo)"}
 
 CAMPAIGN = {"type": "string", "maxLength": 200, "description": "Campaign name; defaults to the most recent"}
 
@@ -410,6 +473,18 @@ TOOLS: dict[str, Tool] = {t.name: t for t in [
     Tool("users_set_roles", "Replace a team member's roles (none removes them all). "
          "Only a Super Admin can grant or remove Owner or Super Admin.",
          _obj({"email": EMAIL, "role": ROLES}, ["email"]), access.OWNER, "write", _users_set_roles, CONSOLE),
+    Tool("campaigns_members", "Who works a campaign. A campaign with members is visible only to them (and Owners).",
+         _obj({"campaign": CAMPAIGN_NAME}, ["campaign"]), access.OWNER, "read", _campaigns_members, CONSOLE),
+    Tool("campaigns_assign", "Add a person (--user) or everyone with a role (--role) to a campaign. "
+         "Once it has members, only they (and Owners) see it and its leads.",
+         _obj({"campaign": CAMPAIGN_NAME, "user": {**EMAIL, "description": "A person's email"},
+               "role": {"type": "string", "maxLength": 100, "description": "A role name, e.g. Caller"}}, ["campaign"]),
+         access.OWNER, "write", _campaigns_assign, CONSOLE),
+    Tool("campaigns_unassign", "Remove a person or role from a campaign. With no members left, "
+         "everyone whose role allows it sees the campaign again.",
+         _obj({"campaign": CAMPAIGN_NAME, "user": {**EMAIL, "description": "A person's email"},
+               "role": {"type": "string", "maxLength": 100, "description": "A role name, e.g. Caller"}}, ["campaign"]),
+         access.OWNER, "write", _campaigns_unassign, CONSOLE),
     Tool("workflows_list", "Tutorials and your own workflows (play one with workflows play --name ...).",
          _obj({}), access.ANY_USER, "read", _workflows_list, CONSOLE),
     Tool("workflows_play", "Play a tutorial or workflow in your browser: it moves around the app and explains each step.",

@@ -2757,6 +2757,9 @@ async def admin_campaigns(request: Request, msg: str = Query(default=""), error:
     db = get_db()
 
     campaign_data = []
+    members_by_campaign: dict[str, list] = defaultdict(list)
+    for m in db.campaign_members():
+        members_by_campaign[m["campaign"]].append(m)
     for c in campaigns:
         stats = db.get_pipeline_stats(c.db_name)
         # Read the raw YAML for display
@@ -2766,6 +2769,7 @@ async def admin_campaigns(request: Request, msg: str = Query(default=""), error:
             "config": c,
             "stats": stats,
             "yaml": yaml_content,
+            "members": [m["name"] for m in members_by_campaign.get(c.db_name, [])],
         })
 
     # Get available plugins for the create-campaign form
@@ -3009,11 +3013,45 @@ async def admin_campaign_detail(request: Request, campaign_slug: str):
         "plugins": _get_registry_plugins(),
         "networks": list(payments.NETWORKS),
         "unlocked": db.list_lead_packages(campaign_id) if campaign_id else [],
+        "members": db.campaign_members(campaign.db_name),
+        "team": [u for u in db.list_users() if u["is_active"]],
+        "roles": [r for r in db.list_roles() if r["name"] not in access.PROTECTED_ROLES],
         "paused": lead_packages.paused_refs(campaign),
         "default_rules": verify.DEFAULT_RULES.merged((campaign.lead_packages or {}).get("guarantee_rules")),
         "ratings": claims.ratings(db),
         "package_ref": lead_packages.package_ref,
     })
+
+
+def _members_back(campaign_slug: str, *, msg: str = "", error: str = "") -> RedirectResponse:
+    key, text = ("members_msg", msg) if msg else ("members_error", error)
+    return RedirectResponse(url=f"/admin/campaigns/{quote(campaign_slug)}?{key}={quote(text)}#members", status_code=303)
+
+
+@app.post("/admin/campaigns/{campaign_slug}/members")
+async def admin_campaign_member_add(request: Request, campaign_slug: str, member: str = Form(...)):
+    """Add a person or a role to a campaign; once it has members, only they (and Owners) see it."""
+    if campaign_slug not in {c.db_name for c in get_campaigns()}:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    kind, _, raw_id = member.partition(":")
+    if kind not in ("user", "role") or not raw_id.isdigit():
+        return _members_back(campaign_slug, error="Pick a person or a role.")
+    try:
+        added = get_db().add_campaign_member(campaign_slug, current_user(request), **{f"{kind}_id": int(raw_id)})
+    except AccessError as e:
+        return _members_back(campaign_slug, error=str(e))
+    return _members_back(campaign_slug, msg="Added. Only members (and Owners) see this campaign now."
+                         if added else "They're already on this campaign.")
+
+
+@app.post("/admin/campaigns/{campaign_slug}/members/{member_id}/delete")
+async def admin_campaign_member_remove(request: Request, campaign_slug: str, member_id: int):
+    db = get_db()
+    if not db.remove_campaign_member(campaign_slug, member_id, current_user(request)):
+        return _members_back(campaign_slug, error="That member was not found.")
+    left = db.campaign_members(campaign_slug)
+    return _members_back(campaign_slug, msg="Removed." if left else
+                         "Removed. With no members left, everyone whose role allows it sees this campaign again.")
 
 
 @app.post("/admin/campaigns/{campaign_slug}")
