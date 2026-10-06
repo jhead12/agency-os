@@ -429,7 +429,7 @@ def test_send(ctx, campaign_name, to_email, script_name, prospect_id):
             click.echo(f"  ✗ {ch_key} error: {exc}")
 
     if not sent:
-        click.echo(f"\n  ✗ No channel could send. Configure SMTP or Smartlead in .env")
+        click.echo("\n  ✗ No channel could send. Configure SMTP or Smartlead in .env")
 
 
 @cli.command()
@@ -563,7 +563,7 @@ def digest(ctx, campaign_name, all_campaigns):
         click.echo(f"  Emails sent:      {stats['total_emails_sent']}")
         click.echo(f"  Open rate:        {stats['open_rate']}")
         click.echo(f"  Reply rate:       {stats['reply_rate']}")
-        click.echo(f"  Stage breakdown:")
+        click.echo("  Stage breakdown:")
         for stage, count in sorted(stats["stage_counts"].items()):
             click.echo(f"    {stage:20s} {count}")
         if "spend" in stats:

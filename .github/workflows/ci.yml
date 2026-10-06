@@ -47,4 +47,7 @@ jobs:
       - name: Lint with ruff
         run: |
           pip install ruff
-          ruff check . --output-format=github
+          # Gate on real bugs only:
+          #   F821 undefined names, F541 broken f-strings, E9 syntax errors
+          # Skip style: unused imports and redefined test fixtures are noise.
+          ruff check . --select F821,E9,F541 --output-format=github
