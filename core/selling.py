@@ -37,7 +37,7 @@ import os
 import re
 import secrets
 from dataclasses import dataclass
-from typing import Any, Optional, Protocol
+from typing import Any, Callable, Optional, Protocol
 
 from core import contact_depth, royalties, verify
 from core.access import hash_token
@@ -221,19 +221,39 @@ def _check_lead(db, prospect_id: int, promised: str) -> tuple[bool, str, dict]:
     return True, tier, contact
 
 
-def candidates(db, criteria: dict, exclude: set[int] = frozenset(), limit: int = MAX_PACKAGE_LEADS) -> list[int]:
-    """Prospects a list's filters match that we may sell (not do-not-sell, not bought from others)."""
+# Campaign configs come from the web app (it syncs campaign files); tests may replace it.
+campaign_source: Callable[[], list] = lambda: []
+
+
+def hidden_for_publisher(db, user_id: Optional[int]) -> list[str]:
+    """Campaigns a package may not draw leads from: those its publisher can't see.
+
+    A publisher who is gone or deactivated is treated as having no roles, so only
+    campaigns open to everyone are used.
+    """
+    from core.access import CurrentUser
+    from core.campaign import hidden_campaigns
+
+    user = (db.load_current_user(user_id) if user_id else None) or CurrentUser(id=0, email="", name="")
+    return hidden_campaigns(campaign_source(), user)
+
+
+def candidates(db, criteria: dict, exclude: set[int] = frozenset(), limit: int = MAX_PACKAGE_LEADS,
+               hidden: list[str] = ()) -> list[int]:
+    """Prospects a list's filters match that we may sell (not do-not-sell, not bought from others,
+    not in a `hidden` campaign)."""
     where, params = db.prospect_filter(criteria)
+    hidden_sql, hidden_params = db.hidden_clause(hidden)
     rows = db.conn.execute(
         f"""SELECT DISTINCT p.id FROM prospects p LEFT JOIN outreach o ON p.id = o.prospect_id
-            WHERE {where} AND p.do_not_sell = 0 AND COALESCE(p.source, '') NOT LIKE 'x402:%'
-            ORDER BY p.id LIMIT ?""", (*params, limit + len(exclude))).fetchall()
+            WHERE {where} AND {hidden_sql} AND p.do_not_sell = 0 AND COALESCE(p.source, '') NOT LIKE 'x402:%'
+            ORDER BY p.id LIMIT ?""", (*params, *hidden_params, limit + len(exclude))).fetchall()
     return [r["id"] for r in rows if r["id"] not in exclude][:limit]
 
 
-def preview(db, criteria: dict, promised: str) -> dict:
+def preview(db, criteria: dict, promised: str, hidden: list[str] = ()) -> dict:
     """How many of a list's prospects would go into a package at this tier."""
-    matched = candidates(db, criteria)
+    matched = candidates(db, criteria, hidden=hidden)
     eligible = [(pid, tier) for pid in matched for ok, tier, _ in [_check_lead(db, pid, promised)] if ok]
     mix: dict = {}
     for _, tier in eligible:
@@ -266,7 +286,7 @@ def publish(db, user, *, saved_list_id: int, title: str, industry: str, region: 
         pool = max(0, min(max_pool_pct(), int(contributor_pool_pct)))
     except (TypeError, ValueError):
         pool = max_pool_pct()
-    found = preview(db, saved["criteria"], guarantee_tier)
+    found = preview(db, saved["criteria"], guarantee_tier, hidden_for_publisher(db, user.id))
     if not found["eligible"]:
         return None, "None of this list's prospects meet that contact depth yet"
     checked_rules = verify.DEFAULT_RULES.merged(rules or {}).to_dict()
@@ -527,7 +547,8 @@ def handle_claim(db, slug: str, body: Any) -> Reply:
 
     exclude = {l["prospect_id"] for l in sold.values()}
     fresh = []
-    for pid in candidates(db, json.loads(pkg["criteria"]), exclude=exclude, limit=shortfall * 5):
+    for pid in candidates(db, json.loads(pkg["criteria"]), exclude=exclude, limit=shortfall * 5,
+                          hidden=hidden_for_publisher(db, pkg["created_by"])):
         ok, tier, _ = _check_lead(db, pid, pkg["guarantee_tier"])
         if ok:
             fresh.append((pid, tier))

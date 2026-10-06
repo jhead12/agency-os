@@ -176,6 +176,8 @@ ROUTE_RULES: dict[str, str] = {
     "POST /admin/campaigns/{campaign_slug}": OWNER,
     "POST /admin/campaigns/{campaign_slug}/import-csv": OWNER,
     "POST /admin/campaigns/{campaign_slug}/members": OWNER,
+    "POST /admin/campaigns/{campaign_slug}/owners": SUPER_ADMIN,
+    "POST /admin/campaigns/{campaign_slug}/owners/{owner_id}/delete": SUPER_ADMIN,
     "POST /admin/campaigns/{campaign_slug}/members/{member_id}/delete": OWNER,
     "GET /admin/campaigns/{campaign_slug}/import-template": OWNER,
     "GET /plugins": "campaigns.view",
@@ -232,6 +234,8 @@ class CurrentUser:
     ai_enabled: bool = False  # the user opted in to AI features (Account page)
     restricted_campaigns: frozenset[str] = field(default_factory=frozenset)  # campaigns that have members
     member_campaigns: frozenset[str] = field(default_factory=frozenset)      # ...of which this user is one
+    owner_restricted_campaigns: frozenset[str] = field(default_factory=frozenset)  # campaigns with assigned Owners
+    owner_campaigns: frozenset[str] = field(default_factory=frozenset)             # ...assigned to this user
 
     @property
     def is_super_admin(self) -> bool:
@@ -255,17 +259,20 @@ class CurrentUser:
     def sees_campaign(self, campaign) -> bool:
         """Whether this user sees a campaign and its leads.
 
-        Owners (and Super Admins) see every campaign. Anyone else needs the
+        Super Admins see every campaign. Owners see every campaign except one a
+        Super Admin has assigned to other Owners. Anyone else needs the
         campaign's `requires_permission`, if it has one (a misspelled permission
         hides it rather than showing it), and, once the campaign has members
         (Admin → Campaign Settings), to be one of them, directly or by role.
         """
-        if self.is_owner:
+        name = getattr(campaign, "db_name", "")
+        if self.is_super_admin:
             return True
+        if self.is_owner:
+            return name not in self.owner_restricted_campaigns or name in self.owner_campaigns
         required = getattr(campaign, "requires_permission", "")
         if required and not self.can(required):
             return False
-        name = getattr(campaign, "db_name", "")
         return name not in self.restricted_campaigns or name in self.member_campaigns
 
     def uses_ai(self, permission: str) -> bool:

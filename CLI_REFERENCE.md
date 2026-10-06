@@ -166,6 +166,9 @@ for you to share instead of emailing it.
 | `campaigns members --campaign C` | Owner | Who works a campaign (members only, or everyone) |
 | `campaigns assign --campaign C --user E` / `--role R` | Owner | Limit a campaign to its members: a person, or everyone with a role |
 | `campaigns unassign --campaign C --user E` / `--role R` | Owner | Remove a member; with none left, everyone whose role allows it sees it again |
+| `campaigns owners --campaign C` | Owner | Which Owners run a campaign |
+| `campaigns add-owner --campaign C --user E` | Super Admin | Give a campaign to specific Owners; other Owners stop seeing it |
+| `campaigns remove-owner --campaign C --user E` | Super Admin | Unassign; with none left, every Owner sees it again |
 | `workflows list` | everyone | Tutorials and your own workflows |
 | `workflows play --name N` | everyone | Play one in the browser (the remote CLI tells you to open the browser) |
 | `workflows export` | everyone | Print a backup of your workflows: `agency_os.py remote workflows export > backup.json` |
@@ -219,7 +222,7 @@ steps:
 
 | Role | Description | Permissions |
 |---|---|---|
-| **Super Admin** | Everything an Owner can do, plus creating Owners and granting/removing the Owner and Super Admin roles. Owners can't change a Super Admin's account. | All permissions (automatic) |
+| **Super Admin** | Everything an Owner can do, plus creating Owners, granting/removing the Owner and Super Admin roles, and assigning campaigns to specific Owners. Owners can't change a Super Admin's account. Always sees every campaign. | All permissions (automatic) |
 | **Owner** | Full access. Bypasses all permission checks; manages users, roles, and the audit log. Can't grant Owner or Super Admin. | All permissions (automatic) |
 | **Caller** | Works the phones: views prospects and scripts, logs calls, moves stages | `dashboard.view`, `prospects.view`, `pipeline.edit`, `calls.view`, `calls.log`, `calendar.view`, `royalties.view_own` |
 | **Sales Rep** | Caller access plus editing prospects and reading sent email | `dashboard.view`, `prospects.view`, `prospects.export`, `prospects.edit`, `pipeline.edit`, `calls.view`, `calls.log`, `calendar.view`, `campaigns.view`, `emails.view`, `templates.view`, `portals.manage`, `packages.view`, `spend.view`, `agents.use`, `ai.connect`, `royalties.view_own` |
@@ -259,6 +262,7 @@ steps:
 - **Owner** is a protected role — it bypasses all permission checks and manages users, roles, and the audit log (but can't grant or remove Owner or Super Admin).
 - **Super Admin** is a protected role above Owner. Only Super Admins (or the server-side `users` commands) can grant or remove Owner or Super Admin. Create the first one with `users grant-super-admin`.
 - **Campaign members:** a campaign with no members is seen by everyone whose role allows it. Add people or roles under **Administration → Campaign Settings → (campaign) → Who works this campaign** (or `campaigns assign` in the console) and only they see it and its leads, everywhere (lists, detail pages, call log, stats, AI tools). Owners and Super Admins always see every campaign, and a campaign's `requires_permission` still applies to members.
+- **Campaign Owners:** a Super Admin can assign specific Owners to a campaign (**Campaign Settings → (campaign) → Owners of this campaign**, or `campaigns add-owner`). Then only those Owners and Super Admins see and manage it; other Owners don't see it anywhere (prospects, settings, audit log), and lead packages they publish never include its leads. With no Owners assigned, every Owner sees it.
 - No starter role includes `cli.use`; add it to a role on Team → Roles to give its members the console.
 - New users get **no access** until an owner assigns them a role.
 - Owners can create custom roles by picking from the permission catalog via the dashboard's Team → Roles page.

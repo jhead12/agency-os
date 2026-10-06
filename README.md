@@ -226,8 +226,11 @@ campaigns and prospects); roles control what each person can see and do.
 - **Campaign members** split the work: a campaign with no members is seen by
   everyone whose role allows it; once an Owner adds people or roles under
   **Campaign Settings → Who works this campaign** (or `campaigns assign` in the
-  console), only they see it and its leads. Owners and Super Admins see every
-  campaign.
+  console), only they see it and its leads.
+- **Campaign Owners:** a Super Admin can give a campaign to specific Owners
+  (**Owners of this campaign** on its settings page, or `campaigns add-owner`).
+  Other Owners then don't see it anywhere, and packages they publish never
+  include its leads. Super Admins always see every campaign.
 - **Every route is listed in `access.ROUTE_RULES`.** A route that isn't
   listed is denied for everyone, owners included. `tests/test_access.py`
   fails if a route is added without a rule.

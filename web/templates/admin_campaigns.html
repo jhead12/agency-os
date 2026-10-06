@@ -196,6 +196,7 @@
     </div>
     <p class="muted" style="margin: -4px 0 12px;">Who works it:
         {% if c.members %}<strong>{{ c.members|join(', ') }}</strong> (members only){% else %}everyone whose role allows it{% endif %}
+        {% if c.owners %}· Owners: <strong>{{ c.owners|join(', ') }}</strong>{% endif %}
         · <a href="/admin/campaigns/{{ c.config.db_name }}#members">change</a></p>
 
     <div class="campaign-grid">

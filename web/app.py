@@ -90,6 +90,7 @@ def get_campaigns():
 
 tools.campaign_source = lambda: get_campaigns()  # the AI tools read campaigns through the web app's cache
 tools.site_url = lambda: site_url()  # invite links from the console's user tools
+selling.campaign_source = lambda: get_campaigns()  # packages only draw from campaigns their publisher sees
 
 
 def visible_campaigns(request: Request) -> list:
@@ -232,6 +233,9 @@ async def authorize(request: Request) -> None:
             pass  # absent, or not a number (the route itself rejects that)
     if "prospect_id" in ids:
         require_visible_prospect(request, ids["prospect_id"])
+    # Campaign settings pages: a campaign this user can't see doesn't exist for them.
+    if request.path_params.get("campaign_slug") in hidden_for(request):
+        raise HTTPException(status_code=404, detail="Campaign not found")
     if "lead_package_id" in ids:
         package = db.get_lead_package(ids["lead_package_id"])
         if package and package["campaign_name"] in hidden_for(request):
@@ -2064,7 +2068,7 @@ async def admin_selling_publish(request: Request):
     if saved is None or tier not in contact_depth.RANK:
         return _selling_page(request, error="Pick a saved list and a contact depth.", form=form)
     if form.get("action") != "publish" or form.get("confirm") != "yes":
-        found = await run_in_threadpool(selling.preview, db, saved["criteria"], tier)
+        found = await run_in_threadpool(selling.preview, db, saved["criteria"], tier, hidden_for(request))
         return _selling_page(request, preview={**found, "eligible": len(found["eligible"]), "list": saved["name"]},
                              form=form, error="" if form.get("action") != "publish" else "Tick the box to publish.")
     package_id, problem = await run_in_threadpool(lambda: selling.publish(
@@ -2680,8 +2684,27 @@ async def admin_delete_role(request: Request, role_id: int):
 async def admin_audit(request: Request):
     return templates.TemplateResponse(request, "admin_audit.html", {
         "active": "admin",
-        "entries": get_db().list_audit(),
+        "entries": _visible_audit(request, get_db().list_audit()),
     })
+
+
+def _visible_audit(request: Request, entries: list) -> list:
+    """Leave out entries about campaigns (or their prospects) this user can't see."""
+    hidden = hidden_for(request)
+    if not hidden:
+        return entries
+    db = get_db()
+    kept = []
+    for e in entries:
+        if e["target_type"] == "campaign" and e["target_id"] in hidden:
+            continue
+        if any(name in (e["details"] or "") for name in hidden):
+            continue
+        if e["target_type"] == "prospect" and str(e["target_id"] or "").isdigit() \
+                and db.prospect_hidden(int(e["target_id"]), hidden):
+            continue
+        kept.append(e)
+    return kept
 
 
 @app.get("/admin/jobs", response_class=HTMLResponse)
@@ -2753,13 +2776,16 @@ def _get_registry_plugins():
 @app.get("/admin/campaigns", response_class=HTMLResponse)
 async def admin_campaigns(request: Request, msg: str = Query(default=""), error: str = Query(default="")):
     """Admin campaign management — list campaigns with YAML viewer and plugin association."""
-    campaigns = get_campaigns()
+    campaigns = visible_campaigns(request)
     db = get_db()
 
     campaign_data = []
     members_by_campaign: dict[str, list] = defaultdict(list)
     for m in db.campaign_members():
         members_by_campaign[m["campaign"]].append(m)
+    owners_by_campaign: dict[str, list] = defaultdict(list)
+    for o in db.campaign_owners():
+        owners_by_campaign[o["campaign"]].append(o)
     for c in campaigns:
         stats = db.get_pipeline_stats(c.db_name)
         # Read the raw YAML for display
@@ -2770,6 +2796,7 @@ async def admin_campaigns(request: Request, msg: str = Query(default=""), error:
             "stats": stats,
             "yaml": yaml_content,
             "members": [m["name"] for m in members_by_campaign.get(c.db_name, [])],
+            "owners": [o["name"] for o in owners_by_campaign.get(c.db_name, [])],
         })
 
     # Get available plugins for the create-campaign form
@@ -3006,6 +3033,7 @@ async def admin_campaign_detail(request: Request, campaign_slug: str):
 
     db = get_db()
     campaign_id = db.get_campaign_id(campaign.db_name)
+    owner_role_id = next(r["id"] for r in db.list_roles() if r["name"] == access.OWNER_ROLE)
     return templates.TemplateResponse(request, "admin_campaign_detail.html", {
         "active": "admin",
         "campaign": campaign,
@@ -3014,6 +3042,8 @@ async def admin_campaign_detail(request: Request, campaign_slug: str):
         "networks": list(payments.NETWORKS),
         "unlocked": db.list_lead_packages(campaign_id) if campaign_id else [],
         "members": db.campaign_members(campaign.db_name),
+        "owners": db.campaign_owners(campaign.db_name),
+        "owner_candidates": [u for u in db.list_users() if u["is_active"] and owner_role_id in u["role_ids"]],
         "team": [u for u in db.list_users() if u["is_active"]],
         "roles": [r for r in db.list_roles() if r["name"] not in access.PROTECTED_ROLES],
         "paused": lead_packages.paused_refs(campaign),
@@ -3025,7 +3055,7 @@ async def admin_campaign_detail(request: Request, campaign_slug: str):
 
 def _members_back(campaign_slug: str, *, msg: str = "", error: str = "") -> RedirectResponse:
     key, text = ("members_msg", msg) if msg else ("members_error", error)
-    return RedirectResponse(url=f"/admin/campaigns/{quote(campaign_slug)}?{key}={quote(text)}#members", status_code=303)
+    return RedirectResponse(url=f"/admin/campaigns/{quote(campaign_slug)}?{key}={quote(text)}", status_code=303)
 
 
 @app.post("/admin/campaigns/{campaign_slug}/members")
@@ -3042,6 +3072,32 @@ async def admin_campaign_member_add(request: Request, campaign_slug: str, member
         return _members_back(campaign_slug, error=str(e))
     return _members_back(campaign_slug, msg="Added. Only members (and Owners) see this campaign now."
                          if added else "They're already on this campaign.")
+
+
+@app.post("/admin/campaigns/{campaign_slug}/owners")
+async def admin_campaign_owner_add(request: Request, campaign_slug: str, user_id: int = Form(...)):
+    """Super Admins: assign an Owner to a campaign; once it has any, other Owners can't see it."""
+    if campaign_slug not in {c.db_name for c in get_campaigns()}:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    try:
+        added = get_db().add_campaign_owner(campaign_slug, user_id, current_user(request))
+    except AccessError as e:
+        return _members_back(campaign_slug, error=str(e))
+    return _members_back(campaign_slug, msg="Assigned. Other Owners no longer see this campaign."
+                         if added else "They're already assigned to this campaign.")
+
+
+@app.post("/admin/campaigns/{campaign_slug}/owners/{owner_id}/delete")
+async def admin_campaign_owner_remove(request: Request, campaign_slug: str, owner_id: int):
+    db = get_db()
+    try:
+        removed = db.remove_campaign_owner(campaign_slug, owner_id, current_user(request))
+    except AccessError as e:
+        return _members_back(campaign_slug, error=str(e))
+    if not removed:
+        return _members_back(campaign_slug, error="That Owner was not found.")
+    return _members_back(campaign_slug, msg="Removed." if db.campaign_owners(campaign_slug) else
+                         "Removed. With no Owners assigned, every Owner sees this campaign again.")
 
 
 @app.post("/admin/campaigns/{campaign_slug}/members/{member_id}/delete")

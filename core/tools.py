@@ -354,10 +354,10 @@ def _workflows_export(db, user, args):
     return {"ok": True, "backup": json.dumps(workflows.export(db, user), indent=2) + "\n"}
 
 
-def _campaign_named(name: str):
-    """A campaign by its full name, or by words that match exactly one (e.g. "voter-guide-cbo")."""
+def _campaign_named(name: str, user: CurrentUser):
+    """A campaign this user can see, by its full name or by words that match exactly one (e.g. "voter-guide-cbo")."""
     slug = name.strip().lower().replace(" ", "-").replace("_", "-")
-    campaigns = campaign_source()
+    campaigns = [c for c in campaign_source() if user.sees_campaign(c)]
     exact = [c for c in campaigns if c.db_name == slug or c.name.lower() == name.strip().lower()]
     words = [w for w in slug.split("-") if w]
     found = exact or [c for c in campaigns if words and all(w in c.db_name.split("-") for w in words)]
@@ -382,7 +382,7 @@ def _member_target(db, args) -> dict:
 
 
 def _campaigns_members(db, user, args):
-    campaign = _campaign_named(args["campaign"])
+    campaign = _campaign_named(args["campaign"], user)
     members = db.campaign_members(campaign.db_name)
     return {"ok": True, "campaign": campaign.db_name,
             "access": "members only (and Owners)" if members else "everyone whose role allows it",
@@ -390,7 +390,7 @@ def _campaigns_members(db, user, args):
 
 
 def _campaigns_assign(db, user, args):
-    campaign = _campaign_named(args["campaign"])
+    campaign = _campaign_named(args["campaign"], user)
     target = _member_target(db, args)
     label = target.pop("label")
     try:
@@ -403,7 +403,7 @@ def _campaigns_assign(db, user, args):
 
 
 def _campaigns_unassign(db, user, args):
-    campaign = _campaign_named(args["campaign"])
+    campaign = _campaign_named(args["campaign"], user)
     target = _member_target(db, args)
     label = target.pop("label")
     member = next((m for m in db.campaign_members(campaign.db_name)
@@ -413,6 +413,35 @@ def _campaigns_unassign(db, user, args):
     left = db.campaign_members(campaign.db_name)
     return {"ok": True, "campaign": campaign.db_name, "result": f"Removed {label}." + (
         "" if left else " No members left: everyone whose role allows it sees this campaign again.")}
+
+
+def _campaigns_owners(db, user, args):
+    campaign = _campaign_named(args["campaign"], user)
+    owners = db.campaign_owners(campaign.db_name)
+    return {"ok": True, "campaign": campaign.db_name,
+            "access": "assigned Owners only (and Super Admins)" if owners else "every Owner",
+            "owners": [{"owner": o["name"], "email": o["email"]} for o in owners]}
+
+
+def _owner_change(db, user, args, add: bool):
+    campaign = _campaign_named(args["campaign"], user)
+    row = db.get_user_by_email(args["user"].strip().lower())
+    if row is None:
+        raise ToolError(f"No user with email {args['user']}.")
+    try:
+        if add:
+            changed = db.add_campaign_owner(campaign.db_name, row["id"], user)
+            result = (f"Assigned {row['email']}. Other Owners no longer see this campaign." if changed
+                      else f"{row['email']} was already assigned.")
+        else:
+            match = next((o for o in db.campaign_owners(campaign.db_name) if o["user_id"] == row["id"]), None)
+            if match is None or not db.remove_campaign_owner(campaign.db_name, match["id"], user):
+                raise ToolError(f"{row['email']} isn't assigned to {campaign.db_name}.")
+            result = f"Removed {row['email']}." + ("" if db.campaign_owners(campaign.db_name)
+                                                    else " No Owners assigned: every Owner sees it again.")
+    except AccessError as exc:
+        raise ToolError(str(exc)) from exc
+    return {"ok": True, "campaign": campaign.db_name, "result": result}
 
 
 EMAIL = {"type": "string", "maxLength": 254, "description": "The user's email"}
@@ -485,6 +514,14 @@ TOOLS: dict[str, Tool] = {t.name: t for t in [
          _obj({"campaign": CAMPAIGN_NAME, "user": {**EMAIL, "description": "A person's email"},
                "role": {"type": "string", "maxLength": 100, "description": "A role name, e.g. Caller"}}, ["campaign"]),
          access.OWNER, "write", _campaigns_unassign, CONSOLE),
+    Tool("campaigns_owners", "Which Owners run a campaign (assigned by a Super Admin; others don't see it).",
+         _obj({"campaign": CAMPAIGN_NAME}, ["campaign"]), access.OWNER, "read", _campaigns_owners, CONSOLE),
+    Tool("campaigns_add_owner", "Assign an Owner to a campaign. Once it has any, other Owners don't see it.",
+         _obj({"campaign": CAMPAIGN_NAME, "user": {**EMAIL, "description": "The Owner's email"}}, ["campaign", "user"]),
+         access.SUPER_ADMIN, "write", lambda db, user, args: _owner_change(db, user, args, True), CONSOLE),
+    Tool("campaigns_remove_owner", "Unassign an Owner from a campaign. With none left, every Owner sees it again.",
+         _obj({"campaign": CAMPAIGN_NAME, "user": {**EMAIL, "description": "The Owner's email"}}, ["campaign", "user"]),
+         access.SUPER_ADMIN, "write", lambda db, user, args: _owner_change(db, user, args, False), CONSOLE),
     Tool("workflows_list", "Tutorials and your own workflows (play one with workflows play --name ...).",
          _obj({}), access.ANY_USER, "read", _workflows_list, CONSOLE),
     Tool("workflows_play", "Play a tutorial or workflow in your browser: it moves around the app and explains each step.",
