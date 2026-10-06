@@ -1207,3 +1207,4 @@ a.call-link:not(.btn) { color: var(--accent); }
 .console-echo { color: var(--text-muted); }
 .console-muted { color: var(--text-muted); }
 .console-error { color: #f87171; }
+.console-table { display: block; white-space: pre; overflow-x: auto; }

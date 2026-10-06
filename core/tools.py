@@ -415,6 +415,7 @@ def run_tool(db, user: CurrentUser, name: str, args: Any, *, source: str, confir
     except Exception as exc:  # a tool bug must not leak a traceback to an AI client
         return {"ok": False, "error": f"{name} failed: {type(exc).__name__}"}
     if tool.kind == "write" and result.get("ok"):
-        target = ("prospect", clean.get("prospect_id")) if "prospect_id" in clean else ("user", clean.get("email"))
+        # Team tools have no prospect; the database's own user.* entries carry the user id.
+        target = ("prospect", clean["prospect_id"]) if "prospect_id" in clean else (None, None)
         db.audit(user, f"tool.{name}", *target, {"source": source, "args": clean})
     return result

@@ -17,9 +17,12 @@
     let pending = null;  // a line waiting for y/N
     let busy = false;
 
+    // A result holding a table (a "----  ----" rule line) keeps its columns and scrolls sideways on phones.
+    const TABLE_RULE = /^-+( +-+)*$/m;
+
     const print = (text, cls) => {
         const span = document.createElement('span');
-        if (cls) span.className = cls;
+        span.className = [cls, TABLE_RULE.test(text) ? 'console-table' : ''].filter(Boolean).join(' ');
         span.textContent = text + '\n';
         output.appendChild(span);
         root.scrollTop = root.scrollHeight;
