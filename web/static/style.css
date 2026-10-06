@@ -1207,6 +1207,7 @@ a.call-link:not(.btn) { color: var(--accent); }
 .console-echo { color: var(--text-muted); }
 .console-muted { color: var(--text-muted); }
 .console-error { color: #f87171; }
+.console-hint { color: #cbd5e1; }
 .console-table { display: block; white-space: pre; overflow-x: auto; }
 
 /* ── Floating console window (base.html; for users with cli.use) ── */

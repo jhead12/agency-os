@@ -110,11 +110,11 @@ def test_help_lists_only_permitted_commands(db):
     make_user(db, "owner@x.com", access.OWNER_ROLE)
     out = run(client_for("owner@x.com"), "help")["output"]
     assert "users invite" in out and "users create-owner" not in out
-    assert "Unknown command" in run(client_for("owner@x.com"), "users create-owner --email a@x.com")["output"]
+    assert "needs the Super Admin role" in run(client_for("owner@x.com"), "users create-owner --email a@x.com")["output"]
 
     make_user(db, "boss@x.com", access.SUPER_ADMIN_ROLE)
     assert "users create-owner" in run(client_for("boss@x.com"), "help")["output"]
-    assert "--email <value>" in run(client_for("boss@x.com"), "help users invite")["output"]
+    assert "--email <email>" in run(client_for("boss@x.com"), "help users invite")["output"]
 
 
 def test_invite_asks_first_then_creates_and_audits(db):
@@ -155,8 +155,43 @@ def test_parse_errors_are_friendly(db):
     assert "Unknown flag --nope" in run(c, "users invite --nope 1")["output"]
     assert "--email needs a value" in run(c, "users invite --email")["output"]
     assert "Couldn't read" in run(c, 'users invite --name "unclosed')["output"]
-    assert "Unknown command 'rm'" in run(c, "rm -rf /")["output"]
+    assert "'rm' is a shell command" in run(c, "rm -rf /")["output"]
     assert "whole number" in run(c, "get-prospect --prospect-id abc")["output"]
+
+
+def test_errors_teach_the_fix(db):
+    make_user(db, "owner@x.com", access.OWNER_ROLE)
+    console_user(db)
+    owner = client_for("owner@x.com")
+    out = lambda c, line: run(c, line)["output"]  # noqa: E731
+
+    assert "Did you mean: search-prospects" in out(owner, "serch-prospects --q food")
+    assert "Did you mean: users invite" in out(owner, "users invit --email a@x.com")
+    assert "users needs a subcommand: users list, users invite, users set-roles" in out(owner, "users")
+
+    missing = out(owner, "users invite")
+    assert "users invite needs --email." in missing
+    assert "Usage:   users invite --email <email> [--name <name>] [--role <role>]... [--no-send]" in missing
+    assert "Example: users invite --email jane@example.com" in missing and "More:    help users invite" in missing
+
+    assert "Did you mean --email?" in out(owner, "users invite --emial a@x.com")
+    assert "Did you mean: get-prospect --prospect-id 42?" in out(owner, "get-prospect 42")
+    assert "Flags start with two dashes: --prospect-id" in out(owner, "get-prospect -prospect-id 4")
+    assert "--prospect-id must be a whole number" in out(owner, "get-prospect --prospect-id abc")
+    assert "--stage must be one of: cold" in out(owner, "set-stage --prospect-id 1 --stage hot")
+
+    not_found = out(owner, "get-prospect --prospect-id 99999999")
+    assert "Prospect not found" in not_found and 'search-prospects --q "<name>"' in not_found
+
+    assert "Ask a Super Admin" in out(owner, "users create-owner --email a@x.com")
+    caller = client_for("caller@x.com")
+    assert "users invite needs the Owner role. You have: Console Caller" in out(caller, "users invite --email a@x.com")
+    assert "the users commands need the Owner role" in out(caller, "users")
+    # A hint only names commands the user can run.
+    assert "users list" not in out(caller, "log-call --prospect-id 99999999 --outcome completed")
+
+    page = out(owner, "help set-stage")
+    assert "Usage:   set-stage --prospect-id <id> --stage <stage>" in page and "Example: set-stage" in page
 
 
 def test_admin_tools_stay_off_ai_surfaces(db):
@@ -227,7 +262,7 @@ def test_remote_cli_connects_and_runs(db, tmp_path, monkeypatch):
     assert sent[-1] == ("users invite --email amy@x.com --name 'Amy Lee' --role Caller --no-send", True)
 
     r = CliRunner().invoke(cli, ["remote", "users", "create-owner", "--email", "z@x.com"])
-    assert r.exit_code == 1 and "Unknown command" in r.output
+    assert r.exit_code == 1 and "needs the Super Admin role" in r.output
 
 
 def test_format_result_tables():

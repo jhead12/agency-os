@@ -66,7 +66,13 @@
                     promptLabel.textContent = 'Run this? [y/N]';
                     return;
                 }
-                if (data.output) print(data.output, data.ok ? '' : 'console-error');
+                if (data.output && data.ok) print(data.output);
+                else if (data.output) {
+                    // The problem in red; the guidance under it (usage, example, a command to try) stays readable.
+                    const [problem, ...help] = data.output.split('\n');
+                    print(problem, 'console-error');
+                    if (help.length) print(help.join('\n'), 'console-hint');
+                }
             } catch (_) {
                 print('Could not reach agency-os.', 'console-error');
             } finally {
