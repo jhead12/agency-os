@@ -13,7 +13,7 @@ import re
 from datetime import datetime, timedelta
 from typing import Optional
 
-from core.campaign import CampaignConfig, discover_campaigns
+from core.campaign import CadenceStep, CampaignConfig, discover_campaigns
 from core.db import Database
 from core import lead_packages
 from core.models import Prospect, SendResult
