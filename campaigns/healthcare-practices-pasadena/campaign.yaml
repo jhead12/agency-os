@@ -1,0 +1,40 @@
+# Builds a sellable list of dental and chiropractic practices for tech-company
+# buyers. No product plugin: reps verify the contacts by phone, then the list
+# is published from Administration -> Sell Lead Packages.
+name: "Healthcare Practices — Dentists & Chiropractors (Pasadena area)"
+product: lead_list
+prospect_sources:
+- npi_registry
+enrichers:
+- local_scraper
+- hunter
+channels:
+- manual
+filters:
+  state: CA
+  npi_taxonomies:
+  - Dentist
+  - Chiropractor
+  npi_type: organization
+  # The NPI API caps a search at 1,200 records: list cities (or postal_codes) to cover more.
+  cities:
+  - Pasadena
+  - South Pasadena
+  - Altadena
+  - San Marino
+  - Arcadia
+  - Sierra Madre
+  - La Canada Flintridge
+  - Glendale
+  - Alhambra
+  - San Gabriel
+  - Temple City
+  - Monrovia
+stages:
+- cold
+- contacted
+- engaged
+- closed_won
+- closed_lost
+- nurture
+cadence: []

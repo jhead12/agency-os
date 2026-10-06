@@ -1,0 +1,40 @@
+# Civil litigation attorneys for recruiters. Only users with the
+# recruiting.view permission (the Recruiter role) see this campaign and its
+# leads; recruiters can also buy attorney lists into it as lead packages.
+name: "Recruiting — Civil Litigation Attorneys (CA)"
+product: lead_list
+requires_permission: recruiting.view
+# pacer_attorneys reads the courts' records directly (PACER account, capped
+# monthly spend). courtlistener_attorneys needs a CourtListener commercial
+# agreement for this use; it stays off until COURTLISTENER_API_TOKEN is set.
+prospect_sources:
+- pacer_attorneys
+- courtlistener_attorneys
+enrichers:
+- local_scraper
+channels:
+- manual
+filters:
+  state: CA
+  courts: [cacd, cand, casd, caed]
+  suit_natures: [Contract, Torts, Personal Injury, Civil Rights, Labor, Property Rights]
+  filed_within_days: 365
+  max_dockets: 500
+  min_cases: 2
+  # pacer_attorneys (nature_of_suit defaults to the civil-litigation codes in the plugin)
+  pacer_courts: [cac, can, cas, cae]
+  max_cases: 100
+stages:
+- cold
+- contacted
+- engaged
+- closed_won
+- closed_lost
+- nurture
+cadence: []
+lead_packages:
+  enabled: true
+  network: base-sepolia
+  max_unlock_usd: 250
+  max_royalty_per_contact_usd: 2
+  monthly_budget_usd: 1000

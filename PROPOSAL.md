@@ -43,7 +43,7 @@ Community-based organizations want to help their constituents make informed voti
 
 - Researching every candidate and ballot measure (hundreds of hours)
 - Maintaining accuracy as positions change
-- Translating into multiple languages (English, Spanish, Chinese, Korean, Tagalog)
+- Translating into multiple languages (English, Spanish, Chinese, Korean, Tagalog) — *a real CBO pain; u9itus's own multilingual rendering is on the build list (F1) but not yet shipped*
 - Building a mobile-friendly web presence
 - Keeping it nonpartisan and compliant
 
@@ -162,7 +162,21 @@ When a prospect shows interest (clicks the demo link, replies, or takes a meetin
 - U9itus reports back when the prospect views or claims the page
 - The pipeline stage auto-advances: viewed → engaged, claimed → demo scheduled, published → ready to close
 
-This integration is built on the agency-os side (A1–A9 complete). The U9itus Laravel side (U1–U10) is the next development milestone.
+This integration is built on both sides. **agency-os (A1–A10) and the U9itus Laravel API (U1–U10) are code-complete and end-to-end tested locally.** The U9itus branch has not been merged to production yet, so the live site still returns 404 for agency API calls.
+
+**Payment gating (P1–P8) is the next milestone and it is what makes the business collectable.** Free today ends at publish: viewing and claiming the demo portal, and editing it in the builder, are free — they are the sales tool. **Publishing the guide publicly requires an active subscription** ($500 Starter / $1,500 Pro / $4,000 Coalition per cycle, Stripe checkout or staff-recorded invoice). Claim stays free so the demo funnel has zero friction; publish is the paid moment because that is when real value reaches constituents. Tier features (multilingual, embed, PDF flyers, analytics, partner orgs) are enforced at publish and edit time. A per-cycle expiry job (`portal:close-cycle`) flips subscription status when the cycle ends; renewal is manual, not auto-recurring.
+
+New event types feed back to agency-os: `subscription.activated` (plan + amount), `subscription.expired`, `subscription.canceled`. agency-os stages still only move forward; subscription events add notes and flags but never pull a prospect backward.
+
+#### Step 4b: Renewal
+
+Renewal is owned by agency-os, not left to chance. California's statewide elections fall only in even years, so a customer's next purchase can be 17+ months after their last one — long enough that nobody remembers to renew unprompted. The lifetime-value figures in Section 11 assume renewal, so it has to be worked like a sale.
+
+- **Renewal campaign**: a dedicated agency-os campaign whose prospects are Closed Won accounts. `subscription.expired` events from U9itus enroll the account automatically.
+- **Timing**: first touch ~90 days before the next election's ballot-mailing date (not the election date), so the guide is live when ballots arrive.
+- **Cadence**: email + call from the sales caller; the call matters more here than in cold outreach because the contact may have changed since the last cycle.
+- **Off-cycle touches**: local special elections and municipal measures are a reason to re-engage between statewide cycles, and an upsell path (Starter → Pro for multilingual, Pro → Coalition for partner orgs).
+- **Pricing**: renewal is billed per cycle at the then-current tier; no auto-recurring charge, since a CBO's budget and contact often change between cycles.
 
 #### Step 5: Pipeline Tracking & CRM
 
@@ -184,28 +198,41 @@ The dashboard provides full visibility into every prospect's journey:
 | Feature | Starter ($500) | Pro ($1,500) | Coalition ($4,000) |
 |---------|---------------|-------------|-------------------|
 | Co-branded voter guide with your logo | ✅ | ✅ | ✅ |
-| Constituents reached | Up to 1,000 | Unlimited | Unlimited |
-| Candidate comparisons side-by-side | ✅ | ✅ | ✅ |
 | Ballot measures in plain language | ✅ | ✅ | ✅ |
-| Multilingual support | — | Spanish, Korean, Chinese, Tagalog | Same + custom |
-| Embed on your website | — | ✅ | ✅ |
-| Printable PDF voter guides | — | ✅ | ✅ |
-| Partner CBOs | 1 | 1 | Up to 10 |
-| Custom branding per partner | — | — | ✅ |
-| Analytics dashboard | — | — | ✅ |
-| Account manager | — | — | ✅ |
-| QR codes for print materials | — | — | ✅ |
+| Candidate comparison list (per-candidate profile links) | ✅ | ✅ | ✅ |
+| Embed on your website | ✅ | ✅ | ✅ |
+| Printable PDF voter guides + QR codes | ✅ | ✅ | ✅ |
+| Traffic analytics dashboard | ✅ | ✅ | ✅ |
+| **Side-by-side candidate comparison** | 🔲 not built | 🔲 not built | 🔲 not built |
+| **Multilingual (Spanish, Korean, Chinese, Tagalog)** | — | 🔲 not built | 🔲 not built |
+| **Partner CBOs (up to 10) + custom branding per partner** | — | — | 🔲 not built (spec defers partner parentage) |
+| **Constituents reached cap (1,000)** | 🔲 not enforced | Unlimited | Unlimited |
 | Support | Email | Priority | Dedicated |
 
-**Pricing model**: Per election cycle (aligns revenue with the actual usage pattern — organizations need voter guides for primary and general elections)
+🔲 = committed in the pricing but not yet implemented in u9itus. Nothing in this table should be pitched in outreach until the corresponding build is done — see Section 4a below.
+
+**Pricing model**: Per election cycle (aligns revenue with the actual usage pattern — organizations need voter guides for primary and general elections). In California, statewide primaries and generals both fall in even years, so there are two cycles every two years — about one per year on average, arriving in clusters with a long gap in odd years.
+
+### 4a. Feature-build work packages the price list depends on
+
+These are u9itus-side builds required before the corresponding tier can be sold without misrepresentation. They are tracked as part of the payment-gating branch.
+
+| # | Feature | Tier it unlocks | Status |
+|---|---|---|---|
+| **F1** | Multilingual portal rendering (translation of all portal strings, locale switcher, hreflang) | Pro, Coalition | 🔲 not started — portal is English-only (`<html lang="en">`) |
+| **F2** | Side-by-side candidate comparison block in the portal builder (uses the existing `/compare` data) | All tiers | 🔲 not started — portal block today is a list of "View profile" links |
+| **F3** | Coalition partner parentage — `parent_organization_id` on organizations, sub-portal management | Coalition | 🔲 deferred by decision #4 in `doc/AGENCY_OS_INTEGRATION.md` |
+| **F4** | Starter constituent cap enforcement (view counter with 1k limit + notice) | Starter | 🔲 nothing tracks views against a cap |
+
+**Until these are built, only Starter-as-built can be sold honestly** — a co-branded, plain-language ballot guide with logo, embed, PDF flyers, QR codes, and traffic table. That is also the product that ships with P1–P8.
 
 ### Why Organizations Buy
 
 1. **Time**: Building a voter guide takes 200+ hours. U9itus does it in minutes.
 2. **Credibility**: Nonpartisan, verified public records — not opinions or endorsements.
-3. **Reach**: Mobile-first, multilingual, no account required for constituents.
+3. **Reach**: Mobile-first, no account required for constituents. Multilingual (in Pro/Coalition once built; today English-only).
 4. **Brand**: Co-branded with the organization's logo — they own the distribution.
-5. **Compliance**: Labeled as a sample, stays out of search engines, expires after the election.
+5. **Compliance guardrails**: 501(c)(3) orgs can take ballot-measure positions only; the system enforces this per org type by blocking candidate endorsements. (What does **not** apply to a paid published portal: "labeled as a sample," "stays out of search engines," and "expires" — those describe the unclaimed demo only. A published guide is public, indexed, and lives until the org takes it down.)
 
 ---
 
@@ -218,7 +245,10 @@ agency-os supports **multiple campaigns**, each self-contained with its own pros
 | Campaign | Target | Geography | Prospect Count | Cadence |
 |----------|--------|-----------|----------------|---------|
 | CBO Outreach (Los Angeles) | Community-based organizations | LA County, CA | 2,442 | 4-touch email + direct mail, 12 days |
-| Elected Officials Outreach | City council members, supervisors | California statewide | 0 (pending sync) | 4-touch email, constituents angle, 21-day stale |
+| Elected Officials Outreach | City council members, supervisors | California statewide | 0 — **misconfigured** (uses IRS BMF nonprofit source; elected officials don't file 501(c)(3)s) | 4-touch email, constituents angle, 21-day stale |
+
+**Coverage reality check (from a 100-prospect local-scraper sample, 2026-10-04):**
+23% email, 30% phone, 99% website, 18% contact name. On 2,442 records that projects to roughly **560 email-reachable and 730 phone-reachable prospects**, not 2,442. Full overnight enrichment run is the current operational priority. The Elected Officials campaign needs a real prospect source (SOS rosters, county clerk data) before it can produce anything.
 
 ### Creating a New Campaign
 
@@ -313,21 +343,31 @@ Custom roles can be created by picking from the 13-permission catalog.
 ### Phase 1: Los Angeles CBOs (Current)
 
 - **Target**: 2,442 CBOs in LA County, filtered by civic engagement focus and $100K+ annual revenue
-- **Channels**: Email (primary), direct mail postcards (touch 2), phone (warm prospects)
-- **Goal**: 50 meetings booked → 15 demos → 5 closed deals at Starter tier ($2,500 revenue)
+- **Channels**: Email (primary where email exists), direct mail postcards (touch 2), phone/SMS (30% phone coverage makes this a first-class channel, not just warm follow-up)
+- **Realistic goal for survival mode**: 560 email + 730 phone → 10–25 responses → 5–10 demos → **2–5 closed deals ($1,000–$7,500)** in the first cycle. This validates the model before scaling.
 - **Timeline**: 60 days from first send
+- **Election calendar**: the November 3, 2026 general is ~4 weeks out and mail ballots are already going out, so any deal closed now gets only a few weeks of use. Treat late-2026 outreach as a low-cost test of messaging and conversion; the real selling window is the run-up to the 2028 statewide primary, plus local special elections in between.
+- **Blocking work before first send**: (1) U9itus branch merged with U1–U10 deployed, (2) payment gating P1–P3+P5 built — otherwise deals close into a product that cannot collect money, and (3) enrichment run completed.
 
 ### Phase 2: California Elected Officials
+
+> ⚠️ **Blocked on a product decision.** As built, u9itus refuses politician accounts from claiming an org portal (`OrganizationPolicy::claim`) — and `config/organizations.php` has no `org_type` for a public office. Even if the prospect source worked, this campaign's close-into path has no landing zone. Before pitching elected officials, decide one of:
+>
+> - **Build the officeholder path**: new `org_type=public_office` with `can_endorse_candidates=false`, an `officeholder` claim user type allowed to own a "constituent information" portal, and legal review for a guide paid for by an officeholder that covers their own race.
+> - **Or defer Phase 2** until the 2028 cycle and focus 2026-2027 on CBOs only.
+>
+> The rest of this phase description assumes the first option; if the answer is defer, strike Phase 2.
 
 - **Target**: City council members, county supervisors, school board members statewide
 - **Angle**: Constituents deserve better voter info — position the voter guide as a constituent service
 - **Goal**: 100 meetings → 20 demos → 8 closed deals ($4,000–$12,000 revenue at Pro/Coalition tier)
+- **Prospect source**: needs a new plugin (CA SOS roster of officeholders, county clerk data) — current `irs_bmf` source returns nonprofits, not officials
 
 ### Phase 3: Multi-State Expansion
 
 - **Product**: Reuse agency-os with new prospect sources (other states' SOS data, national nonprofit registries)
 - **Plugin**: New ProspectSource plugins for each state's public data
-- **Timeline**: Q1 2027
+- **Timeline**: Q1 2028 (was Q1 2027 — the even-year election calendar pushes real selling windows to spring 2028)
 
 ### Revenue Model
 
@@ -337,7 +377,7 @@ Custom roles can be created by picking from the 13-permission catalog.
 | Target (2% close rate) | 49 | $1,200 | $58,800 |
 | Optimistic (3% close rate) | 73 | $1,500 | $109,500 |
 
-*Per election cycle. Primary and general elections = 2 cycles/year.*
+*Per election cycle. In California, primary and general elections both fall in even years = 2 cycles every 2 years (≈1 cycle/year on average).*
 
 ### Customer Acquisition Cost
 
@@ -378,18 +418,25 @@ U9itus provisions full account
 | **A3**: CLI `provision` command — idempotent demo provisioning | ✅ Built |
 | **A4**: CLI `pull-events` command — event feed with auto-stage-advance | ✅ Built |
 | **A5**: DB tables — product_events, sync_cursors | ✅ Built |
+| **A6**: Prospect page u9itus card, portal buttons, ready-to-close badge | ✅ Built |
+| **A7**: Scheduled jobs on Railway (`AGENCY_OS_RUN_JOBS=1`) | ✅ Built (off until env set) |
 | **A8**: Environment config — U9ITUS_BASE_URL, U9ITUS_AGENCY_TOKEN | ✅ Built |
 | **A9**: Cold cadence fix — stages never move backward | ✅ Built |
-| **U1–U10**: U9itus Laravel API endpoints | 🔲 Next milestone |
+| **A10**: Cancellation doesn't undo a claimed portal | ✅ Built |
+| **U1–U10**: U9itus Laravel API endpoints + claim flow + events | ✅ Built (branch `feature/white-label-portal-builder`, **not deployed** — prod 404s) |
+| **P1–P8**: Payment gating (publish requires subscription; Stripe + manual invoice; tier limits; cycle expiry; subscription.* events) | 🔲 **Next milestone — blocking first send** |
+| **Flow-review fixes**: claim redirect, county-scoped demo data, org-claim verification, org-type confirmation | 🔲 Land on the same branch before merge and real campaigns |
 
-### What U1–U10 Will Deliver
+### What U1–U10 Already Deliver
 
-On the U9itus side:
-- `POST /api/v1/agency/demo-portals` — accept provisioning requests
-- `GET /api/v1/agency/events` — return append-only event feed
-- Organization claim flow for prospects
-- Demo portal pages with `?src=outreach` tracking
-- Portal expiration and SEO noindex
+On the U9itus side (deployed once the branch merges):
+- `POST /api/v1/agency/demo-portals` — accepts provisioning requests, idempotent on external_ref
+- `GET /api/v1/agency/events` — append-only event feed with cursor
+- Organization claim flow (4-step, email-verified) for prospects
+- Demo portal pages with `?src=outreach` tracking, preview-token gating, noindex, 60-day expiry
+- Scheduled `portal:expire-demos` + 90-day event pruning
+
+Full contract and end-to-end test log: `doc/AGENCY_OS_INTEGRATION.md` (u9itus repo).
 
 ---
 
@@ -427,7 +474,7 @@ On the U9itus side:
 - ✅ Email template editor with live preview
 - ✅ Mail template editor with postcard/letter visual preview
 - ✅ Test email mode (test-send CLI + --test-email flag)
-- ✅ U9itus integration client-side (A1–A9)
+- ✅ U9itus integration client-side (A1–A10) and server-side (U1–U10 on branch, end-to-end tested locally)
 - ✅ Data persistence (PostgreSQL + Railway volumes)
 - ✅ Deployment (Docker, Railway, GitHub CI/CD)
 
@@ -435,12 +482,17 @@ On the U9itus side:
 
 | Priority | Milestone | Description | Timeline |
 |----------|-----------|-------------|----------|
-| 1 | U9itus API endpoints (U1–U10) | Laravel API for demo provisioning + event feed | 2 weeks |
-| 2 | First outreach send | Configure SMTP/Smartlead, run first campaign | 1 week |
-| 3 | Call recording integration | Record phone calls and attach to prospect records | 2 weeks |
-| 4 | Analytics dashboard | Conversion rates, channel performance, rep activity | 3 weeks |
-| 5 | Multi-state expansion | New prospect sources for TX, NY, FL, AZ | 4 weeks |
-| 6 | AI-powered personalization | GPT-generated email bodies from prospect data | 4 weeks |
+| 1 | Payment gating (P1–P8) on U9itus | Publish requires subscription; Stripe + invoice path; tier limits; subscription.* events | Before first send |
+| 2 | Merge + deploy u9itus branch `feature/white-label-portal-builder` | U1–U10 live in production; fix claim redirect, county demo data, org-claim verification, org-type confirmation on the same branch | 1 week |
+| 3 | Finish enrichment run | Full 2,442-record local_scraper pass overnight | 1 night |
+| 4 | Feature builds F1–F4 (multilingual, candidate compare block, coalition parents, Starter cap) | Required before Pro/Coalition can be pitched honestly | 3–4 weeks, parallel with outreach prep |
+| 5 | Decision: officeholder path for Phase 2 | New `org_type=public_office` + claim rules, or defer Phase 2 to 2028 | Decide before any EO outreach |
+| 6 | Fix elected-officials campaign source | Add a prospect source for SOS rosters / county clerk data (only if Phase 2 is proceeding) | 1 week after #5 |
+| 7 | First outreach send | Configure SMTP/Smartlead, run first campaign | After 1–4 |
+| 8 | Call recording integration | Record phone calls and attach to prospect records | 6 weeks |
+| 9 | Analytics dashboard | Conversion rates, channel performance, rep activity | 8 weeks |
+| 10 | Multi-state expansion | New prospect sources for TX, NY, FL, AZ | Q1 2028 (before the 2028 primary selling window) |
+| 11 | AI-powered personalization | GPT-generated email bodies from prospect data | Q1 2028 |
 
 ---
 
@@ -475,11 +527,13 @@ On the U9itus side:
 
 Based on 2,442 prospects, 4-touch cadence, per election cycle:
 
-| Scenario | Close Rate | Deals | Avg Deal | Revenue/Cycle | Revenue/Year (2 cycles) |
-|----------|-----------|-------|----------|--------------|----------------------|
-| Conservative | 1.0% | 24 | $1,000 | $24,000 | $48,000 |
-| **Target** | **2.0%** | **49** | **$1,200** | **$58,800** | **$117,600** |
-| Optimistic | 3.0% | 73 | $1,500 | $109,500 | $219,000 |
+| Scenario | Close Rate | Deals | Avg Deal | Revenue/Cycle | Revenue per Election Year (2 cycles) | Avg Annual |
+|----------|-----------|-------|----------|--------------|-------------------------------------|-----------|
+| Conservative | 1.0% | 24 | $1,000 | $24,000 | $48,000 | $24,000 |
+| **Target** | **2.0%** | **49** | **$1,200** | **$58,800** | **$117,600** | **$58,800** |
+| Optimistic | 3.0% | 73 | $1,500 | $109,500 | $219,000 | $109,500 |
+
+*Election-year revenue lands in even years only; odd years have no statewide cycle. "Avg Annual" spreads it over the two-year period. The second cycle in an election year assumes the same customers renew for the general — see Renewal (Step 4b).*
 
 ### Unit Economics
 
@@ -487,10 +541,12 @@ Based on 2,442 prospects, 4-touch cadence, per election cycle:
 |--------|-------|
 | CAC (target scenario) | ~$120 |
 | LTV (Starter, 1 cycle) | $500 |
-| LTV (Pro, 2 cycles) | $3,000 |
-| LTV (Coalition, 2 cycles) | $8,000 |
+| LTV (Pro, 2 cycles) | $3,000 (requires renewal) |
+| LTV (Coalition, 2 cycles) | $8,000 (requires renewal) |
 | Gross margin | ~95% (software, near-zero delivery cost) |
 | Payback period | <1 cycle (60–90 days) |
+
+*Multi-cycle LTV only materializes if the renewal campaign (Step 4b) works; without it, plan on single-cycle LTV ($500 / $1,500 / $4,000).*
 
 ---
 
@@ -511,8 +567,8 @@ Based on 2,442 prospects, 4-touch cadence, per election cycle:
 
 ### Operational Workflow
 
-1. **Daily**: Cron job runs `enqueue` — sends due follow-up emails via configured channel
-2. **Daily**: Cron job runs `pull-events` — syncs portal views/claims, auto-advances stages
+1. **Weekly / as-campaign-runs**: Operator runs `enqueue` — sends due follow-up emails. **Deliberately manual** (see `doc/AGENCY_OS_INTEGRATION.md` section 9): outbound sends require a human check before they leave the system
+2. **Hourly**: Cron job runs `pull-events` — syncs portal views/claims/subscription events, auto-advances stages
 3. **Weekly**: Sales caller works the call log — calls all "engaged" and "demo_scheduled" prospects
 4. **Weekly**: Owner reviews dashboard — pipeline stats, stale prospects, conversion rates
 5. **Monthly**: Template editor reviews email performance, A/B tests new scripts

@@ -69,6 +69,19 @@ def pay_to() -> str:
     return address if _ADDRESS_RE.match(address) else ""
 
 
+def platform_fee_pct() -> int:
+    """The platform's guaranteed cut of every sale (AGENCY_OS_PLATFORM_FEE_PCT, default 30).
+    The rest is the most a package's contributor pool can be, and its default."""
+    try:
+        return max(0, min(100, int(os.environ.get("AGENCY_OS_PLATFORM_FEE_PCT", "30"))))
+    except ValueError:
+        return 30
+
+
+def max_pool_pct() -> int:
+    return 100 - platform_fee_pct()
+
+
 def problem() -> Optional[str]:
     """Why we can't sell right now, or None."""
     if os.environ.get("AGENCY_OS_SELL", "").strip().lower() not in ("1", "on", "true", "yes"):
@@ -234,7 +247,7 @@ def preview(db, criteria: dict, promised: str) -> dict:
 
 def publish(db, user, *, saved_list_id: int, title: str, industry: str, region: str, unlock_usd: Any,
             royalty_usd: dict, guarantee_tier: str, rules: Optional[dict], consent_note: str,
-            sms_consent: bool, contributor_pool_pct: Any = 20) -> tuple[Optional[int], str]:
+            sms_consent: bool, contributor_pool_pct: Any = None) -> tuple[Optional[int], str]:
     """Publish a saved list as a package. Returns (package id, "") or (None, why not)."""
     saved = db.get_prospect_saved_list(saved_list_id)
     if saved is None:
@@ -250,9 +263,9 @@ def publish(db, user, *, saved_list_id: int, title: str, industry: str, region: 
     if unlock <= 0:
         return None, "Set an unlock price"
     try:
-        pool = max(0, min(100, int(contributor_pool_pct)))
+        pool = max(0, min(max_pool_pct(), int(contributor_pool_pct)))
     except (TypeError, ValueError):
-        pool = 20
+        pool = max_pool_pct()
     found = preview(db, saved["criteria"], guarantee_tier)
     if not found["eligible"]:
         return None, "None of this list's prospects meet that contact depth yet"

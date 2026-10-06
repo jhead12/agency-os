@@ -49,7 +49,7 @@ from fastapi.templating import Jinja2Templates
 from core import access
 from core.access import AccessError, CurrentUser
 from core.db import Database
-from core.campaign import discover_campaigns, sync_campaign_files
+from core.campaign import discover_campaigns, hidden_campaigns, sync_campaign_files
 from core.registry import PluginRegistry
 from core.pipeline import Pipeline
 from core.protocols import portal_product
@@ -87,6 +87,23 @@ def get_campaigns():
 
 
 tools.campaign_source = lambda: get_campaigns()  # the AI tools read campaigns through the web app's cache
+
+
+def visible_campaigns(request: Request) -> list:
+    """The campaigns this user may see (campaign.yaml `requires_permission`, e.g. recruiting.view)."""
+    user = current_user(request)
+    return [c for c in get_campaigns() if user.sees_campaign(c)]
+
+
+def hidden_for(request: Request) -> list[str]:
+    """Campaign names whose prospects this user may not see; pass to the Database list queries."""
+    return hidden_campaigns(get_campaigns(), current_user(request))
+
+
+def require_visible_prospect(request: Request, prospect_id: int) -> None:
+    """404 for a prospect in a campaign this user may not see, as if it didn't exist."""
+    if prospect_id and get_db().prospect_hidden(prospect_id, hidden_for(request)):
+        raise HTTPException(status_code=404, detail="Prospect not found")
 
 
 def _invalidate_campaign_cache():
@@ -193,6 +210,20 @@ async def authorize(request: Request) -> None:
         raise Forbidden()
     if request.method not in ("GET", "HEAD", "OPTIONS") and not _same_origin(request):
         raise Forbidden()
+    # Campaign-restricted leads (e.g. attorneys for recruiters): every route
+    # taking one of these ids in its path is covered here.
+    ids = {}
+    for key in ("prospect_id", "lead_package_id"):
+        try:
+            ids[key] = int(request.path_params[key])
+        except (KeyError, ValueError):
+            pass  # absent, or not a number (the route itself rejects that)
+    if "prospect_id" in ids:
+        require_visible_prospect(request, ids["prospect_id"])
+    if "lead_package_id" in ids:
+        package = db.get_lead_package(ids["lead_package_id"])
+        if package and package["campaign_name"] in hidden_for(request):
+            raise HTTPException(status_code=404, detail="Package not found")
 
 
 # Applies to every route declared below.
@@ -285,7 +316,7 @@ templates.env.globals["CALL_OUTCOMES"] = contact_depth.CALL_OUTCOMES
 async def dashboard(request: Request):
     """Main dashboard — pipeline overview across all campaigns."""
     db = get_db()
-    campaigns = get_campaigns()
+    campaigns = visible_campaigns(request)
 
     all_stats = []
     for c in campaigns:
@@ -353,11 +384,13 @@ async def prospect_list(
     if print and not current_user(request).can("prospects.export"):
         raise Forbidden()
     db = get_db()
-    campaigns = get_campaigns()
+    campaigns = visible_campaigns(request)
     campaign_map = {c.db_name: c for c in campaigns}
+    hidden = hidden_for(request)
+    hidden_sql, hidden_params = db.hidden_clause(hidden)
 
     where_clause, params = db.prospect_filter(
-        {"q": q, "source": source, "stage": stage, "campaign": campaign, "cities": cities})
+        {"q": q, "source": source, "stage": stage, "campaign": campaign, "cities": cities}, hidden)
 
     # Count total
     count_sql = f"""
@@ -409,7 +442,8 @@ async def prospect_list(
 
         # Get distinct cities for reference
         all_cities = [r["city"] for r in db.conn.execute(
-            "SELECT DISTINCT city FROM prospects WHERE city IS NOT NULL AND city != '' ORDER BY city"
+            f"SELECT DISTINCT city FROM prospects p WHERE city IS NOT NULL AND city != '' AND {hidden_sql} "
+            "ORDER BY city", hidden_params,
         ).fetchall()]
 
         from datetime import datetime as _dt
@@ -443,15 +477,16 @@ async def prospect_list(
 
     # Get distinct sources for filter dropdown
     sources = [r["source"] for r in db.conn.execute(
-        "SELECT DISTINCT source FROM prospects WHERE source IS NOT NULL ORDER BY source"
+        f"SELECT DISTINCT source FROM prospects p WHERE source IS NOT NULL AND {hidden_sql} ORDER BY source",
+        hidden_params,
     ).fetchall()]
 
     # Get distinct cities for filter dropdown (top 30 by prospect count)
-    city_rows = db.conn.execute("""
-        SELECT city, COUNT(*) as cnt FROM prospects
-        WHERE city IS NOT NULL AND city != ''
+    city_rows = db.conn.execute(f"""
+        SELECT city, COUNT(*) as cnt FROM prospects p
+        WHERE city IS NOT NULL AND city != '' AND {hidden_sql}
         GROUP BY city ORDER BY cnt DESC LIMIT 30
-    """).fetchall()
+    """, hidden_params).fetchall()
     cities_list = [r["city"] for r in city_rows]
 
     # Pagination
@@ -528,7 +563,7 @@ async def calendar_page(
     from datetime import datetime as _dt, timedelta
     import calendar as _calendar
 
-    events = db.get_upcoming_events(days=90)  # fetch wider range for month nav
+    events = db.get_upcoming_events(days=90, hidden_campaigns=hidden_for(request))  # wider range for month nav
 
     # Determine which month to display
     today = _dt.now().date()
@@ -612,13 +647,13 @@ async def calendar_page(
 
 
 @app.get("/calendar.ics")
-async def calendar_ics(days: int = Query(default=90, ge=1, le=365)):
+async def calendar_ics(request: Request, days: int = Query(default=90, ge=1, le=365)):
     """ICS calendar feed — subscribe in any calendar app."""
     from fastapi.responses import PlainTextResponse
     from core.ics import generate_ics
 
     db = get_db()
-    events = db.get_upcoming_events(days=days)
+    events = db.get_upcoming_events(days=days, hidden_campaigns=hidden_for(request))
     ics_content = generate_ics(events, calendar_name="agency-os Sales Pipeline")
 
     return PlainTextResponse(
@@ -668,6 +703,7 @@ async def email_templates_page(
     preview_subject = ""
     preview_body = ""
     if preview_prospect:
+        require_visible_prospect(request, preview_prospect)
         preview_p = db.get_prospect(preview_prospect)
         if preview_p:
             # Build variables for preview
@@ -707,9 +743,10 @@ async def email_templates_page(
                 preview_body = render(all_scripts[0].get("body", ""))
 
     # Get prospects for preview dropdown
+    hidden_sql, hidden_params = db.hidden_clause(hidden_for(request))
     prospect_options = db.conn.execute(
-        """SELECT p.id, p.name, p.city FROM prospects p
-           ORDER BY p.name LIMIT 50"""
+        f"""SELECT p.id, p.name, p.city FROM prospects p WHERE {hidden_sql}
+           ORDER BY p.name LIMIT 50""", hidden_params,
     ).fetchall()
 
     return templates.TemplateResponse(request, "email_templates.html", {
@@ -755,6 +792,7 @@ async def save_email_template(
 
 @app.get("/email-templates/preview/{script_idx}")
 async def preview_template(
+    request: Request,
     script_idx: int,
     prospect_id: int = Query(default=0),
 ):
@@ -788,6 +826,7 @@ async def preview_template(
 
     prospect = None
     if prospect_id:
+        require_visible_prospect(request, prospect_id)
         prospect = db.get_prospect(prospect_id)
 
     variables = {}
@@ -859,13 +898,15 @@ async def mail_templates_page(
     # Get prospect for preview
     preview_p = None
     if preview_prospect:
+        require_visible_prospect(request, preview_prospect)
         preview_p = db.get_prospect(preview_prospect)
 
     # Get prospects for preview dropdown
+    hidden_sql, hidden_params = db.hidden_clause(hidden_for(request))
     prospect_options = db.conn.execute(
-        """SELECT p.id, p.name, p.city FROM prospects p
-           WHERE p.address IS NOT NULL AND p.address != ''
-           ORDER BY p.name LIMIT 50"""
+        f"""SELECT p.id, p.name, p.city FROM prospects p
+           WHERE p.address IS NOT NULL AND p.address != '' AND {hidden_sql}
+           ORDER BY p.name LIMIT 50""", hidden_params,
     ).fetchall()
 
     return templates.TemplateResponse(request, "mail_templates.html", {
@@ -946,6 +987,7 @@ async def save_mail_template(
 
 @app.get("/mail-templates/preview/{script_idx}")
 async def preview_mail_template(
+    request: Request,
     script_idx: int,
     prospect_id: int = Query(default=0),
 ):
@@ -961,6 +1003,7 @@ async def preview_mail_template(
 
     prospect = None
     if prospect_id:
+        require_visible_prospect(request, prospect_id)
         prospect = db.get_prospect(prospect_id)
 
     variables = {}
@@ -1016,11 +1059,13 @@ async def call_log_page(
     """Call log viewer — all calls across all campaigns."""
     db = get_db()
     offset = (page - 1) * per_page
-    calls = db.get_all_calls(limit=per_page, offset=offset, outcome=outcome, interest=interest)
+    hidden = hidden_for(request)
+    calls = db.get_all_calls(limit=per_page, offset=offset, outcome=outcome, interest=interest,
+                             hidden_campaigns=hidden)
 
     # Count total
-    where_parts = []
-    params = []
+    hidden_sql, params = db.hidden_clause(hidden, "cl.prospect_id")
+    where_parts = [hidden_sql]
     if outcome:
         where_parts.append("cl.outcome = ?")
         params.append(outcome)
@@ -1034,7 +1079,7 @@ async def call_log_page(
         params,
     ).fetchone()[0]
 
-    stats = db.get_call_stats()
+    stats = db.get_call_stats(hidden_campaigns=hidden)
     total_pages = max(1, (total + per_page - 1) // per_page)
 
     return templates.TemplateResponse(request, "call_log.html", {
@@ -1071,6 +1116,7 @@ async def record_call(
 ):
     """Record a completed phone call."""
     from core.models import CallLog
+    require_visible_prospect(request, prospect_id)
     if outcome not in contact_depth.CALL_OUTCOMES:
         return _back(f"/prospects/{prospect_id}", error="Pick a call outcome from the list.")
     db = get_db()
@@ -1142,6 +1188,7 @@ async def call_scripts(
     # Personalize for a specific prospect
     prospect = None
     if prospect_id:
+        require_visible_prospect(request, prospect_id)
         prospect = db.get_prospect(prospect_id)
         if prospect:
             # Get outreach info
@@ -1207,11 +1254,12 @@ async def call_scripts(
     # Build prospect options for the dropdown (top 100 by name)
     prospect_options = []
     if not prospect_id:
+        hidden_sql, hidden_params = db.hidden_clause(hidden_for(request))
         prospect_options = db.conn.execute(
-            """SELECT p.id, p.name, p.city FROM prospects p
+            f"""SELECT p.id, p.name, p.city FROM prospects p
                JOIN outreach o ON p.id = o.prospect_id
-               WHERE o.contact_phone IS NOT NULL OR o.contact_email IS NOT NULL
-               ORDER BY p.name LIMIT 100"""
+               WHERE (o.contact_phone IS NOT NULL OR o.contact_email IS NOT NULL) AND {hidden_sql}
+               ORDER BY p.name LIMIT 100""", hidden_params,
         ).fetchall()
 
     template_name = "call_scripts_print.html" if print else "call_scripts.html"
@@ -1466,7 +1514,7 @@ async def update_prospect_info(
 async def campaign_list(request: Request):
     """Campaign overview page."""
     db = get_db()
-    campaigns = get_campaigns()
+    campaigns = visible_campaigns(request)
 
     show_spend = current_user(request).can("spend.view")
     campaign_data = []
@@ -1510,13 +1558,15 @@ async def lead_packages_page(request: Request, msg: str = Query(default=""), err
     for provider in lead_packages.configured_providers():
         packages, problem = await run_in_threadpool(lead_packages.cached_catalog, provider)
         catalogs.append({"provider": provider, "packages": packages, "error": problem})
-    buyable = [c for c in get_campaigns() if (c.lead_packages or {}).get("enabled")]
+    buyable = [c for c in visible_campaigns(request) if (c.lead_packages or {}).get("enabled")]
+    hidden = hidden_for(request)
     return templates.TemplateResponse(request, "lead_packages.html", {
         "ratings": claims.ratings(db),
         "active": "lead-packages",
         "catalogs": catalogs,
         "campaigns": buyable,
-        "unlocked": db.list_lead_packages() if user.can("spend.view") else [],
+        "unlocked": [lp for lp in db.list_lead_packages() if lp.get("campaign_name") not in hidden]
+                    if user.can("spend.view") else [],
         "payments_on": payments.payments_enabled(),
         "allowance": db.spend_allowance(user.id),
         "msg": msg,
@@ -1524,11 +1574,11 @@ async def lead_packages_page(request: Request, msg: str = Query(default=""), err
     })
 
 
-def _package_campaign(provider: str, campaign: str):
+def _package_campaign(request: Request, provider: str, campaign: str):
     """(campaign config, campaign id, error) for buying from `provider` into `campaign`."""
     if provider not in lead_packages.configured_providers():
         return None, None, "That provider isn't on the approved list."
-    config = next((c for c in get_campaigns() if c.db_name == campaign), None)
+    config = next((c for c in visible_campaigns(request) if c.db_name == campaign), None)
     if config is None or not (config.lead_packages or {}).get("enabled"):
         return None, None, "Pick a campaign that has lead packages turned on."
     db = get_db()
@@ -1541,7 +1591,7 @@ def _package_campaign(provider: str, campaign: str):
 async def lead_package_review(request: Request, provider: str = Query(...), package_id: str = Query(...),
                               campaign: str = Query(...)):
     """The confirm screen: what the unlock costs and what's left to spend. Never pays."""
-    config, campaign_id, error = _package_campaign(provider, campaign)
+    config, campaign_id, error = _package_campaign(request, provider, campaign)
     if error:
         return _back("/lead-packages", error=error)
     package, problem = await run_in_threadpool(lead_packages.find_package, provider, package_id)
@@ -1569,7 +1619,7 @@ async def lead_package_unlock(
     user = current_user(request)
     if confirm != "yes":
         return _back("/lead-packages", error="Tick the box to approve the payment.")
-    config, campaign_id, error = _package_campaign(provider, campaign)
+    config, campaign_id, error = _package_campaign(request, provider, campaign)
     if error:
         return _back("/lead-packages", error=error)
     db = get_db()
@@ -1840,6 +1890,7 @@ def _selling_page(request: Request, *, msg: str = "", error: str = "", preview: 
     return templates.TemplateResponse(request, "admin_selling.html", {
         "active": "admin", **selling.overview(db), "problem": selling.problem(),
         "network": selling.network_key(), "pay_to": selling.pay_to(), "catalog_url": f"{site_url()}/x402",
+        "platform_fee_pct": selling.platform_fee_pct(), "max_pool_pct": selling.max_pool_pct(),
         "saved_lists": db.list_prospect_saved_lists(current_user(request).id),
         "tiers": [t for t in contact_depth.TIERS if t != "unworked"],
         "preview": preview, "form": form or {}, "msg": msg, "error": error,
@@ -1869,7 +1920,7 @@ async def admin_selling_publish(request: Request):
         royalty_usd={t: form.get(f"royalty_{t}", "") for t in contact_depth.TIERS},
         guarantee_tier=tier, rules={"window_days": form.get("window_days", 30), "claim_days": form.get("claim_days", 7)},
         consent_note=form.get("consent_note", ""), sms_consent=form.get("sms_consent") == "1",
-        contributor_pool_pct=form.get("contributor_pool_pct", 20)))
+        contributor_pool_pct=form.get("contributor_pool_pct")))
     if problem:
         return _selling_page(request, error=problem, form=form)
     return _back("/admin/selling", msg="Package published.")
@@ -2073,8 +2124,9 @@ async def email_log(
     """Email log viewer."""
     db = get_db()
 
-    where_parts = []
-    params = []
+    hidden = hidden_for(request)
+    hidden_sql, params = db.hidden_clause(hidden, "o.prospect_id")
+    where_parts = [f"(o.prospect_id IS NULL OR {hidden_sql})"]
     if campaign:
         where_parts.append("c.name = ?")
         params.append(campaign)
@@ -2087,6 +2139,7 @@ async def email_log(
     total = db.conn.execute(
         f"""SELECT COUNT(*) FROM email_log e
            JOIN campaigns c ON e.campaign_id = c.id
+           LEFT JOIN outreach o ON e.outreach_id = o.id
            WHERE {where_clause}""",
         params,
     ).fetchone()[0]
@@ -2106,7 +2159,7 @@ async def email_log(
 
     campaigns_list = [r["name"] for r in db.conn.execute(
         "SELECT name FROM campaigns ORDER BY name"
-    ).fetchall()]
+    ).fetchall() if r["name"] not in hidden]
 
     total_pages = max(1, (total + per_page - 1) // per_page)
 
@@ -3138,10 +3191,10 @@ async def healthz():
 
 
 @app.get("/api/stats")
-async def api_stats():
+async def api_stats(request: Request):
     """JSON API for pipeline stats — useful for external dashboards."""
     db = get_db()
-    campaigns = get_campaigns()
+    campaigns = visible_campaigns(request)
     results = []
     for c in campaigns:
         results.append(db.get_pipeline_stats(c.db_name))

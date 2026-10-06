@@ -1,0 +1,5 @@
+# PACER attorneys prospect source (plugins/prospect_sources/pacer_attorneys.py):
+# Free Law Project's open-source PACER library (BSD-2), for docket reports.
+# Optional: install with pip install -r requirements-pacer.txt
+# (Docker: build with --build-arg WITH_PACER=1)
+juriscraper>=3.0,<4

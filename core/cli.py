@@ -284,8 +284,8 @@ def test_send(ctx, campaign_name, to_email, script_name, prospect_id):
     or test placeholder data. The email goes to --to, not to the prospect.
 
     Examples:
-      agency_os.py test-send --campaign voter-guide--cbo-outreach-los-angeles --to joshua@u9itus.com
-      agency_os.py test-send --campaign voter-guide--cbo-outreach-los-angeles --to joshua@u9itus.com --script 01_followup_impact --prospect-id 1
+      agency_os.py test-send --campaign <campaign> --to you@example.com
+      agency_os.py test-send --campaign <campaign> --to you@example.com --script 01_followup_impact --prospect-id 1
     """
     registry, db, campaigns = _setup(db_url=ctx.obj["db_url"])
     pipeline = Pipeline(db, registry)

@@ -534,6 +534,22 @@ CREATE TABLE IF NOT EXISTS oauth_codes (
     expires_at TIMESTAMP NOT NULL,
     used_at TIMESTAMP
 );
+
+-- Prospect sources that cost money or have rate limits (core/source_budget.py).
+CREATE TABLE IF NOT EXISTS source_usage (
+    source TEXT NOT NULL,
+    day DATE NOT NULL,
+    requests INTEGER NOT NULL DEFAULT 0,
+    cost_cents INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (source, day)
+);
+CREATE TABLE IF NOT EXISTS source_cache (
+    source TEXT NOT NULL,
+    key TEXT NOT NULL,
+    value TEXT NOT NULL,
+    fetched_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (source, key)
+);
 """
 
 
@@ -672,10 +688,30 @@ class Database:
         return conn
 
     @staticmethod
-    def prospect_filter(criteria: dict) -> tuple[str, list]:
+    def hidden_clause(hidden_campaigns, prospect_col: str = "p.id") -> tuple[str, list]:
+        """SQL condition (and params) that drops prospects in any of `hidden_campaigns`
+        (core.campaign.hidden_campaigns); "1=1" when nothing is hidden."""
+        if not hidden_campaigns:
+            return "1=1", []
+        return (f"NOT EXISTS (SELECT 1 FROM outreach ho JOIN campaigns hc ON hc.id = ho.campaign_id "
+                f"WHERE ho.prospect_id = {prospect_col} AND hc.name = ANY(?))", [list(hidden_campaigns)])
+
+    def prospect_hidden(self, prospect_id: int, hidden_campaigns) -> bool:
+        if not hidden_campaigns:
+            return False
+        clause, params = self.hidden_clause(hidden_campaigns, "?")
+        return not self.conn.execute(f"SELECT {clause}", (prospect_id, *params)).fetchone()[0]
+
+    @staticmethod
+    def prospect_filter(criteria: dict, hidden_campaigns=()) -> tuple[str, list]:
         """WHERE clause (over prospects p LEFT JOIN outreach o) and params for the
-        prospect list filters, as saved in prospect_saved_lists."""
+        prospect list filters, as saved in prospect_saved_lists, without the
+        prospects in hidden_campaigns."""
         where, params = [], []
+        if hidden_campaigns:
+            clause, hidden_params = Database.hidden_clause(hidden_campaigns)
+            where.append(clause)
+            params.extend(hidden_params)
         q = (criteria.get("q") or "").strip()
         if q:
             where.append("(p.name ILIKE ? OR p.city ILIKE ? OR p.ein ILIKE ? "
@@ -731,9 +767,16 @@ class Database:
     # ── Prospects ──────────────────────────────────────────────────────
 
     def upsert_prospect(self, p: Prospect) -> int:
-        """Insert or update a prospect by EIN (or name+state if no EIN)."""
+        """Insert or update a prospect by its source's own id (metadata.external_ref,
+        e.g. an NPI number), else EIN, else name+state."""
         c = self.conn
-        if p.ein:
+        external_ref = (p.metadata or {}).get("external_ref")
+        if external_ref:
+            row = c.execute(
+                "SELECT id FROM prospects WHERE source = ? AND metadata::jsonb ->> 'external_ref' = ?",
+                (p.source, str(external_ref)),
+            ).fetchone()
+        elif p.ein:
             row = c.execute("SELECT id FROM prospects WHERE ein = ?", (p.ein,)).fetchone()
         else:
             row = c.execute(
@@ -854,6 +897,19 @@ class Database:
             (prospect_id, campaign_id),
         )
         return cur.fetchone()["id"]
+
+    def seed_contact(self, outreach_id: int, contact: dict) -> None:
+        """Fill a source's own contact details (e.g. an NPI listing's phone and
+        authorized official) into the outreach row's empty fields only, so a
+        rep's edits and enrichment results are never overwritten."""
+        values = [str(contact.get(k) or "").strip()[:300] or None
+                  for k in ("name", "email", "phone", "title")]
+        self.conn.execute(
+            """UPDATE outreach SET contact_name = COALESCE(contact_name, ?),
+                      contact_email = COALESCE(contact_email, ?),
+                      contact_phone = COALESCE(contact_phone, ?),
+                      contact_title = COALESCE(contact_title, ?) WHERE id = ?""",
+            (*values, outreach_id))
 
     def get_outreach(self, outreach_id: int) -> Optional[Outreach]:
         row = self.conn.execute("SELECT * FROM outreach WHERE id = ?", (outreach_id,)).fetchone()
@@ -1045,9 +1101,10 @@ class Database:
                     (result.raw["website"], prospect_id),
                 )
 
-    def get_upcoming_events(self, days: int = 90) -> list[dict]:
+    def get_upcoming_events(self, days: int = 90, hidden_campaigns=()) -> list[dict]:
         """Get all upcoming follow-ups and call next-steps as calendar events."""
         c = self.conn
+        hidden, hidden_params = self.hidden_clause(hidden_campaigns)
         cutoff = (datetime.now() + timedelta(days=days)).isoformat()
         now = datetime.now().isoformat()
 
@@ -1065,8 +1122,9 @@ class Database:
                  AND o.next_follow_up_at > ?
                  AND o.next_follow_up_at < ?
                  AND o.stage NOT IN ('closed_won', 'closed_lost', 'nurture')
-               ORDER BY o.next_follow_up_at ASC""",
-            (now, cutoff),
+                 AND {hidden}
+               ORDER BY o.next_follow_up_at ASC""".format(hidden=hidden),
+            (now, cutoff, *hidden_params),
         ).fetchall()
 
         for r in rows:
@@ -1107,8 +1165,9 @@ class Database:
                WHERE cl.next_step_date IS NOT NULL
                  AND cl.next_step_date > ?
                  AND cl.next_step_date < ?
-               ORDER BY cl.next_step_date ASC""",
-            (now, cutoff),
+                 AND {hidden}
+               ORDER BY cl.next_step_date ASC""".format(hidden=hidden),
+            (now, cutoff, *hidden_params),
         ).fetchall()
 
         for r in call_rows:
@@ -1212,10 +1271,14 @@ class Database:
         return rows
 
     def get_all_calls(self, limit: int = 100, offset: int = 0,
-                      outcome: str = "", interest: str = "") -> list:
+                      outcome: str = "", interest: str = "", hidden_campaigns=()) -> list:
         """Get all call logs, newest first, with optional filters."""
         where_parts = []
         params = []
+        if hidden_campaigns:
+            clause, hidden_params = self.hidden_clause(hidden_campaigns, "cl.prospect_id")
+            where_parts.append(clause)
+            params.extend(hidden_params)
         if outcome:
             where_parts.append("cl.outcome = ?")
             params.append(outcome)
@@ -1237,14 +1300,14 @@ class Database:
         ).fetchall()
         return rows
 
-    def get_call_stats(self, campaign_name: str = "") -> dict:
+    def get_call_stats(self, campaign_name: str = "", hidden_campaigns=()) -> dict:
         """Aggregate call statistics."""
         c = self.conn
-        where = ""
-        params = []
+        hidden, params = self.hidden_clause(hidden_campaigns, "cl.prospect_id")
+        where = f"WHERE {hidden}"
         if campaign_name:
-            where = "WHERE c.name = ?"
-            params = [campaign_name]
+            where += " AND c.name = ?"
+            params = params + [campaign_name]
 
         total = c.execute(
             f"""SELECT COUNT(*) FROM call_log cl

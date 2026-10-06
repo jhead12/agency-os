@@ -51,6 +51,8 @@ class Pipeline:
 
             print(f"  → Syncing from {source_key}...")
             stats["source"] = source_key
+            if hasattr(source, "bind_db"):
+                source.bind_db(self.db)  # sources with usage limits and a cache keep them here
             try:
                 for prospect in source.discover(campaign.filters):
                     stats["discovered"] += 1
@@ -58,7 +60,9 @@ class Pipeline:
                         print(f"    [dry-run] {prospect.name} ({prospect.city}, {prospect.state})")
                         continue
                     pid = self.db.upsert_prospect(prospect)
-                    self.db.upsert_outreach(pid, campaign_id)
+                    outreach_id = self.db.upsert_outreach(pid, campaign_id)
+                    if prospect.metadata.get("contact"):
+                        self.db.seed_contact(outreach_id, prospect.metadata["contact"])
                     stats["upserted"] += 1
             except Exception as exc:
                 print(f"  ! Error in source {source_key}: {exc}")
