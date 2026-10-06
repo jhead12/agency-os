@@ -162,7 +162,9 @@ pip install -r requirements.txt
 python3 -m web.app
 ```
 
-Open http://localhost:8000 and sign in. On a fresh database, create the first
+Open http://localhost:8000 and sign in. If 8000 is taken, the dashboard uses the
+next free port (8001, 8002, ...) and prints the address; set `PORT` to choose one
+yourself (an explicit `PORT` is never changed). On a fresh database, create the first
 owner account first, and make it a Super Admin:
 
 ```bash

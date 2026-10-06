@@ -3258,6 +3258,28 @@ async def api_stats(request: Request):
 app.mount("/", mcp_mount)
 
 
+def free_port(start: int = 8000, tries: int = 20, host: str = "0.0.0.0") -> int:
+    """The first port from `start` that nothing is listening on (for local runs)."""
+    import socket
+
+    for port in range(start, start + tries):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # as uvicorn does
+            try:
+                sock.bind((host, port))
+            except OSError:
+                continue
+            return port
+    raise SystemExit(f"agency-os: ports {start}-{start + tries - 1} are all in use; set PORT to pick one")
+
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
+
+    # An explicit PORT (Railway, Docker) is used exactly; locally, step past ports already in use.
+    if not os.environ.get("PORT"):
+        os.environ["PORT"] = str(free_port())  # site_url() builds local links from it
+        if os.environ["PORT"] != "8000":
+            print(f"agency-os: port 8000 is in use; using {os.environ['PORT']}", flush=True)
+    print(f"agency-os: http://127.0.0.1:{os.environ['PORT']}", flush=True)
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ["PORT"]))
