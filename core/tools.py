@@ -22,6 +22,7 @@ from typing import Any, Callable
 
 from core import agents, llm, verify
 from core.access import CurrentUser
+from core.campaign import hidden_campaigns
 from core.contact_depth import CALL_OUTCOMES
 from core.models import CallLog
 
@@ -98,6 +99,16 @@ PROSPECT_ID = {"type": "integer", "minimum": 1, "description": "The prospect's i
 # ── Context shared by tools and the agent panel ───────────────────────
 
 
+def _hidden(user: CurrentUser) -> list[str]:
+    return hidden_campaigns(campaign_source(), user)
+
+
+def _require_visible(db, user: CurrentUser, prospect_id: int) -> None:
+    """Prospects in campaigns this user may not see (e.g. recruiting) don't exist for their AI either."""
+    if db.prospect_hidden(prospect_id, _hidden(user)):
+        raise ToolError("Prospect not found")
+
+
 def _outreach(db, prospect_id: int, campaign: str = "") -> dict:
     sql = """SELECT o.*, c.name AS campaign_name FROM outreach o JOIN campaigns c ON c.id = o.campaign_id
              WHERE o.prospect_id = ?"""
@@ -113,6 +124,7 @@ def _outreach(db, prospect_id: int, campaign: str = "") -> dict:
 
 def build_prospect_context(db, user: CurrentUser, prospect_id: int) -> dict:
     """What an AI may know about a prospect: their record, campaigns, calls and email subjects."""
+    _require_visible(db, user, prospect_id)
     prospect = db.get_prospect(prospect_id)
     if prospect is None:
         raise ToolError("Prospect not found")
@@ -146,7 +158,8 @@ def build_prospect_context(db, user: CurrentUser, prospect_id: int) -> dict:
 
 
 def _search_prospects(db, user, args):
-    where, params = [], []
+    hidden_sql, params = db.hidden_clause(_hidden(user))
+    where = [hidden_sql]
     if args.get("q"):
         where.append("(p.name ILIKE ? OR p.city ILIKE ? OR p.ein ILIKE ? OR p.focus_area ILIKE ?)")
         params += [f"%{args['q']}%"] * 4
@@ -175,7 +188,8 @@ def _list_calls(db, user, args):
 
 
 def _get_campaign(db, user, args):
-    campaign = next((c for c in campaign_source() if c.db_name == args["campaign"]), None)
+    campaign = next((c for c in campaign_source() if c.db_name == args["campaign"] and user.sees_campaign(c)),
+                    None)
     if campaign is None:
         raise ToolError("Campaign not found")
     return {"ok": True, "campaign": {
@@ -288,6 +302,8 @@ def run_tool(db, user: CurrentUser, name: str, args: Any, *, source: str, confir
         return {"ok": False, "error": "This change needs your confirmation", "needs_confirmation": True}
     try:
         clean = validate(tool.input_schema, args or {})
+        if "prospect_id" in clean:
+            _require_visible(db, user, clean["prospect_id"])
         result = tool.handler(db, user, clean)
     except ToolError as exc:
         return {"ok": False, "error": str(exc)}

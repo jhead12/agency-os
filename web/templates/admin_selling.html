@@ -60,8 +60,8 @@
                 <input type="number" id="window_days" name="window_days" min="7" max="120" value="{{ form.window_days or 30 }}"></div>
             <div class="form-field"><label for="claim_days">Days after it to claim</label>
                 <input type="number" id="claim_days" name="claim_days" min="0" max="30" value="{{ form.claim_days or 7 }}"></div>
-            <div class="form-field"><label for="contributor_pool_pct">Share for the reps who built the leads (%)</label>
-                <input type="number" id="contributor_pool_pct" name="contributor_pool_pct" min="0" max="100" value="{{ form.contributor_pool_pct or 20 }}"></div>
+            <div class="form-field"><label for="contributor_pool_pct">Share for the reps who built the leads (%, up to {{ max_pool_pct }}; the platform keeps at least {{ platform_fee_pct }}%)</label>
+                <input type="number" id="contributor_pool_pct" name="contributor_pool_pct" min="0" max="{{ max_pool_pct }}" value="{{ form.contributor_pool_pct or max_pool_pct }}"></div>
         </div>
         <label>Consent and sourcing note (shown to buyers)
             <input type="text" name="consent_note" maxlength="500" value="{{ form.consent_note or '' }}" class="filter-input" placeholder="Public records; contacted by phone and mail in 2026">

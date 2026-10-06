@@ -44,6 +44,7 @@ class CampaignConfig:
     sender_name: str = ""
     sender_email: str = ""
     lead_packages: dict = field(default_factory=dict)  # x402 spend policy, see core/payments.SpendPolicy
+    requires_permission: str = ""  # e.g. recruiting.view: only holders see this campaign and its leads
     config_dir: Path = None  # type: ignore
 
     @classmethod
@@ -76,6 +77,7 @@ class CampaignConfig:
             sender_name=raw.get("sender_name", ""),
             sender_email=raw.get("sender_email", ""),
             lead_packages=raw.get("lead_packages") or {},
+            requires_permission=str(raw.get("requires_permission") or "").strip(),
             config_dir=campaign_dir,
         )
 
@@ -115,6 +117,12 @@ def discover_campaigns(base_dir: str | Path = "campaigns") -> list[CampaignConfi
             except Exception as exc:
                 print(f"  ! Failed to load campaign {d.name}: {exc}")
     return campaigns
+
+
+def hidden_campaigns(campaigns: list[CampaignConfig], user) -> list[str]:
+    """db_names of the campaigns `user` may not see. Their prospects are hidden too
+    (Database.hidden_clause), even when they are also in a visible campaign."""
+    return [c.db_name for c in campaigns if not user.sees_campaign(c)]
 
 
 def sync_campaign_files(db: "Database", seed_dir: str | Path, cache_dir: str | Path) -> Path:

@@ -42,9 +42,16 @@
             <span class="badge badge-product">What you're selling</span>
         </div>
         <div class="plugin-checkbox-grid">
+            <label class="plugin-card">
+                <input type="radio" name="product" value="lead_list" checked>
+                <div class="plugin-card-body">
+                    <strong>lead_list</strong>
+                    <p>No product: build a list of leads to work and sell as lead packages</p>
+                </div>
+            </label>
             {% for p in plugins.products %}
             <label class="plugin-card{% if not p.configured %} plugin-card-warning{% endif %}">
-                <input type="radio" name="product" value="{{ p.key }}" {% if loop.first %}checked{% endif %}>
+                <input type="radio" name="product" value="{{ p.key }}">
                 <div class="plugin-card-body">
                     <strong>{{ p.key }}</strong>
                     <p>{{ p.description }}</p>
@@ -152,11 +159,11 @@
             </div>
             <div class="form-field">
                 <label>Sender Name</label>
-                <input type="text" name="sender_name" placeholder="Joshua" value="Joshua">
+                <input type="text" name="sender_name" placeholder="Your name">
             </div>
             <div class="form-field">
                 <label>Sender Email</label>
-                <input type="email" name="sender_email" placeholder="joshua@u9itus.com" value="joshua@u9itus.com">
+                <input type="email" name="sender_email" placeholder="you@yourcompany.com">
             </div>
             <div class="form-field">
                 <label>Stale Threshold (days)</label>

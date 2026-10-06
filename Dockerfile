@@ -6,7 +6,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY requirements.txt requirements-payments.txt requirements-ai.txt ./
+COPY requirements.txt requirements-payments.txt requirements-ai.txt requirements-pacer.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 # x402 lead-package payments pull in web3/solana, so they're opt-in.
@@ -16,6 +16,10 @@ RUN if [ "$WITH_PAYMENTS" = "1" ]; then pip install --no-cache-dir -r requiremen
 # The Claude SDK for the AI features; a local model needs nothing extra.
 ARG WITH_AI=0
 RUN if [ "$WITH_AI" = "1" ]; then pip install --no-cache-dir -r requirements-ai.txt; fi
+
+# juriscraper, for the PACER attorneys prospect source.
+ARG WITH_PACER=0
+RUN if [ "$WITH_PACER" = "1" ]; then pip install --no-cache-dir -r requirements-pacer.txt; fi
 
 COPY . .
 

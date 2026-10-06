@@ -88,7 +88,8 @@ def setup_list(db):
 def publish(db, owner, list_id, **kw):
     args = dict(saved_list_id=list_id, title="LA civic orgs", industry="Civic", region="CA", unlock_usd="5",
                 royalty_usd={"connected": "0.25", "pitched": "1"}, guarantee_tier="phone_verified",
-                rules={"window_days": 30}, consent_note="Public records", sms_consent=False)
+                rules={"window_days": 30}, consent_note="Public records", sms_consent=False,
+                contributor_pool_pct=20)
     args.update(kw)
     return selling.publish(db, owner, **args)
 

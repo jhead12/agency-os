@@ -10,7 +10,7 @@
 {% if not enabled %}
 <div class="form-error">Scheduled runs are off on this server. Set <code>AGENCY_OS_RUN_JOBS=1</code> to turn them on. You can still run a job by hand below.</div>
 {% endif %}
-{% if not api_configured %}
+{% if u9itus_in_use and not api_configured %}
 <div class="form-error">The u9itus API isn't configured. Set <code>U9ITUS_BASE_URL</code> and <code>U9ITUS_AGENCY_TOKEN</code>, or every run will report a problem.</div>
 {% endif %}
 

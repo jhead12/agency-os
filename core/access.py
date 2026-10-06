@@ -55,6 +55,7 @@ CATALOG: dict[str, str] = {
     "ai.connect": "Connect your own AI assistant to agency-os (WebMCP)",
     "packages.sell": "Publish our own lists as lead packages, and handle buyers' claims and refunds",
     "royalties.view_own": "See your own data royalties and set where they're paid",
+    "recruiting.view": "See recruiting campaigns and their leads (e.g. attorneys), and buy lists into them",
 }
 
 # Starter roles are created once if missing. Owners may edit or delete them
@@ -71,6 +72,13 @@ STARTER_ROLES: dict[str, tuple[str, list[str]]] = {
          "pipeline.edit", "calls.view", "calls.log", "calendar.view",
          "campaigns.view", "emails.view", "templates.view", "portals.manage",
          "packages.view", "spend.view", "agents.use", "ai.connect", "royalties.view_own"],
+    ),
+    "Recruiter": (
+        "Works recruiting campaigns (e.g. attorneys): calls, emails, and buys lead lists into them",
+        ["dashboard.view", "prospects.view", "prospects.export", "prospects.edit",
+         "pipeline.edit", "calls.view", "calls.log", "calendar.view",
+         "campaigns.view", "emails.view", "templates.view",
+         "packages.view", "packages.buy", "spend.view", "royalties.view_own", "recruiting.view"],
     ),
     "Template Editor": (
         "Writes and edits outreach email templates",
@@ -217,6 +225,15 @@ class CurrentUser:
         if permission not in CATALOG:
             return False
         return self.is_owner or permission in self.permissions
+
+    def sees_campaign(self, campaign) -> bool:
+        """A campaign with `requires_permission` (and its leads) is visible only to holders of it.
+
+        Owners see every campaign; a misspelled permission hides the campaign
+        from everyone else rather than showing it.
+        """
+        required = getattr(campaign, "requires_permission", "")
+        return not required or self.is_owner or self.can(required)
 
     def uses_ai(self, permission: str) -> bool:
         """An AI feature is on for this user: allowed on the server, opted in, and permitted.
