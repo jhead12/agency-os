@@ -24,6 +24,8 @@ python agency_os.py enqueue --campaign voter-guide-cbo --dry-run
 python agency_os.py digest --campaign voter-guide-cbo
 ```
 
+Every command and option is listed in [CLI_REFERENCE.md](CLI_REFERENCE.md).
+
 ## Deploying to Railway
 
 The web dashboard (`web/app.py`) ships as a container: Railway builds the
@@ -49,6 +51,8 @@ podman run --rm -p 8000:8000 \
    [Users & permissions](#users--permissions)) plus whichever API keys from
    `.env.example` you use.
 4. Generate a public domain under Settings → Networking.
+5. After the first deploy, make yourself a Super Admin so you can create Owners
+   (`railway ssh`, then `python agency_os.py users grant-super-admin --email you@example.com`).
 
 To bring data over from an old SQLite `db.sqlite`, import it once into the
 empty database **before** the first boot creates an owner (the import refuses
@@ -159,10 +163,11 @@ python3 -m web.app
 ```
 
 Open http://localhost:8000 and sign in. On a fresh database, create the first
-owner account first:
+owner account first, and make it a Super Admin:
 
 ```bash
 python agency_os.py users create-owner --email you@example.com
+python agency_os.py users grant-super-admin --email you@example.com
 ```
 
 | Page | What you can do |
@@ -201,11 +206,16 @@ campaigns and prospects); roles control what each person can see and do.
   `CATALOG`), e.g. `prospects.edit`, `calls.log`, `templates.edit`.
 - **Roles** are named sets of permissions that owners create and edit at
   **Team → Roles**. A user's access is the union of all of their roles.
-  Starter roles: Caller, Sales Rep, Template Editor, Viewer. Edit or delete
+  Starter roles: Caller, Sales Rep, Recruiter, Template Editor, Viewer. Edit or delete
   them freely; restarts never overwrite your changes.
 - **Owner** is a protected role with every permission plus team
   administration (users, roles, audit log). The app refuses any change that
   would leave no active owner.
+- **Super Admin** is a protected role above Owner. Only a Super Admin can
+  grant or remove Owner or Super Admin, and Owners can't change a Super
+  Admin's account. This is enforced in the database (`Database._guard_protected`),
+  so it holds in the dashboard, the console and the remote CLI alike. The
+  server-side `users` commands can always do it, for bootstrap and recovery.
 - **New users get no access** until an owner gives them a role.
 - **Every route is listed in `access.ROUTE_RULES`.** A route that isn't
   listed is denied for everyone, owners included. `tests/test_access.py`
@@ -233,14 +243,51 @@ Repeat `--role` to give several roles. Re-inviting an existing user leaves
 their roles alone, so it doubles as a password reset link.
 
 Recovery from the server shell (on Railway, `railway ssh`; `DATABASE_URL` is
-already set there):
+already set there). These skip permission checks and are logged as `cli`:
 
 ```bash
 python agency_os.py users list
 python agency_os.py users create-owner --email you@example.com
-python agency_os.py users grant-owner --email someone@example.com   # re-promote + reactivate
+python agency_os.py users grant-owner --email someone@example.com        # re-promote + reactivate
+python agency_os.py users grant-super-admin --email you@example.com      # first Super Admin
 python agency_os.py users set-password --email someone@example.com
 ```
+
+### Command console (browser and remote CLI)
+
+Give a role the `cli.use` permission and its members get **Account → Console**
+(`/console`), a terminal in the browser. It is **not a server shell**: each
+line runs an agency-os command as the signed-in user, with that user's
+permissions, so `help` lists only what their role allows. Changes ask
+`Run this? [y/N]` first and are recorded in the audit log under the person.
+
+```
+users invite --email jane@example.com --name "Jane" --role Caller
+users create-owner --email bob@example.com        # Super Admins only
+users set-roles --email jane@example.com --role "Sales Rep"
+search-prospects --q "food bank" --limit 5
+set-stage --prospect-id 42 --stage engaged
+```
+
+The same commands run from your own terminal against a deployed server. Create
+a CLI key under **Account → Command console**, then:
+
+```bash
+python agency_os.py connect --url https://your-app.up.railway.app --key aos_cli_...
+python agency_os.py remote users list     # one command (--yes skips the prompt)
+python agency_os.py remote                # interactive
+```
+
+The remote CLI only needs this repo and Python, not database access. CLI keys
+(`aos_cli_...`) work only on the console endpoint (`POST /api/console`), not on
+`/mcp` or `/api/tools`, and stop working when revoked or when the user is
+deactivated.
+
+Commands are generated from the tool registry (`core/tools.py`, parsed by
+`core/console.py`): add a tool there and it appears in the console, the remote
+CLI and, unless it's marked console-only, AI assistants (WebMCP/MCP). The team
+administration tools are console-only, so AI assistants never see them. Full
+command list: [CLI_REFERENCE.md](CLI_REFERENCE.md#command-console-browser-and-remote-cli).
 
 Run the tests against a scratch database (it is wiped, and its name must
 contain "test"): `TEST_DATABASE_URL=postgresql://localhost/agency_os_test python -m pytest tests/`.
