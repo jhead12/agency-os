@@ -153,6 +153,90 @@ def enrich(ctx, campaign_name, enrich_all, limit):
 
 
 @cli.command()
+@click.option("--campaign", "campaign_name", help="Backfill only prospects in this campaign")
+@click.option("--all", "all_prospects", is_flag=True, help="Backfill every prospect with an EIN")
+@click.option("--dry-run", is_flag=True, help="Print what would be updated without writing")
+@click.pass_context
+def backfill_irs_subsection(ctx, campaign_name, all_prospects, dry_run):
+    """Backfill prospect.metadata.irs_subsection from IRS BMF.
+
+    Re-downloads the IRS CA CSV once, builds an EIN→subsection map, and
+    updates any prospect whose metadata lacks irs_subsection. Needed after
+    the org_type pre-seed change (commit c741eb1) so existing prospects
+    provision demos with the right org_type instead of the 'cbo' default.
+    """
+    import csv as _csv
+    import io as _io
+    import httpx as _httpx
+
+    if not campaign_name and not all_prospects:
+        click.echo("Error: specify --campaign <name> or --all")
+        sys.exit(1)
+
+    registry, db, campaigns = _setup(db_url=ctx.obj["db_url"])
+
+    # Which campaigns to target — reuse the same matcher as every other command
+    targets = _targets(campaigns, campaign_name, all_prospects)
+
+    # Build EIN → subsection map from IRS BMF
+    click.echo("Downloading IRS CA BMF (eo_ca.csv)…")
+    from plugins.prospect_sources.irs_bmf import IrsBmfSource
+    src = IrsBmfSource()
+    with _httpx.Client(timeout=120, follow_redirects=True) as client:
+        resp = client.get(src.URL)
+        resp.raise_for_status()
+
+    ein_to_sub: dict[str, str] = {}
+    reader = _csv.DictReader(_io.StringIO(resp.text))
+    for row in reader:
+        ein = (row.get("EIN") or "").strip()
+        sub = (row.get("SUBSECTION") or "").strip()
+        if ein and sub:
+            ein_to_sub[ein] = sub
+    click.echo(f"  {len(ein_to_sub)} EINs have a subsection on file")
+
+    # Walk prospects and patch metadata in place
+    import json as _json
+    updated = skipped = already = 0
+    for campaign in targets:
+        campaign_db_name = getattr(campaign, "db_name", campaign.name)
+        cid = db.get_campaign_id(campaign_db_name)
+        if cid is None:
+            click.echo(f"\n{campaign_db_name}: no DB row yet, skipping (run sync first)")
+            continue
+        rows = db.conn.execute(
+            "SELECT p.id, p.ein, p.metadata FROM prospects p "
+            "JOIN outreach o ON o.prospect_id = p.id "
+            "WHERE o.campaign_id = ? AND p.ein IS NOT NULL AND p.ein != ''",
+            (cid,),
+        ).fetchall()
+        click.echo(f"\n{campaign_db_name}: {len(rows)} prospects with EIN")
+        for r in rows:
+            try:
+                meta = _json.loads(r["metadata"] or "{}")
+            except Exception:
+                meta = {}
+            if meta.get("irs_subsection"):
+                already += 1
+                continue
+            sub = ein_to_sub.get(r["ein"])
+            if not sub:
+                skipped += 1
+                continue
+            meta["irs_subsection"] = sub
+            if not dry_run:
+                db.conn.execute(
+                    "UPDATE prospects SET metadata = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (_json.dumps(meta), r["id"]),
+                )
+            updated += 1
+        if not dry_run:
+            db.conn.commit()
+
+    click.echo(f"\n{'DRY RUN — ' if dry_run else ''}Updated: {updated}  Skipped (no match): {skipped}  Already set: {already}")
+
+
+@cli.command()
 @click.option("--campaign", "campaign_name", help="Specific campaign")
 @click.option("--all", "all_campaigns", is_flag=True, help="Enqueue all campaigns")
 @click.option("--limit", default=50, help="Max outreach emails per campaign")
@@ -355,7 +439,7 @@ def test_send(ctx, campaign_name, to_email, script_name, prospect_id):
 @click.option("--dry-run", is_flag=True, help="Show what would be provisioned without calling the API")
 @click.pass_context
 def provision(ctx, campaign_name, all_campaigns, limit, dry_run):
-    """Provision personal demo portals on u9itus for prospects with contact emails."""
+    """Provision personal demo portals for prospects with contact emails."""
     if not campaign_name and not all_campaigns:
         click.echo("Error: specify --campaign <name> or --all")
         sys.exit(1)
@@ -374,7 +458,7 @@ def provision(ctx, campaign_name, all_campaigns, limit, dry_run):
         click.echo(f"  Failed:      {stats['failed']}")
         click.echo(f"  No contact:  {stats['no_contact']}")
         if stats.get("api_not_configured"):
-            click.echo(f"\n  ⚠ U9itus API not configured. Set U9ITUS_BASE_URL and U9ITUS_AGENCY_TOKEN in .env")
+            click.echo(f"\n  ⚠ Product API not configured. {stats['setup_hint']}")
 
 
 @cli.command()
@@ -383,7 +467,7 @@ def provision(ctx, campaign_name, all_campaigns, limit, dry_run):
 @click.option("--dry-run", is_flag=True, help="Show events without updating the pipeline")
 @click.pass_context
 def pull_events(ctx, campaign_name, all_campaigns, dry_run):
-    """Pull portal events from u9itus and auto-advance pipeline stages."""
+    """Pull demo portal events from the product and auto-advance pipeline stages."""
     if not campaign_name and not all_campaigns:
         click.echo("Error: specify --campaign <name> or --all")
         sys.exit(1)
@@ -401,7 +485,7 @@ def pull_events(ctx, campaign_name, all_campaigns, dry_run):
         click.echo(f"  Stage changes:    {stats['stage_changes']}")
         click.echo(f"  Already processed:{stats['already_processed']}")
         if stats.get("api_not_configured"):
-            click.echo(f"\n  ⚠ U9itus API not configured. Set U9ITUS_BASE_URL and U9ITUS_AGENCY_TOKEN in .env")
+            click.echo(f"\n  ⚠ Product API not configured. {stats['setup_hint']}")
 
 
 @cli.command()

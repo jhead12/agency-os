@@ -52,6 +52,7 @@ from core.db import Database
 from core.campaign import discover_campaigns, hidden_campaigns, sync_campaign_files
 from core.registry import PluginRegistry
 from core.pipeline import Pipeline
+from core.protocols import portal_product
 from plugins.channels.lob_direct_mail import TEMPLATE_ID_RE, lob_template_url
 from core.jobs import JobRunner, configured_jobs, jobs_enabled
 from core import (
@@ -1310,11 +1311,15 @@ async def prospect_detail(request: Request, prospect_id: int):
     # Get call history for this prospect
     call_history = db.get_calls_for_prospect(prospect_id)
 
-    # u9itus demo page (A6): status kept on the prospect by provisioning and
-    # pull-events, plus the portal events logged on the outreach rows.
+    # Demo page (A6): status kept on the prospect by provisioning and
+    # pull-events, plus the portal events logged on the outreach rows, both
+    # under the product's portal_namespace.
     activity_logs = {r["id"]: json.loads(r["activity_log"] or "[]") for r in outreach_rows}
+    _, portal_product_ = _portal_campaign(outreach_rows) or (None, None)
+    namespace = portal_product_.portal_namespace if portal_product_ else None
     portal_events = sorted(
-        (e for log in activity_logs.values() for e in log if str(e.get("ref", "")).startswith("u9itus:")),
+        (e for log in activity_logs.values() for e in log
+         if namespace and str(e.get("ref", "")).startswith(f"{namespace}:")),
         key=lambda e: e.get("timestamp", ""), reverse=True,
     )
 
@@ -1335,11 +1340,12 @@ async def prospect_detail(request: Request, prospect_id: int):
                         "model": llm.describe()} if current_user(request).uses_ai("agents.use") else None,
         "bounced": verify.bounced_emails(db, prospect_id),
         "package_spend": db.prospect_spend(prospect_id),
-        "portal": (prospect.metadata or {}).get("u9itus") or {},
+        "portal": ((prospect.metadata or {}).get(namespace) or {}) if namespace else {},
+        "portal_label": portal_product_.portal_label if portal_product_ else "Demo page",
         "portal_link": next((r["demo_link"] for r in outreach_rows if r["demo_link"]), None),
         "portal_events": portal_events,
         "ready_to_close": any(e.get("flag") == "ready_to_close" for e in portal_events),
-        "portal_available": _portal_campaign(outreach_rows) is not None,
+        "portal_available": portal_product_ is not None,
         "msg": request.query_params.get("msg", ""),
         "error": request.query_params.get("error", ""),
         "prospect": prospect,
@@ -1357,33 +1363,36 @@ def _plugin_registry() -> PluginRegistry:
 
 
 def _portal_campaign(outreach_rows):
-    """The first of the prospect's campaigns whose product makes u9itus demo pages."""
+    """(campaign, product) for the first of the prospect's campaigns whose
+    product makes demo pages, or None."""
     names = {r["campaign_name"] for r in outreach_rows}
     registry = _plugin_registry()
     for campaign in get_campaigns():
-        if campaign.db_name in names and hasattr(registry.get_product(campaign.product), "provision_demo"):
-            return campaign
+        product = portal_product(registry.get_product(campaign.product)) if campaign.db_name in names else None
+        if product:
+            return campaign, product
     return None
 
 
 @app.post("/prospects/{prospect_id}/portal")
 async def prospect_portal(request: Request, prospect_id: int, action: str = Form(...)):
-    """Create, renew, or check a prospect's u9itus demo page (A6)."""
+    """Create, renew, or check a prospect's demo page (A6)."""
     db = get_db()
     rows = db.conn.execute(
         """SELECT o.*, c.name as campaign_name FROM outreach o
            JOIN campaigns c ON o.campaign_id = c.id WHERE o.prospect_id = ?""",
         (prospect_id,),
     ).fetchall()
-    campaign = _portal_campaign(rows)
+    found = _portal_campaign(rows)
     back = f"/prospects/{prospect_id}"
-    if campaign is None:
-        return _back(back, error="None of this prospect's campaigns make u9itus demo pages.")
+    if found is None:
+        return _back(back, error="None of this prospect's campaigns make demo pages.")
+    campaign, product = found
 
     if action not in ("provision", "renew", "status"):
         return _back(back, error="Unknown action.")
 
-    def call_u9itus() -> dict:
+    def call_product() -> dict:
         # Runs in a worker thread (the API call can take seconds); database
         # connections are per thread, so open one here.
         pipeline = Pipeline(get_db(), _plugin_registry())
@@ -1391,12 +1400,12 @@ async def prospect_portal(request: Request, prospect_id: int, action: str = Form
             return pipeline.refresh_portal_status(campaign, prospect_id)
         return pipeline.provision_prospect(campaign, prospect_id, refresh=action == "renew")
 
-    result = await asyncio.to_thread(call_u9itus)
+    result = await asyncio.to_thread(call_product)
     done = {"provision": "Demo page ready.", "renew": "Demo page renewed with a new link.",
             "status": "Status updated."}[action]
 
     if result.get("error"):
-        return _back(back, error=f"u9itus: {result.get('detail') or 'request failed'}")
+        return _back(back, error=f"{product.portal_label}: {result.get('detail') or 'request failed'}")
     db.audit(current_user(request), f"prospect.portal.{action}", "prospect", prospect_id,
              {"status": result.get("status"), "slug": result.get("slug")})
     return _back(back, msg=done)
@@ -2033,6 +2042,8 @@ async def plugins_page(request: Request, msg: str = Query(default=""), error: st
 
             plugins_list.append({
                 "key": key,
+                "portal_tests": ptype_key == "products" and portal_product(p) is not None
+                                and hasattr(p, "check_connection") and hasattr(p, "create_test_portal"),
                 "description": desc,
                 "configured": configured,
                 "env_vars": env_vars,
@@ -2054,49 +2065,32 @@ async def plugins_page(request: Request, msg: str = Query(default=""), error: st
     })
 
 
-@app.post("/plugins/u9itus_voter_guide/test")
-async def test_u9itus_plugin(request: Request, action: str = Form(...)):
-    """Exercise the u9itus agency API from the Plugins page.
+@app.post("/plugins/{plugin_key}/test")
+async def test_product_plugin(request: Request, plugin_key: str, action: str = Form(...)):
+    """Exercise a demo-portal product's API from the Plugins page.
 
-    "check" reads one event (no side effects) to confirm the URL and token.
-    "create" makes a blank demo portal with a throwaway external_ref; it
-    expires on its own after 60 days like any unclaimed demo.
+    "check" calls the product's check_connection() (no side effects) to confirm
+    its URL and token. "create" calls create_test_portal(), which makes a blank
+    demo page not tied to any prospect.
     """
-    from plugins.products.u9itus_client import U9itusClient
-
     if action not in ("check", "create"):
         return _back("/plugins", error="Unknown action.")
-    client = U9itusClient()
-    if not client.is_configured():
-        return _back("/plugins", error="u9itus: set U9ITUS_BASE_URL and U9ITUS_AGENCY_TOKEN first.")
+    method = {"check": "check_connection", "create": "create_test_portal"}[action]
+    product = portal_product(_plugin_registry().get_product(plugin_key))
+    if product is None or not hasattr(product, method):
+        return _back("/plugins", error=f"{plugin_key} has no test for that.")
 
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S") + "-" + secrets.token_hex(2)
-
-    def call_u9itus() -> dict:
-        try:
-            if action == "check":
-                return client.pull_events(after=0, limit=1)
-            return client.provision_demo(
-                external_ref=f"agency-os:test:{stamp}",
-                name=f"Test Portal {stamp}",
-                state="CA",
-            )
-        finally:
-            client.close()
-
-    result = await asyncio.to_thread(call_u9itus)
+    result = await asyncio.to_thread(getattr(product, method))
     if result.get("error"):
         status = result.get("status")
-        hint = {401: "token rejected", 404: "agency API not deployed at this URL",
-                503: "AGENCY_OS_TOKEN_HASH not set on u9itus"}.get(status, "")
-        detail = hint or result.get("detail") or "request failed"
-        return _back("/plugins", error=f"u9itus test failed ({status or 'no response'}): {detail}")
+        detail = result.get("detail") or "request failed"
+        return _back("/plugins", error=f"{plugin_key} test failed ({status or 'no response'}): {detail}")
 
     db = get_db()
-    db.audit(current_user(request), f"plugin.u9itus.{action}", "plugin", None,
+    db.audit(current_user(request), f"plugin.{plugin_key}.{action}", "plugin", None,
              {"slug": result.get("slug")} if action == "create" else {})
     if action == "check":
-        return _back("/plugins", msg="u9itus connection OK: token accepted.")
+        return _back("/plugins", msg=f"{plugin_key} connection OK: token accepted.")
     qs = urlencode({"msg": f"Test portal created ({result.get('status')}).",
                     "test_slug": result.get("slug") or "",
                     "test_demo": result.get("demo_url") or "",
@@ -2538,13 +2532,15 @@ async def admin_jobs(request: Request, msg: str = Query(default=""), error: str 
     runner = get_job_runner()
     last = runner.last_runs()
     due = {job.key for job in runner.due_jobs()}
+    registry = _plugin_registry()
+    portal_products = {p.key: p for c in get_campaigns()
+                       if (p := portal_product(registry.get_product(c.product)))}
     return templates.TemplateResponse(request, "admin_jobs.html", {
         "active": "admin",
         "jobs": [{"job": job, "last": last.get(job.key), "due": job.key in due} for job in configured_jobs()],
         "runs": runner.recent_runs(),
         "enabled": jobs_enabled(),
-        "api_configured": bool(os.environ.get("U9ITUS_BASE_URL") and os.environ.get("U9ITUS_AGENCY_TOKEN")),
-        "u9itus_in_use": any(c.product == "u9itus_voter_guide" for c in get_campaigns()),
+        "unconfigured_portals": [p for p in portal_products.values() if not p.is_configured()],
         "msg": msg,
         "error": error,
     })

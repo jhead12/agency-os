@@ -28,7 +28,15 @@ class FakeU9itus:
     """Stands in for the product plugin; serves a scripted event feed and fake portals."""
 
     key = "fake_u9itus"
+    portal_namespace = "u9itus"
+    portal_label = "u9itus demo page"
     client = FakeClient()
+
+    def is_configured(self):
+        return self.client.is_configured()
+
+    def setup_hint(self):
+        return "Set FAKE_U9ITUS_TOKEN"
 
     def __init__(self):
         self.events = []
