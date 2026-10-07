@@ -120,6 +120,13 @@ agency-os is a complete sales operations platform that automates every step of t
             └──────────────┘
 ```
 
+*Three of the five campaigns — `healthcare-practices-jacksonville`,
+`healthcare-practices-pasadena`, and `recruiting-civil-litigation-ca` — are
+lead-list products: they source and enrich prospects but have no product plugin
+yet (nothing to demo or provision). The recruiting campaign and its prospects
+are additionally gated behind the `recruiting.view` permission — hidden from
+any role without it.*
+
 ### How It Works — The Sales Pipeline
 
 #### Step 1: Prospect Discovery
