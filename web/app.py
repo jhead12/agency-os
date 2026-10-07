@@ -43,7 +43,7 @@ from core.env import load_dotenv  # noqa: E402
 
 load_dotenv()  # .env settings for local runs; a deploy's own environment always wins
 
-from fastapi import FastAPI, Request, Query, HTTPException, Form, Depends, UploadFile, File
+from fastapi import BackgroundTasks, FastAPI, Request, Query, HTTPException, Form, Depends, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -61,6 +61,7 @@ from core import (
     agents, claims, console, contact_depth, evidence, lead_packages, llm, mcp_auth, panels, payments, royalties, selling,
     tools, verify, workflows,
 )
+from core import welcome as welcome_email
 from core.welcome import base_url as public_base_url
 from web.mcp_server import MCPMount
 from starlette.concurrency import run_in_threadpool
@@ -150,6 +151,28 @@ app = FastAPI(title="agency-os", docs_url=None, redoc_url=None, openapi_url=None
 templates = Jinja2Templates(directory=str(PROJECT_ROOT / "web" / "templates"))
 app.mount("/static", StaticFiles(directory=str(PROJECT_ROOT / "web" / "static")), name="static")
 
+
+# Sent on every response. No page is ever framed; links never pass the URL
+# (a one-time /welcome/ or /reset-password/ token) to another site.
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "same-origin",
+    "Permissions-Policy": "geolocation=(), camera=(), payment=()",
+}
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    for name, value in SECURITY_HEADERS.items():
+        response.headers.setdefault(name, value)
+    if request.url.scheme == "https":
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000")
+    if request.url.path.startswith(("/welcome/", "/reset-password/")):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
 # ── Auth ────────────────────────────────────────────────────────────
 # Multi-user login with role-based permissions (policy in core/access.py).
 # Every route is checked against access.ROUTE_RULES before its handler
@@ -158,10 +181,14 @@ app.mount("/static", StaticFiles(directory=str(PROJECT_ROOT / "web" / "static"))
 SESSION_COOKIE = "aos_session"
 SESSION_TTL_DAYS = 14
 LOGIN_WINDOW_SECONDS = 15 * 60
-LOGIN_MAX_FAILURES = 5
+LOGIN_MAX_FAILURES = 5          # per email and client IP
+LOGIN_ACCOUNT_MAX_FAILURES = 20  # per email from any IP, so spreading guesses over IPs doesn't help
 # Routes that also accept a CLI key (Authorization: Bearer aos_cli_...) instead of a session.
 KEY_ROUTES = {"POST /api/console"}
 _login_failures: dict[str, list[float]] = defaultdict(list)
+# Password-reset requests per email and per client IP, same window as logins
+RESET_MAX_REQUESTS = 3
+_reset_requests: dict[str, list[float]] = defaultdict(list)
 _DUMMY_HASH = access.hash_password(secrets.token_hex(16))
 
 
@@ -2465,16 +2492,18 @@ async def login(
 ):
     client = request.client.host if request.client else "?"
     key = f"{email.strip().lower()}|{client}"
+    account_key = f"{email.strip().lower()}|*"
     now = time.monotonic()
-    recent = [t for t in _login_failures[key] if now - t < LOGIN_WINDOW_SECONDS]
-    _login_failures[key] = recent
+    for k in (key, account_key):
+        _login_failures[k] = [t for t in _login_failures[k] if now - t < LOGIN_WINDOW_SECONDS]
 
     def fail(message: str):
         return RedirectResponse(
             url=f"/login?error={quote(message)}&next={quote(next)}", status_code=303
         )
 
-    if len(recent) >= LOGIN_MAX_FAILURES:
+    if (len(_login_failures[key]) >= LOGIN_MAX_FAILURES
+            or len(_login_failures[account_key]) >= LOGIN_ACCOUNT_MAX_FAILURES):
         return fail("Too many failed attempts. Try again in 15 minutes.")
 
     db = get_db()
@@ -2483,9 +2512,11 @@ async def login(
     ok = access.verify_password(password, row["password_hash"] if row else _DUMMY_HASH)
     if not (row and ok and row["is_active"]):
         _login_failures[key].append(now)
+        _login_failures[account_key].append(now)
         return fail("Incorrect email or password.")
 
     _login_failures.pop(key, None)
+    _login_failures.pop(account_key, None)
     user = db.load_current_user(row["id"])
     db.audit(user, "auth.login", "user", user.id)
     return _start_session(request, user, _safe_next(next) or user.landing_page())
@@ -2505,16 +2536,37 @@ def _start_session(request: Request, user: CurrentUser, target: str) -> Redirect
     return response
 
 
-@app.get("/welcome/{token}", response_class=HTMLResponse)
-async def welcome_page(request: Request, token: str, error: str = Query(default="")):
-    """Landing page for the one-time link in a welcome email (core/welcome.py)."""
+def _set_password_page(request: Request, token: str, error: str, reset: bool):
+    """The page behind a one-time link: welcome (new user) or password reset."""
     db = get_db()
     user_id = db.invite_user_id(access.hash_token(token))
     invitee = db.load_current_user(user_id) if user_id else None
     return templates.TemplateResponse(request, "welcome.html", {
         "invitee": invitee,
         "error": error,
+        "reset": reset,
     }, status_code=200 if invitee else 410)
+
+
+def _accept_set_password(request: Request, token: str, new_password: str,
+                         confirm_password: str, reset: bool):
+    page = f"/{'reset-password' if reset else 'welcome'}/{quote(token)}"
+    if new_password != confirm_password:
+        return RedirectResponse(url=f"{page}?error=Passwords+don%27t+match.", status_code=303)
+    db = get_db()
+    try:
+        user_id = db.accept_invite(access.hash_token(token), new_password)
+    except AccessError as e:
+        return RedirectResponse(url=f"{page}?error={quote(str(e))}", status_code=303)
+    user = db.load_current_user(user_id)
+    db.audit(user, "auth.password_reset" if reset else "auth.invite_accepted", "user", user.id)
+    return _start_session(request, user, user.landing_page())
+
+
+@app.get("/welcome/{token}", response_class=HTMLResponse)
+async def welcome_page(request: Request, token: str, error: str = Query(default="")):
+    """Landing page for the one-time link in a welcome email (core/welcome.py)."""
+    return _set_password_page(request, token, error, reset=False)
 
 
 @app.post("/welcome/{token}")
@@ -2524,18 +2576,68 @@ async def accept_welcome(
     new_password: str = Form(...),
     confirm_password: str = Form(...),
 ):
-    if new_password != confirm_password:
-        return RedirectResponse(
-            url=f"/welcome/{quote(token)}?error=Passwords+don%27t+match.", status_code=303
-        )
+    return _accept_set_password(request, token, new_password, confirm_password, reset=False)
+
+
+@app.get("/forgot-password", response_class=HTMLResponse)
+async def forgot_password_page(request: Request, sent: bool = Query(default=False),
+                               error: str = Query(default="")):
+    return templates.TemplateResponse(request, "forgot_password.html", {
+        "sent": sent,
+        "error": error,
+        "smtp_ready": welcome_email.smtp_configured(),
+    })
+
+
+def _send_reset_email(email: str) -> None:
+    """Runs after the response is sent, so timing never reveals whether the email exists."""
     db = get_db()
-    try:
-        user_id = db.accept_invite(access.hash_token(token), new_password)
-    except AccessError as e:
-        return RedirectResponse(url=f"/welcome/{quote(token)}?error={quote(str(e))}", status_code=303)
-    user = db.load_current_user(user_id)
-    db.audit(user, "auth.invite_accepted", "user", user.id)
-    return _start_session(request, user, user.landing_page())
+    row = db.get_user_by_email(email)
+    if not (row and row["is_active"]):
+        return
+    link, _ = welcome_email.issue_reset(db, row["id"], site_url())
+    user = db.load_current_user(row["id"])
+    subject, body = welcome_email.compose_reset(user, link, site_url())
+    result = welcome_email.send(user.email, subject, body)
+    if result.status != "sent":
+        print(f"[password reset] email to {user.email} not sent: {result.error}", file=sys.stderr)
+
+
+@app.post("/forgot-password")
+async def forgot_password(request: Request, background: BackgroundTasks, email: str = Form(...)):
+    """Email a one-time reset link. Answers the same whether or not the account exists."""
+    email = email.strip().lower()
+    client = request.client.host if request.client else "?"
+    now = time.monotonic()
+    keys = (f"email|{email}", f"ip|{client}")
+    for key in keys:
+        _reset_requests[key] = [t for t in _reset_requests[key] if now - t < LOGIN_WINDOW_SECONDS]
+    if any(len(_reset_requests[key]) >= RESET_MAX_REQUESTS for key in keys):
+        return RedirectResponse(
+            url="/forgot-password?error=Too+many+requests.+Try+again+in+15+minutes.", status_code=303
+        )
+    for key in keys:
+        _reset_requests[key].append(now)
+
+    if welcome_email.smtp_configured():
+        background.add_task(_send_reset_email, email)
+    return RedirectResponse(url="/forgot-password?sent=1", status_code=303)
+
+
+@app.get("/reset-password/{token}", response_class=HTMLResponse)
+async def reset_password_page(request: Request, token: str, error: str = Query(default="")):
+    """Landing page for the one-time link in a password-reset email."""
+    return _set_password_page(request, token, error, reset=True)
+
+
+@app.post("/reset-password/{token}")
+async def reset_password(
+    request: Request,
+    token: str,
+    new_password: str = Form(...),
+    confirm_password: str = Form(...),
+):
+    return _accept_set_password(request, token, new_password, confirm_password, reset=True)
 
 
 @app.post("/logout")
@@ -2691,10 +2793,20 @@ def _back(path: str, *, msg: str = "", error: str = "") -> RedirectResponse:
 @app.get("/admin/users", response_class=HTMLResponse)
 async def admin_users(request: Request, msg: str = Query(default=""), error: str = Query(default="")):
     db = get_db()
+    me = current_user(request)
+    roles = db.list_roles()
+    protected = {r["id"] for r in roles if r["is_protected"]}
+    users = db.list_users()
+    for u in users:
+        # Owner and Super Admin accounts other than your own are a Super Admin's to change.
+        u["locked"] = not me.is_super_admin and u["id"] != me.id and bool(u["role_ids"] & protected)
+        u["agent_seen_label"] = access.describe_channel(u["agent_seen_via"] or "")
+        u["agent_inbox"] = access.looks_like_agent_email(u["email"])
     return templates.TemplateResponse(request, "admin_users.html", {
         "active": "admin",
-        "users": db.list_users(),
-        "roles": db.list_roles(),
+        "users": users,
+        "roles": roles,
+        "protected_role_ids": protected,
         "msg": msg,
         "error": error,
     })
@@ -2707,9 +2819,10 @@ async def admin_create_user(
     name: str = Form(...),
     password: str = Form(...),
     role_ids: list[int] = Form(default=[]),
+    is_agent: str = Form(default=""),
 ):
     try:
-        get_db().create_user(email, name, password, role_ids, current_user(request))
+        get_db().create_user(email, name, password, role_ids, current_user(request), is_agent=bool(is_agent))
     except AccessError as e:
         return _back("/admin/users", error=str(e))
     return _back("/admin/users", msg=f"Added {email.strip().lower()}.")
@@ -2721,13 +2834,15 @@ async def admin_update_user(
     user_id: int,
     name: str = Form(...),
     is_active: str = Form(default=""),
+    is_agent: str = Form(default=""),
     role_ids: list[int] = Form(default=[]),
     new_password: str = Form(default=""),
 ):
     actor = current_user(request)
     db = get_db()
     try:
-        db.update_user(user_id, name=name, is_active=bool(is_active), role_ids=role_ids, actor=actor)
+        db.update_user(user_id, name=name, is_active=bool(is_active), role_ids=role_ids, actor=actor,
+                       is_agent=bool(is_agent))
         if new_password:
             db.set_password(user_id, new_password, actor)
     except AccessError as e:

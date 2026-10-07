@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Team — agency-os{% endblock %}
 {% block content %}
+{% set me = request.state.user %}
 <div class="page-header">
     <h1>Team</h1>
     <p class="subtitle">{{ users|length }} user(s). New users have no access until you give them a role.</p>
@@ -9,14 +10,28 @@
 
 {% for u in users %}
 <form method="post" action="/admin/users/{{ u.id }}" class="detail-card admin-row {% if not u.is_active %}admin-row-inactive{% endif %}">
+    <fieldset class="admin-row-fieldset" {% if u.locked %}disabled{% endif %}>
     <div class="admin-row-head">
         <div>
             <strong>{{ u.email }}</strong>
-            {% if u.id == request.state.user.id %}<span class="tag">you</span>{% endif %}
+            {% if u.id == me.id %}<span class="tag">you</span>{% endif %}
             {% if not u.is_active %}<span class="tag">deactivated</span>{% endif %}
+            {% if u.is_agent %}<span class="tag tag-agent">AI agent</span>{% endif %}
             <div class="muted">Last sign-in: {{ u.last_login_at|fmt_date }}</div>
+            {% if u.agent_seen_at %}
+            <div class="muted">Acted through AI: {{ u.agent_seen_label }}, {{ u.agent_seen_at|fmt_date }}</div>
+            {% endif %}
+            {% if not u.is_agent and u.agent_inbox %}
+            <div class="muted">This address is an AI-agent inbox. Tick "AI agent" if it's one.</div>
+            {% endif %}
+            {% if u.locked %}<div class="muted">Only a Super Admin can change this account.</div>{% endif %}
         </div>
-        <label class="check"><input type="checkbox" name="is_active" value="1" {% if u.is_active %}checked{% endif %}> Active</label>
+        <div class="admin-row-flags">
+            <label class="check" title="An AI agent can never be an Owner or Super Admin, buy or sell lead packages, or use the console">
+                <input type="checkbox" name="is_agent" value="1" {% if u.is_agent %}checked{% endif %}> AI agent
+            </label>
+            <label class="check"><input type="checkbox" name="is_active" value="1" {% if u.is_active %}checked{% endif %}> Active</label>
+        </div>
     </div>
     <div class="admin-row-fields">
         <label>Name <input type="text" name="name" value="{{ u.name }}" required class="filter-input"></label>
@@ -24,13 +39,16 @@
     </div>
     <div class="check-grid">
         {% for r in roles %}
-        <label class="check" title="{{ r.description or '' }}">
-            <input type="checkbox" name="role_ids" value="{{ r.id }}" {% if r.id in u.role_ids %}checked{% endif %}>
+        {% set fixed = r.id in protected_role_ids and not me.is_super_admin %}
+        <label class="check" title="{{ r.description or '' }}{% if fixed %} (only a Super Admin can change this){% endif %}">
+            <input type="checkbox" name="role_ids" value="{{ r.id }}" {% if r.id in u.role_ids %}checked{% endif %} {% if fixed %}disabled{% endif %}>
+            {% if fixed and r.id in u.role_ids %}<input type="hidden" name="role_ids" value="{{ r.id }}">{% endif %}
             {{ r.name }}
         </label>
         {% endfor %}
     </div>
-    <button type="submit" class="btn btn-sm">Save</button>
+    {% if not u.locked %}<button type="submit" class="btn btn-sm">Save</button>{% endif %}
+    </fieldset>
 </form>
 {% endfor %}
 
@@ -43,12 +61,16 @@
     </div>
     <div class="check-grid">
         {% for r in roles %}
-        <label class="check" title="{{ r.description or '' }}">
-            <input type="checkbox" name="role_ids" value="{{ r.id }}"> {{ r.name }}
+        {% set fixed = r.id in protected_role_ids and not me.is_super_admin %}
+        <label class="check" title="{{ r.description or '' }}{% if fixed %} (only a Super Admin can grant this){% endif %}">
+            <input type="checkbox" name="role_ids" value="{{ r.id }}" {% if fixed %}disabled{% endif %}> {{ r.name }}
         </label>
         {% endfor %}
+        <label class="check" title="An AI agent can never be an Owner or Super Admin, buy or sell lead packages, or use the console">
+            <input type="checkbox" name="is_agent" value="1"> AI agent
+        </label>
     </div>
-    <p class="muted">Share the temporary password privately. They can change it under their account page.</p>
+    <p class="muted">Share the temporary password privately. They can change it under their account page. Addresses at AI-agent inboxes (e.g. agentmail.to) are added as AI agents.</p>
     <button type="submit" class="btn btn-sm">Add user</button>
 </form>
 {% endblock %}
