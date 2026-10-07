@@ -281,6 +281,11 @@ ALTER TABLE lead_packages ADD COLUMN IF NOT EXISTS guarantee_rules TEXT;
 ALTER TABLE lead_packages ADD COLUMN IF NOT EXISTS claim_token TEXT;
 -- AI features are opt-in per user (Account page); a missing row means off.
 ALTER TABLE user_prefs ADD COLUMN IF NOT EXISTS ai_enabled INTEGER NOT NULL DEFAULT 0;
+-- AI agents (core/access.py): an account marked as one, and the last tool call any
+-- account made through an autonomous channel (an AI connector, WebMCP, a CLI key).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_agent INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS agent_seen_at TIMESTAMP;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS agent_seen_via TEXT;
 
 -- Ledger of every x402 payment attempt. `ref` identifies what was bought
 -- (provider/package for an unlock, provider/package/lead for a royalty).
@@ -1477,7 +1482,7 @@ class Database:
         """
         c = self.conn
         row = c.execute(
-            "SELECT id, email, name FROM users WHERE id = ? AND is_active = 1", (user_id,)
+            "SELECT id, email, name, is_agent FROM users WHERE id = ? AND is_active = 1", (user_id,)
         ).fetchone()
         if not row:
             return None
@@ -1506,6 +1511,7 @@ class Database:
             member_campaigns=frozenset(m["campaign"] for m in members if m["mine"]),
             owner_restricted_campaigns=frozenset(o["campaign"] for o in owned),
             owner_campaigns=frozenset(o["campaign"] for o in owned if o["mine"]),
+            is_agent=bool(row["is_agent"]),
         )
 
     # Campaign owners (which Owners run a campaign; Super Admins assign them)
@@ -1588,12 +1594,19 @@ class Database:
     def list_users(self) -> list[dict]:
         c = self.conn
         users = [dict(r) for r in c.execute(
-            "SELECT id, email, name, is_active, last_login_at, created_at FROM users ORDER BY name"
+            """SELECT id, email, name, is_active, is_agent, agent_seen_at, agent_seen_via, last_login_at, created_at
+               FROM users ORDER BY name"""
         ).fetchall()]
         links = c.execute("SELECT user_id, role_id FROM user_roles").fetchall()
         for u in users:
             u["role_ids"] = {link["role_id"] for link in links if link["user_id"] == u["id"]}
         return users
+
+    def note_agent_activity(self, user_id: int, source: str) -> None:
+        """Record that a user just acted through an autonomous channel (see access.autonomous_channel)."""
+        with self.transaction() as c:
+            c.execute("UPDATE users SET agent_seen_at = CURRENT_TIMESTAMP, agent_seen_via = ? WHERE id = ?",
+                      (source[:120], user_id))
 
     def _active_owner_count(self, c: Connection) -> int:
         return c.execute(
@@ -1605,19 +1618,28 @@ class Database:
         ).fetchone()[0]
 
     @staticmethod
-    def _guard_protected(actor: Optional[CurrentUser], before: list[str], after: list[str]) -> None:
+    def _guard_protected(actor: Optional[CurrentUser], before: list[str], after: list[str],
+                         user_id: Optional[int] = None) -> None:
         """Only a Super Admin (or the server-side CLI, actor=None) may touch Owner/Super Admin.
 
-        That covers granting or removing either role, and any change to a
-        Super Admin's account.
+        That covers granting or removing either role, any change to a Super
+        Admin's account, and any change to another Owner's account (so one
+        Owner can't reset another's password and sign in as them).
         """
         if actor is None or actor.is_super_admin:
             return
         if access.SUPER_ADMIN_ROLE in before:
             raise AccessError("Only a Super Admin can change a Super Admin's account.")
+        if access.OWNER_ROLE in before and user_id is not None and user_id != actor.id:
+            raise AccessError("Only a Super Admin can change another Owner's account.")
         protected = set(access.PROTECTED_ROLES)
         if protected & set(before) != protected & set(after):
             raise AccessError("Only a Super Admin can grant or remove the Owner or Super Admin role.")
+
+    @staticmethod
+    def _guard_agent(is_agent: bool, roles: list[str]) -> None:
+        if is_agent and set(access.PROTECTED_ROLES) & set(roles):
+            raise AccessError("An AI agent account can't be an Owner or Super Admin.")
 
     def _user_role_names(self, c: Connection, user_id: int) -> list[str]:
         return [r["name"] for r in c.execute(
@@ -1627,8 +1649,10 @@ class Database:
         ).fetchall()]
 
     def create_user(self, email: str, name: str, password: str, role_ids: list[int],
-                    actor: Optional[CurrentUser]) -> int:
+                    actor: Optional[CurrentUser], *, is_agent: bool = False) -> int:
+        """Add a user. An address at an AI-agent inbox provider is always an AI agent."""
         email, name = email.strip().lower(), name.strip()
+        is_agent = is_agent or access.looks_like_agent_email(email)
         if "@" not in email or not name:
             raise AccessError("A valid email and a name are required.")
         problem = access.password_problem(password)
@@ -1638,20 +1662,22 @@ class Database:
             if c.execute("SELECT 1 FROM users WHERE email = ?", (email,)).fetchone():
                 raise AccessError(f"A user with email {email} already exists.")
             cur = c.execute(
-                "INSERT INTO users (email, name, password_hash) VALUES (?, ?, ?) RETURNING id",
-                (email, name, access.hash_password(password)),
+                "INSERT INTO users (email, name, password_hash, is_agent) VALUES (?, ?, ?, ?) RETURNING id",
+                (email, name, access.hash_password(password), int(is_agent)),
             )
             user_id = cur.fetchone()["id"]
             self._set_roles(c, user_id, role_ids)
-            self._guard_protected(actor, [], self._user_role_names(c, user_id))
+            roles = self._user_role_names(c, user_id)
+            self._guard_protected(actor, [], roles)
+            self._guard_agent(is_agent, roles)
             self._audit(c, actor, "user.create", "user", user_id, {
-                "email": email, "name": name, "roles": self._user_role_names(c, user_id),
+                "email": email, "name": name, "roles": roles, "is_agent": is_agent,
             })
         return user_id
 
     def update_user(self, user_id: int, *, name: str, is_active: bool, role_ids: list[int],
-                    actor: Optional[CurrentUser]) -> None:
-        """Change a user's name, active flag, and roles in one audited step.
+                    actor: Optional[CurrentUser], is_agent: Optional[bool] = None) -> None:
+        """Change a user's name, active flag, roles and (unless None) AI-agent mark in one audited step.
 
         Rejected if it would leave no active owner.
         """
@@ -1663,21 +1689,24 @@ class Database:
             if not before:
                 raise AccessError("User not found.")
             roles_before = self._user_role_names(c, user_id)
+            is_agent = bool(before["is_agent"]) if is_agent is None else is_agent
             c.execute(
-                "UPDATE users SET name = ?, is_active = ? WHERE id = ?",
-                (name, int(is_active), user_id),
+                "UPDATE users SET name = ?, is_active = ?, is_agent = ? WHERE id = ?",
+                (name, int(is_active), int(is_agent), user_id),
             )
             self._set_roles(c, user_id, role_ids)
-            self._guard_protected(actor, roles_before, self._user_role_names(c, user_id))
+            roles_after = self._user_role_names(c, user_id)
+            self._guard_protected(actor, roles_before, roles_after, user_id)
+            self._guard_agent(is_agent, roles_after)
             if self._active_owner_count(c) == 0:
                 raise AccessError("At least one active Owner is required.")
             if not is_active:
                 c.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
             self._audit(c, actor, "user.update", "user", user_id, {
                 "before": {"name": before["name"], "is_active": bool(before["is_active"]),
-                           "roles": roles_before},
-                "after": {"name": name, "is_active": is_active,
-                          "roles": self._user_role_names(c, user_id)},
+                           "is_agent": bool(before["is_agent"]), "roles": roles_before},
+                "after": {"name": name, "is_active": is_active, "is_agent": is_agent,
+                          "roles": roles_after},
             })
 
     def _set_roles(self, c: Connection, user_id: int, role_ids: list[int]) -> None:
@@ -1702,6 +1731,8 @@ class Database:
         if problem:
             raise AccessError(problem)
         with self.transaction() as c:
+            roles = self._user_role_names(c, user_id)
+            self._guard_protected(actor, roles, roles, user_id)
             c.execute(
                 "UPDATE users SET password_hash = ? WHERE id = ?",
                 (access.hash_password(password), user_id),
@@ -1715,9 +1746,10 @@ class Database:
     def grant_owner(self, email: str, actor: Optional[CurrentUser], role: str = access.OWNER_ROLE) -> None:
         """Recovery path (CLI only): make an existing user an active Owner (or Super Admin)."""
         with self.transaction() as c:
-            row = c.execute("SELECT id FROM users WHERE email = ?", (email.strip(),)).fetchone()
+            row = c.execute("SELECT id, is_agent FROM users WHERE email = ?", (email.strip(),)).fetchone()
             if not row:
                 raise AccessError(f"No user with email {email}.")
+            self._guard_agent(bool(row["is_agent"]), [role])
             owner_role = c.execute(
                 "SELECT id FROM roles WHERE name = ?", (role,)
             ).fetchone()

@@ -532,6 +532,10 @@ TOOLS: dict[str, Tool] = {t.name: t for t in [
 ]}
 
 
+# Tools an AI channel never runs, even for an Owner's own assistant.
+_NOT_FOR_AI = frozenset({access.OWNER, access.SUPER_ADMIN, "packages.buy", "packages.sell"})
+
+
 def available(user: CurrentUser, surface: str = "ai") -> list[Tool]:
     """The tools this user may call on a surface (drafting only when a model is configured).
 
@@ -542,12 +546,30 @@ def available(user: CurrentUser, surface: str = "ai") -> list[Tool]:
             and (t.kind != "draft" or (llm.backend() and (surface == "ai" or user.uses_ai(t.permission))))]
 
 
+def _note_channel(db, user: CurrentUser, source: str) -> str:
+    """The call's autonomous channel ("" for a person in the app), recorded on the user."""
+    channel = access.autonomous_channel(source)
+    if channel:
+        try:
+            db.note_agent_activity(user.id, source)
+        except Exception:  # noqa: S110 - bookkeeping must not block the call
+            pass
+    return channel
+
+
 def run_tool(db, user: CurrentUser, name: str, args: Any, *, source: str, confirmed: bool = False,
              surface: str = "ai") -> dict:
-    """Run one tool as `user`. Returns {ok, ...}; never raises."""
+    """Run one tool as `user`. Returns {ok, ...}; never raises.
+
+    A call through an autonomous channel is recorded on the user (Team page), and
+    an AI channel never runs Owner-only or spending tools, whoever the user is.
+    """
+    channel = _note_channel(db, user, source)
     tool = TOOLS.get(name)
     if tool is None or tool not in available(user, surface):
         return {"ok": False, "error": f"No tool named {name} for you"}
+    if channel == "ai" and tool.permission in _NOT_FOR_AI:
+        return {"ok": False, "error": f"{name} can't be run by an AI assistant; do it in agency-os yourself"}
     if tool.kind == "write" and not confirmed:
         return {"ok": False, "error": "This change needs your confirmation", "needs_confirmation": True}
     try:

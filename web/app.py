@@ -2691,10 +2691,20 @@ def _back(path: str, *, msg: str = "", error: str = "") -> RedirectResponse:
 @app.get("/admin/users", response_class=HTMLResponse)
 async def admin_users(request: Request, msg: str = Query(default=""), error: str = Query(default="")):
     db = get_db()
+    me = current_user(request)
+    roles = db.list_roles()
+    protected = {r["id"] for r in roles if r["is_protected"]}
+    users = db.list_users()
+    for u in users:
+        # Owner and Super Admin accounts other than your own are a Super Admin's to change.
+        u["locked"] = not me.is_super_admin and u["id"] != me.id and bool(u["role_ids"] & protected)
+        u["agent_seen_label"] = access.describe_channel(u["agent_seen_via"] or "")
+        u["agent_inbox"] = access.looks_like_agent_email(u["email"])
     return templates.TemplateResponse(request, "admin_users.html", {
         "active": "admin",
-        "users": db.list_users(),
-        "roles": db.list_roles(),
+        "users": users,
+        "roles": roles,
+        "protected_role_ids": protected,
         "msg": msg,
         "error": error,
     })
@@ -2707,9 +2717,10 @@ async def admin_create_user(
     name: str = Form(...),
     password: str = Form(...),
     role_ids: list[int] = Form(default=[]),
+    is_agent: str = Form(default=""),
 ):
     try:
-        get_db().create_user(email, name, password, role_ids, current_user(request))
+        get_db().create_user(email, name, password, role_ids, current_user(request), is_agent=bool(is_agent))
     except AccessError as e:
         return _back("/admin/users", error=str(e))
     return _back("/admin/users", msg=f"Added {email.strip().lower()}.")
@@ -2721,13 +2732,15 @@ async def admin_update_user(
     user_id: int,
     name: str = Form(...),
     is_active: str = Form(default=""),
+    is_agent: str = Form(default=""),
     role_ids: list[int] = Form(default=[]),
     new_password: str = Form(default=""),
 ):
     actor = current_user(request)
     db = get_db()
     try:
-        db.update_user(user_id, name=name, is_active=bool(is_active), role_ids=role_ids, actor=actor)
+        db.update_user(user_id, name=name, is_active=bool(is_active), role_ids=role_ids, actor=actor,
+                       is_agent=bool(is_agent))
         if new_password:
             db.set_password(user_id, new_password, actor)
     except AccessError as e:

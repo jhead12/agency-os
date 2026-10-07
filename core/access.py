@@ -8,8 +8,14 @@ Modeled on the u9itus.dev staff permission system:
 - The protected Owner role bypasses permission checks and is the only role
   that can manage users, roles, and the audit log.
 - The protected Super Admin role sits above Owner: it has every Owner power,
-  and only a Super Admin can grant or remove Owner or Super Admin, or change a
-  Super Admin's account. (The server-side CLI can too, for bootstrap/recovery.)
+  and only a Super Admin can grant or remove Owner or Super Admin, or change
+  another Owner's or a Super Admin's account (name, active, password). (The
+  server-side CLI can too, for bootstrap/recovery.)
+- AI agents: an account marked as an AI agent never holds Owner or Super
+  Admin and never gets AGENT_DENIED permissions, whatever its roles say. Any
+  account's tool calls through an autonomous channel (an AI connector, the
+  in-page assistant, a CLI key) are recorded on it, so the Team page shows
+  who is acting through AI.
 - Every web route must appear in ROUTE_RULES. Unlisted routes are denied.
 - New users get no access until an owner assigns them a role.
 
@@ -36,6 +42,35 @@ def ai_allowed() -> bool:
 
 class AccessError(ValueError):
     """A user/role change was rejected (invalid input or a broken invariant)."""
+
+# ── AI agents ──────────────────────────────────────────────────────────
+
+# What an AI agent account can't do even if a role grants it: spend or sell, or run the console.
+AGENT_DENIED = frozenset({"packages.buy", "packages.sell", "cli.use"})
+# Inbox providers made for AI agents; a new user at one is marked as an AI agent.
+AGENT_EMAIL_DOMAINS = ("agentmail.to",)
+
+
+def looks_like_agent_email(email: str) -> bool:
+    domain = email.strip().lower().rpartition("@")[2]
+    return any(domain == d or domain.endswith("." + d) for d in AGENT_EMAIL_DOMAINS)
+
+
+def autonomous_channel(source: str) -> str:
+    """The autonomous channel a tool call came through, or "" for a person in the app.
+
+    "ai" is an AI connector (MCP) or the in-page assistant (WebMCP); "key" is a CLI key.
+    The agent panel and the browser console are a person clicking or typing.
+    """
+    if source.startswith("mcp:") or source == "webmcp":
+        return "ai"
+    return "key" if source == "cli" else ""
+
+
+def describe_channel(source: str) -> str:
+    if source.startswith("mcp:"):
+        return f"AI connector ({source.removeprefix('mcp:')})"
+    return {"webmcp": "in-page AI assistant", "cli": "CLI key"}.get(source, source)
 
 # ── Permission catalog ─────────────────────────────────────────────────
 
@@ -239,23 +274,26 @@ class CurrentUser:
     member_campaigns: frozenset[str] = field(default_factory=frozenset)      # ...of which this user is one
     owner_restricted_campaigns: frozenset[str] = field(default_factory=frozenset)  # campaigns with assigned Owners
     owner_campaigns: frozenset[str] = field(default_factory=frozenset)             # ...assigned to this user
+    is_agent: bool = False  # an AI agent account (Team page)
 
     @property
     def is_super_admin(self) -> bool:
-        return SUPER_ADMIN_ROLE in self.roles
+        # The database never lets an agent hold the role; this holds even if a row says otherwise.
+        return SUPER_ADMIN_ROLE in self.roles and not self.is_agent
 
     @property
     def is_owner(self) -> bool:
-        """Owners, and Super Admins (who hold every Owner power)."""
-        return OWNER_ROLE in self.roles or self.is_super_admin
+        """Owners, and Super Admins (who hold every Owner power). Never an AI agent."""
+        return (OWNER_ROLE in self.roles and not self.is_agent) or self.is_super_admin
 
     def can(self, permission: str) -> bool:
         """True if this user holds a catalog permission (owners hold all).
 
         Unknown permission names are always denied, even for owners, so a
-        typo can never become an accidental grant.
+        typo can never become an accidental grant. AI agents never get
+        AGENT_DENIED.
         """
-        if permission not in CATALOG:
+        if permission not in CATALOG or (self.is_agent and permission in AGENT_DENIED):
             return False
         return self.is_owner or permission in self.permissions
 

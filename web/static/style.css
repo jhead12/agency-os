@@ -1052,6 +1052,9 @@ table.sortable th {
 .admin-row { display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px; }
 .admin-row form { display: flex; flex-direction: column; gap: 12px; }
 .admin-row .btn { align-self: flex-start; }
+.admin-row-fieldset { border: 0; margin: 0; padding: 0; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.admin-row-flags { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; }
+.tag-agent { background: var(--purple); color: white; }
 .admin-row-inactive { opacity: 0.6; }
 .admin-row-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
 .admin-row-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
