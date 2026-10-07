@@ -660,13 +660,28 @@ def _to_pg(sql: str) -> str:
 
 
 class Connection:
-    """Autocommit psycopg connection with a sqlite3-style execute API."""
+    """Autocommit psycopg connection with a sqlite3-style execute API.
 
-    def __init__(self, raw: psycopg.Connection):
+    If the server drops the connection while it sits idle (a Postgres restart
+    or maintenance on Railway), the next statement reconnects and runs once
+    more instead of failing. Inside a transaction it still raises: the
+    earlier statements are gone and can't be replayed.
+    """
+
+    def __init__(self, raw: psycopg.Connection, url: Optional[str] = None):
         self.raw = raw
+        self.url = url
 
     def execute(self, sql: str, params=()) -> psycopg.Cursor:
-        return self.raw.execute(_to_pg(sql), params or None)
+        idle = self.raw.info.transaction_status == psycopg.pq.TransactionStatus.IDLE
+        try:
+            return self.raw.execute(_to_pg(sql), params or None)
+        except psycopg.OperationalError as e:
+            if not (idle and self.url and (self.raw.broken or isinstance(e, psycopg.errors.AdminShutdown))):
+                raise
+            self.raw.close()
+            self.raw = _open_raw(self.url)
+            return self.raw.execute(_to_pg(sql), params or None)
 
     def executemany(self, sql: str, seq) -> None:
         seq = list(seq)
@@ -684,12 +699,16 @@ _schema_ready: set[str] = set()
 _schema_guard = threading.Lock()
 
 
-def _connect(url: str) -> Connection:
+def _open_raw(url: str) -> psycopg.Connection:
     raw = psycopg.connect(url, autocommit=True, row_factory=_row_factory)
     for pg_type in ("timestamp", "timestamptz"):
         raw.adapters.register_loader(pg_type, TextLoader)
     raw.execute("SET TIME ZONE 'UTC'")  # CURRENT_TIMESTAMP in UTC, as SQLite did
-    conn = Connection(raw)
+    return raw
+
+
+def _connect(url: str) -> Connection:
+    conn = Connection(_open_raw(url), url)
     with _schema_guard:
         _open_conns[:] = [c for c in _open_conns if not c.raw.closed]
         _open_conns.append(conn)
@@ -1406,6 +1425,7 @@ class Database:
         """Write transaction that takes a global write lock up front, so
         invariant checks like "at least one active owner" can't race."""
         c = self.conn
+        c.execute("SELECT 1")  # reconnects first if the server dropped the idle connection
         with c.raw.transaction():
             c.execute("SELECT pg_advisory_xact_lock(?)", (_WRITE_LOCK_ID,))
             yield c
