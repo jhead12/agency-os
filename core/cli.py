@@ -29,6 +29,7 @@ Usage:
     agency-os accounts platform-key
     agency-os accounts create --ref org_42 --name "Acme Realty"
     agency-os searches run
+    agency-os generator run [--id 4]
     agency-os spend resolve --id 12 --status settled --tx 0x...
     agency-os connect --url https://your-app.up.railway.app --key aos_cli_...
     agency-os remote users invite --email rep@example.com --role Caller
@@ -918,6 +919,28 @@ def searches_run(ctx, limit):
     for s in finished:
         click.echo(f"  #{s['id']:<6} {s['type']:<7} {s['status']:<9} delivered {s['delivered']}/{s['max_results']}"
                    + (f"  ({s['error']})" if s["error"] else ""))
+
+
+@cli.group("generator")
+def generator_group():
+    """Lead package generator runs (core/generator.py). Super Admins start them at /admin/generator."""
+
+
+@generator_group.command("run")
+@click.option("--id", "run_id", type=int, default=None, help="Run this queued run (default: every queued run)")
+@click.pass_context
+def generator_run(ctx, run_id):
+    """Run queued generator runs now, e.g. one left queued by a restart."""
+    from core import generator
+
+    runner = generator.Runner(ctx.obj["db_url"] or None)
+    finished = [r for r in [runner.run(run_id)] if r] if run_id else runner.run_pending()
+    if not finished:
+        click.echo("No queued generator runs.")
+    for r in finished:
+        click.echo(f"  #{r['id']:<6} {r['status']:<9} found {r['found']}/{r['max_leads']}, "
+                   f"{r['enriched']} with a contact, {r['eligible']} sellable"
+                   + (f"  ({r['error']})" if r["error"] else ""))
 
 
 # ── Lead packages (x402) ───────────────────────────────────────────

@@ -86,12 +86,21 @@ class Pipeline:
             (campaign_id, limit),
         ).fetchall()
 
+        enriched = self.enrich_outreach_rows(rows, campaign.enrichers)
+        return {"enriched": enriched, "checked": len(rows)}
+
+    def enrich_outreach_rows(self, rows, enricher_keys, *, stop=None, after_each=None) -> int:
+        """Run enrichers, in order, on outreach rows ({id, prospect_id}); the first hit wins.
+        `stop()` ends early (e.g. a cancelled generator run); `after_each(enriched)` reports progress.
+        Returns how many rows got something."""
         enriched = 0
         for row in rows:
+            if stop is not None and stop():
+                break
             prospect = self.db.get_prospect(row["prospect_id"])
             if not prospect:
                 continue
-            for enricher_key in campaign.enrichers:
+            for enricher_key in enricher_keys:
                 enricher = self.registry.get_enricher(enricher_key)
                 if not enricher or not enricher.is_configured():
                     continue
@@ -103,8 +112,9 @@ class Pipeline:
                         break  # first hit wins
                 except Exception as exc:
                     print(f"  ! Enricher {enricher_key} failed for {prospect.name}: {exc}")
-
-        return {"enriched": enriched, "checked": len(rows)}
+            if after_each is not None:
+                after_each(enriched)
+        return enriched
 
     # ── Enqueue Outreach ───────────────────────────────────────────────
 

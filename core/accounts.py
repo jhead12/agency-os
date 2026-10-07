@@ -84,6 +84,14 @@ def list_accounts(db) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def recent_usage(db, days: int = 30) -> dict[int, dict]:
+    """Per account id: searches started and prospects delivered (billed) in the last `days` days."""
+    rows = db.conn.execute(
+        f"""SELECT account_id, COUNT(*) AS searches, COALESCE(SUM(delivered), 0) AS delivered FROM searches
+            WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '{int(days)} days' GROUP BY account_id""").fetchall()
+    return {r["account_id"]: {"searches": r["searches"], "delivered": r["delivered"]} for r in rows}
+
+
 def create(db, external_ref: str, name: str) -> tuple[dict, Optional[str]]:
     """Make an account and return it with its key (shown once).
 
@@ -108,7 +116,7 @@ def create(db, external_ref: str, name: str) -> tuple[dict, Optional[str]]:
     return dict(row), key
 
 
-def rotate_key(db, external_ref: str) -> str:
+def rotate_key(db, external_ref: str, actor=None) -> str:
     """Issue a new key for an account; the old one stops working."""
     key = _new_account_key()
     with db.transaction() as c:
@@ -119,11 +127,11 @@ def rotate_key(db, external_ref: str) -> str:
         ).fetchone()
         if row is None:
             raise AccountError("No such account.")
-        db._audit(c, None, "account.rotate_key", "account", row["id"])
+        db._audit(c, actor, "account.rotate_key", "account", row["id"])
     return key
 
 
-def set_status(db, external_ref: str, status: str) -> dict:
+def set_status(db, external_ref: str, status: str, actor=None) -> dict:
     """Suspend an account (u9itus: a payment failed) or make it active again.
     A suspended account's key is refused, but its prospects are kept."""
     if status not in STATUSES:
@@ -136,7 +144,7 @@ def set_status(db, external_ref: str, status: str) -> dict:
         ).fetchone()
         if row is None:
             raise AccountError("No such account.")
-        db._audit(c, None, f"account.{status}", "account", row["id"])
+        db._audit(c, actor, f"account.{status}", "account", row["id"])
     return dict(row)
 
 

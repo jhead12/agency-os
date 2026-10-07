@@ -60,7 +60,7 @@ from plugins.channels.lob_direct_mail import TEMPLATE_ID_RE, lob_template_url
 from core.jobs import JobRunner, configured_jobs, jobs_enabled
 from core import (
     accounts, agents, claims, console, contact_depth, evidence, lead_packages, llm, mcp_auth, panels, payments,
-    plugin_pages, plugin_panels, royalties, searches, selling,
+    generator, plugin_pages, plugin_panels, royalties, searches, selling,
     tools, verify, workflows,
 )
 from core import welcome as welcome_email
@@ -368,7 +368,8 @@ def nav_active(path: str) -> str:
     if parts[0] == "p" and len(parts) > 1:
         return f"p-{parts[1]}"
     if parts[0] == "admin":
-        return {"campaigns": "admin-campaigns", "selling": "admin-selling", "payouts": "admin-payouts"}.get(
+        return {"campaigns": "admin-campaigns", "selling": "admin-selling", "payouts": "admin-payouts",
+                "generator": "admin-generator"}.get(
             parts[1] if len(parts) > 1 else "", "admin")
     return parts[0]
 
@@ -413,7 +414,7 @@ async def dashboard(request: Request):
     })
 
 
-SAVED_LIST_FIELDS = ("q", "source", "stage", "cities", "campaign", "sort", "dir", "per_page")
+SAVED_LIST_FIELDS = ("q", "source", "stage", "cities", "campaign", "generator_run", "sort", "dir", "per_page")
 
 
 def prospect_list_criteria(values) -> dict:
@@ -476,6 +477,7 @@ async def prospect_list(
     stage: str = Query(default="", description="Filter by stage"),
     cities: str = Query(default="", description="Comma-separated city filter"),
     campaign: str = Query(default="", description="Filter by campaign slug"),
+    generator_run: str = Query(default="", description="Leads one lead package generator run found"),
     sort: str = Query(default="name", description="Sort column"),
     dir: str = Query(default="asc", description="Sort direction: asc or desc"),
     page: int = Query(default=1, ge=1),
@@ -492,7 +494,8 @@ async def prospect_list(
     hidden_sql, hidden_params = db.hidden_clause(hidden)
 
     where_clause, params = db.prospect_filter(
-        {"q": q, "source": source, "stage": stage, "campaign": campaign, "cities": cities}, hidden)
+        {"q": q, "source": source, "stage": stage, "campaign": campaign, "cities": cities,
+         "generator_run": generator_run}, hidden)
 
     # Count total
     count_sql = f"""
@@ -586,6 +589,8 @@ async def prospect_list(
         base_params["cities"] = cities
     if campaign:
         base_params["campaign"] = campaign
+    if generator_run:
+        base_params["generator_run"] = generator_run
     base_qs = urlencode(base_params)
 
     # Build query string for print link (preserve all filters)
@@ -603,7 +608,8 @@ async def prospect_list(
     for saved in saved_lists:
         saved["url"] = "/prospects?" + urlencode(prospect_list_criteria(saved["criteria"]))
     current_criteria = prospect_list_criteria(dict(q=q, source=source, stage=stage,
-        cities=cities, campaign=campaign, sort=sort, dir=sort_dir.lower(), per_page=per_page))
+        cities=cities, campaign=campaign, generator_run=generator_run, sort=sort, dir=sort_dir.lower(),
+        per_page=per_page))
     return templates.TemplateResponse(request, "prospects.html", {
         "saved_lists": saved_lists,
         "current_criteria": current_criteria,
@@ -616,6 +622,7 @@ async def prospect_list(
         "stage_filter": stage,
         "cities_filter": cities,
         "campaign_filter": campaign,
+        "generator_run_filter": generator_run,
         "sort": sort,
         "sort_dir": sort_dir.lower(),
         "base_qs": base_qs,
@@ -2193,6 +2200,81 @@ async def x402_claims(request: Request, slug: str):
     return _x402_reply(await run_in_threadpool(selling.handle_claim, get_db(), slug, body))
 
 
+# ── Lead package generator (core/generator.py), Super Admins only ─────
+
+_generator_tasks: set = set()  # keeps running generator tasks referenced until they finish
+
+
+def _start_generator_run(run_id: int) -> None:
+    """Run a queued generator run in a worker thread, so the request returns at once."""
+    task = asyncio.create_task(asyncio.to_thread(generator.Runner(DB_URL or None).run, run_id))
+    _generator_tasks.add(task)
+    task.add_done_callback(_generator_tasks.discard)
+
+
+def _generator_page(request: Request, *, msg: str = "", error: str = "", form: Optional[dict] = None):
+    db = get_db()
+    registry = _plugin_registry()
+    enrichers = [{"key": k, "configured": bool(getattr(e, "is_configured", lambda: True)())}
+                 for k, e in sorted(registry.enrichers.items())]
+    return templates.TemplateResponse(request, "admin_generator.html", {
+        "active": "admin", "campaigns": visible_campaigns(request), "enrichers": enrichers,
+        "search_types": sorted(searches.plugins()), "runs": generator.recent(db), "max_leads": generator.MAX_LEADS,
+        "fields": generator.FIELD_NAMES, "form": form or {}, "msg": msg, "error": error,
+    })
+
+
+@app.get("/admin/generator", response_class=HTMLResponse)
+async def admin_generator(request: Request, msg: str = Query(default=""), error: str = Query(default="")):
+    return _generator_page(request, msg=msg, error=error)
+
+
+@app.post("/admin/generator", response_class=HTMLResponse)
+async def admin_generator_create(request: Request):
+    raw = await request.form()
+    form = {k: str(v) for k, v in raw.items() if k != "enrichers"}
+    chosen = [str(e) for e in raw.getlist("enrichers")]
+    form["enrichers"] = chosen
+    db = get_db()
+    campaign = next((c for c in visible_campaigns(request) if c.db_name == form.get("campaign")), None)
+    try:
+        run = await run_in_threadpool(
+            generator.create, db, current_user(request), title=form.get("title", ""),
+            campaign_name=campaign.db_name if campaign else "",
+            searches_wanted=generator.searches_from_form(form),
+            enrichers=chosen if chosen else (campaign.enrichers if campaign else []),
+            max_leads=form.get("max_leads"), known_enrichers=set(_plugin_registry().enrichers))
+    except generator.GeneratorError as e:
+        return _generator_page(request, error=str(e), form=form)
+    _start_generator_run(run["id"])
+    return RedirectResponse(url=f"/admin/generator/{run['id']}", status_code=303)
+
+
+@app.get("/admin/generator/{run_id}", response_class=HTMLResponse)
+async def admin_generator_run(request: Request, run_id: int, msg: str = Query(default="")):
+    db = get_db()
+    run = await run_in_threadpool(generator.get, db, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="No such run")
+    publish_url = None
+    if run["status"] == "done" and run["saved_list_id"] and run["eligible"]:
+        publish_url = "/admin/selling?" + urlencode({"saved_list_id": run["saved_list_id"],
+                                                     "guarantee_tier": generator.GUARANTEE_TIER,
+                                                     "title": run["title"]})
+    return templates.TemplateResponse(request, "admin_generator_run.html", {
+        "active": "admin", "run": run, "publish_url": publish_url, "msg": msg,
+        "prospects_url": "/prospects?" + urlencode({"generator_run": run_id}),
+    })
+
+
+@app.post("/admin/generator/{run_id}/cancel")
+async def admin_generator_cancel(request: Request, run_id: int):
+    run = await run_in_threadpool(generator.cancel, get_db(), current_user(request), run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="No such run")
+    return RedirectResponse(url=f"/admin/generator/{run_id}?msg={quote('Cancel requested.')}", status_code=303)
+
+
 # ── Customer accounts API (core/accounts.py, docs/U9ITUS_BILLING.md) ─────
 
 
@@ -2339,8 +2421,14 @@ async def api_cancel_search(request: Request, search_id: int):
 
 
 @app.get("/admin/selling", response_class=HTMLResponse)
-async def admin_selling(request: Request, msg: str = Query(default=""), error: str = Query(default="")):
-    return _selling_page(request, msg=msg, error=error)
+async def admin_selling(request: Request, msg: str = Query(default=""), error: str = Query(default=""),
+                        saved_list_id: str = Query(default=""), guarantee_tier: str = Query(default=""),
+                        title: str = Query(default="")):
+    # The lead package generator links here with its saved list chosen (core/generator.py).
+    form = {"saved_list_id": saved_list_id, "guarantee_tier": guarantee_tier, "title": title[:200]}
+    if guarantee_tier == generator.GUARANTEE_TIER:
+        form["royalty_enriched"] = "0.02"
+    return _selling_page(request, msg=msg, error=error, form={k: v for k, v in form.items() if v})
 
 
 def _selling_page(request: Request, *, msg: str = "", error: str = "", preview: Optional[dict] = None,
@@ -3016,6 +3104,45 @@ async def change_password(
 
 
 # ── Team administration (owners only) ──────────────────────────────
+
+
+def _accounts_page(request: Request, *, msg: str = "", error: str = "", new_key: Optional[dict] = None):
+    db = get_db()
+    usage = accounts.recent_usage(db)
+    rows = [{**a, **usage.get(a["id"], {"searches": 0, "delivered": 0})} for a in accounts.list_accounts(db)]
+    return templates.TemplateResponse(request, "admin_accounts.html", {
+        "active": "admin", "tab": "accounts", "accounts": rows, "new_key": new_key,
+        "platform_configured": accounts.platform_configured(), "msg": msg, "error": error,
+    })
+
+
+@app.get("/admin/accounts", response_class=HTMLResponse)
+async def admin_accounts(request: Request, msg: str = Query(default=""), error: str = Query(default="")):
+    """Customer accounts u9itus made (docs/U9ITUS_BILLING.md, task B8)."""
+    return _accounts_page(request, msg=msg, error=error)
+
+
+@app.post("/admin/accounts/{external_ref}/status")
+async def admin_account_status(request: Request, external_ref: str, status: str = Form(default="")):
+    try:
+        accounts.set_status(get_db(), external_ref, status, actor=current_user(request))
+    except accounts.AccountError as e:
+        return _back("/admin/accounts", error=str(e))
+    return _back("/admin/accounts", msg=f"{external_ref} is now {status}.")
+
+
+@app.post("/admin/accounts/{external_ref}/key", response_class=HTMLResponse)
+async def admin_account_key(request: Request, external_ref: str):
+    """Issue a new key. It's shown once, on this response only (never in a URL or a redirect)."""
+    try:
+        key = accounts.rotate_key(get_db(), external_ref, actor=current_user(request))
+    except accounts.AccountError as e:
+        return _back("/admin/accounts", error=str(e))
+    response = _accounts_page(request, msg=f"New key issued for {external_ref}. The old key no longer works.",
+                              new_key={"external_ref": external_ref, "key": key})
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
 
 
 def _back(path: str, *, msg: str = "", error: str = "") -> RedirectResponse:
