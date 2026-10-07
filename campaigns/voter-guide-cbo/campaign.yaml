@@ -6,9 +6,9 @@ prospect_sources:
 - oia_grantees
 - miv_partners
 enrichers:
-- local_scraper
-- apollo
-- hunter
+- local_scraper    # primary: free, no API key, mailto:/tel: fallback
+- apollo           # auto-skipped unless APOLLO_API_KEY is set AND on a paid plan (free plan 403s)
+- hunter           # auto-skipped unless HUNTER_API_KEY is set and valid
 channels:
 - email_smartlead
 - email_smtp

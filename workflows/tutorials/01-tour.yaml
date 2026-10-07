@@ -1,0 +1,15 @@
+name: Tour of agency-os
+description: The main pages and where to find things. About a minute.
+requires: dashboard.view
+steps:
+  - goto: /
+    say: Welcome to agency-os. This tour moves around the app for you; use the controls at the bottom to pause, skip or stop.
+  - highlight: .stats-grid
+    say: The dashboard sums up your pipeline across every campaign you can see.
+  - highlight: 'nav a[href="/prospects"]'
+    say: Prospects is the list of organizations you're working. Search, filter and open any of them.
+  - highlight: 'details.nav-group:has(a[href="/call-scripts"]) > summary'
+    say: Outreach holds call scripts, your call log, sent emails and the follow-up calendar.
+  - highlight: 'details.nav-account > summary'
+    say: Your account, sign-out, and (if your role allows) the console live here.
+  - say: That's the tour. Open Tutorials from the Account menu any time to learn more.

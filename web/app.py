@@ -33,6 +33,8 @@ from pathlib import Path
 from datetime import datetime, timezone
 from urllib.parse import quote, urlsplit, urlencode
 
+import yaml
+
 # Ensure project root is on path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -42,7 +44,7 @@ from core.env import load_dotenv  # noqa: E402
 load_dotenv()  # .env settings for local runs; a deploy's own environment always wins
 
 from fastapi import FastAPI, Request, Query, HTTPException, Form, Depends, UploadFile, File
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -56,8 +58,8 @@ from core.protocols import portal_product
 from plugins.channels.lob_direct_mail import TEMPLATE_ID_RE, lob_template_url
 from core.jobs import JobRunner, configured_jobs, jobs_enabled
 from core import (
-    agents, claims, console, contact_depth, evidence, lead_packages, llm, mcp_auth, payments, royalties, selling, tools,
-    verify,
+    agents, claims, console, contact_depth, evidence, lead_packages, llm, mcp_auth, panels, payments, royalties, selling,
+    tools, verify, workflows,
 )
 from core.welcome import base_url as public_base_url
 from web.mcp_server import MCPMount
@@ -88,6 +90,7 @@ def get_campaigns():
 
 tools.campaign_source = lambda: get_campaigns()  # the AI tools read campaigns through the web app's cache
 tools.site_url = lambda: site_url()  # invite links from the console's user tools
+selling.campaign_source = lambda: get_campaigns()  # packages only draw from campaigns their publisher sees
 
 
 def visible_campaigns(request: Request) -> list:
@@ -230,6 +233,9 @@ async def authorize(request: Request) -> None:
             pass  # absent, or not a number (the route itself rejects that)
     if "prospect_id" in ids:
         require_visible_prospect(request, ids["prospect_id"])
+    # Campaign settings pages: a campaign this user can't see doesn't exist for them.
+    if request.path_params.get("campaign_slug") in hidden_for(request):
+        raise HTTPException(status_code=404, detail="Campaign not found")
     if "lead_package_id" in ids:
         package = db.get_lead_package(ids["lead_package_id"])
         if package and package["campaign_name"] in hidden_for(request):
@@ -301,6 +307,18 @@ def fmt_date(val) -> str:
     return val.strftime("%b %d, %Y")
 
 
+def days_until(val) -> int:
+    """Whole days from today to a date (negative once it's past)."""
+    if isinstance(val, str):
+        val = datetime.fromisoformat(val)
+    return (val.date() - datetime.now().date()).days
+
+
+def days_ago(val) -> str:
+    days = -days_until(val)
+    return "today" if days <= 0 else "yesterday" if days == 1 else f"{days} days ago"
+
+
 def nav_active(path: str) -> str:
     """The nav item to highlight for a URL path, e.g. "/prospects/12" -> "prospects"."""
     if path == "/":
@@ -315,8 +333,12 @@ def nav_active(path: str) -> str:
 templates.env.filters["currency"] = fmt_currency
 templates.env.filters["fmt_date"] = fmt_date
 templates.env.filters["tel"] = tel_href
+templates.env.filters["days_until"] = days_until
+templates.env.filters["days_ago"] = days_ago
 templates.env.globals["nav_active"] = nav_active
 templates.env.globals["CALL_OUTCOMES"] = contact_depth.CALL_OUTCOMES
+templates.env.globals["chat_personas"] = lambda: list(agents.load_personas().values())
+templates.env.globals["ai_model"] = llm.describe
 
 
 # ── Routes ──────────────────────────────────────────────────────────
@@ -376,6 +398,30 @@ async def delete_prospect_list(request: Request, list_id: int):
     return RedirectResponse(url="/prospects?" + urlencode(prospect_list_criteria(await request.form())), status_code=303)
 
 
+PROSPECT_SORTS = {
+    "name": "p.name",
+    "city": "p.city",
+    "source": "p.source",
+    "focus": "p.focus_area",
+    "revenue": "p.annual_revenue",
+    "stage": "o.stage",
+    "touch": "o.touch_count",
+    "contact": "o.contact_email",
+    "voter": "p.voter_engagement",
+    "followup": "o.next_follow_up_at",
+}
+
+
+def prospect_list_order(sort: str, direction: str, sort_given: bool) -> tuple[str, str]:
+    """(ORDER BY clause, "ASC"/"DESC") for the prospect list. Every column is
+    sortable, nulls last; revenue defaults to biggest first."""
+    sort_col = PROSPECT_SORTS.get(sort, "p.name")
+    sort_dir = "DESC" if direction.lower() == "desc" else "ASC"
+    if sort == "revenue" and direction == "asc" and not sort_given:
+        sort_dir = "DESC"
+    return f"CASE WHEN {sort_col} IS NULL THEN 1 ELSE 0 END, {sort_col} {sort_dir}", sort_dir
+
+
 @app.get("/prospects", response_class=HTMLResponse)
 async def prospect_list(
     request: Request,
@@ -410,30 +456,7 @@ async def prospect_list(
     """
     total = db.conn.execute(count_sql, params).fetchone()[0]
 
-    # Sort — every column is sortable, with direction toggle
-    sort_map = {
-        "name": "p.name",
-        "city": "p.city",
-        "source": "p.source",
-        "focus": "p.focus_area",
-        "revenue": "p.annual_revenue",
-        "stage": "o.stage",
-        "touch": "o.touch_count",
-        "contact": "o.contact_email",
-        "voter": "p.voter_engagement",
-        "followup": "o.next_follow_up_at",
-    }
-    sort_col = sort_map.get(sort, "p.name")
-    sort_dir = "DESC" if dir.lower() == "desc" else "ASC"
-    if sort == "revenue" and dir == "asc" and sort not in request.query_params:
-        sort_dir = "DESC"
-    order = f"{sort_col} {sort_dir}"
-
-    # Nulls last for DESC, nulls first for ASC
-    if sort_dir == "DESC":
-        order = f"CASE WHEN {sort_col} IS NULL THEN 1 ELSE 0 END, {sort_col} DESC"
-    else:
-        order = f"CASE WHEN {sort_col} IS NULL THEN 1 ELSE 0 END, {sort_col} ASC"
+    order, sort_dir = prospect_list_order(sort, dir, sort in request.query_params)
 
     # Print mode: show all rows (up to 1000), no pagination
     if print:
@@ -1283,6 +1306,38 @@ async def call_scripts(
     })
 
 
+@app.get("/api/prospects/{prospect_id}/neighbors")
+async def prospect_neighbors(
+    request: Request,
+    prospect_id: int,
+    q: str = "", source: str = "", stage: str = "", cities: str = "", campaign: str = "",
+    sort: str = "name", dir: str = "asc",
+):
+    """The previous and next prospect in the list the user came from (same
+    filters and sort as /prospects), so the detail page can move between records."""
+    db = get_db()
+    where, params = db.prospect_filter(
+        {"q": q, "source": source, "stage": stage, "campaign": campaign, "cities": cities}, hidden_for(request))
+    order, _ = prospect_list_order(sort, dir, sort in request.query_params)
+    order += ", p.id"
+    row = db.conn.execute(f"""
+        SELECT prev_id, next_id, position, total FROM (
+            SELECT p.id,
+                   LAG(p.id) OVER (ORDER BY {order}) AS prev_id,
+                   LEAD(p.id) OVER (ORDER BY {order}) AS next_id,
+                   ROW_NUMBER() OVER (ORDER BY {order}) AS position,
+                   COUNT(*) OVER () AS total
+            FROM prospects p
+            LEFT JOIN outreach o ON p.id = o.prospect_id
+            WHERE {where}
+        ) ranked WHERE id = ? ORDER BY position LIMIT 1
+    """, params + [prospect_id]).fetchone()
+    if not row:  # not in that list (filters changed since): no neighbors
+        return {"in_list": False}
+    return {"in_list": True, "prev": row["prev_id"], "next": row["next_id"],
+            "position": row["position"], "total": row["total"]}
+
+
 @app.get("/prospects/{prospect_id}", response_class=HTMLResponse)
 async def prospect_detail(request: Request, prospect_id: int):
     """Prospect detail — info, outreach timeline, email log."""
@@ -1338,6 +1393,8 @@ async def prospect_detail(request: Request, prospect_id: int):
         row = db.get_lead_package(int(lead_package["lead_package_id"]))
         lead_package = {**lead_package, "title": row["title"] if row else lead_package.get("package_id")}
     return templates.TemplateResponse(request, "prospect_detail.html", {
+        "board": panels.Board("prospect", panels.load(db, current_user(request).id, "prospect")),
+        "stage_background": panels.STAGE_BACKGROUNDS.get(outreach_rows[0]["stage"]) if outreach_rows else None,
         "contact_tier": contact_depth.history_for_prospect(db, prospect_id)[1],
         "lead_package": lead_package,
         "verification": verify.lead_verdict(db, prospect_id) if lead_package else None,
@@ -1717,6 +1774,7 @@ async def prospect_refresh_email(request: Request, prospect_id: int, outreach_id
 
 _AI_OFF = "Turn on AI features on your Account page first."
 _MAX_TOOL_BODY = 64 * 1024
+MAX_WORKFLOW_UPLOAD = 1024 * 1024
 
 
 def _ai_refusal(request: Request, permission: str) -> Optional[JSONResponse]:
@@ -1749,6 +1807,38 @@ async def prospect_agent_note(request: Request, prospect_id: int, note: str = Fo
         return refusal
     result = tools.run_tool(get_db(), current_user(request), "add_prospect_note",
                             {"prospect_id": prospect_id, "note": note}, source="panel", confirmed=True)
+    return JSONResponse(result)
+
+
+_MAX_CHAT_BODY = 256 * 1024
+
+
+@app.post("/agent/chat")
+async def agent_chat(request: Request):
+    """The chat robot: a persona's next reply. Body: {"agent", "messages": [{role, content}...], "prospect_id"?}.
+    Returns JSON; the conversation lives in the browser and nothing is sent or saved."""
+    refusal = _ai_refusal(request, "agents.use")
+    if refusal:
+        return refusal
+    raw = await request.body()
+    if len(raw) > _MAX_CHAT_BODY:
+        return JSONResponse({"ok": False, "error": "This conversation is too long; start a new one"}, status_code=413)
+    try:
+        body = json.loads(raw or b"{}")
+    except ValueError:
+        body = None
+    if not isinstance(body, dict) or not isinstance(body.get("agent"), str):
+        return JSONResponse({"ok": False, "error": "Body must be a JSON object with an agent"}, status_code=400)
+    user, prospect_id = current_user(request), body.get("prospect_id")
+    context = None
+    if prospect_id is not None:
+        if not isinstance(prospect_id, int) or isinstance(prospect_id, bool):
+            return JSONResponse({"ok": False, "error": "prospect_id must be a number"}, status_code=400)
+        try:
+            context = await run_in_threadpool(tools.build_prospect_context, get_db(), user, prospect_id)
+        except tools.ToolError as exc:
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=404)
+    result = await run_in_threadpool(agents.chat, body["agent"], body.get("messages"), context)
     return JSONResponse(result)
 
 
@@ -1817,6 +1907,129 @@ async def account_cli_key_create(request: Request, name: str = Form(default=""))
     except ValueError as exc:
         return _back("/account", error=str(exc))
     return _account(request, msg="CLI key created. Copy it now; it won't be shown again.", new_cli_key=key)
+
+
+# ── Workflows: tutorials and the user's own replayable recipes (core/workflows.py) ─
+
+WORKFLOW_EXAMPLE = """name: My morning check
+description: Open the prospect list filtered to cold leads.
+steps:
+  - goto: /prospects?stage=cold
+    say: These are today's cold leads.
+  - highlight: table.data-table
+    say: Start from the top.
+  - pause: Call the first one, then log the call on their page.
+"""
+
+
+def _workflows_page(request: Request, *, msg: str = "", error: str = "", editor: str = "", status_code: int = 200):
+    user = current_user(request)
+    edit = request.query_params.get("edit", "")
+    if not editor and edit:
+        found = workflows.get_mine(get_db(), user, edit)
+        if found:
+            editor = yaml.safe_dump({k: found[k] for k in ("name", "description", "steps") if found.get(k)},
+                                    sort_keys=False, allow_unicode=True, width=100)
+    return templates.TemplateResponse(request, "workflows.html", {
+        "active": "workflows",
+        "tutorials": workflows.tutorials(user),
+        "mine": workflows.mine(get_db(), user),
+        "editor": editor or WORKFLOW_EXAMPLE,
+        "msg": msg or request.query_params.get("msg", ""),
+        "error": error or request.query_params.get("error", ""),
+    }, status_code=status_code)
+
+
+@app.get("/workflows", response_class=HTMLResponse)
+async def workflows_page(request: Request):
+    return _workflows_page(request)
+
+
+@app.get("/api/workflows/{source}/{slug}")
+async def workflow_definition(request: Request, source: str, slug: str):
+    """A workflow for the player: a tutorial this user may see, or one of their own."""
+    user = current_user(request)
+    found = (workflows.tutorial(user, slug) if source == "tutorial"
+             else workflows.get_mine(get_db(), user, slug) if source == "mine" else None)
+    if found is None:
+        return JSONResponse({"ok": False, "error": "Workflow not found"}, status_code=404)
+    return {"ok": True, "workflow": {k: found[k] for k in ("name", "steps")}}
+
+
+@app.post("/api/workflows/preview")
+async def workflow_preview(request: Request):
+    """Check an unsaved workflow from the editor and hand it to the player ("Try it")."""
+    if request.headers.get("x-aos-workflow") != "1":
+        return JSONResponse({"ok": False, "error": "Missing X-AOS-Workflow header"}, status_code=400)
+    raw = await request.body()
+    if len(raw) > MAX_WORKFLOW_UPLOAD:
+        return JSONResponse({"ok": False, "error": "That workflow is too large"}, status_code=413)
+    try:
+        body = json.loads(raw or b"{}")
+        wf = workflows.parse(body.get("definition", "") if isinstance(body, dict) else "")
+    except ValueError as exc:  # WorkflowError, or a body that isn't JSON
+        return JSONResponse({"ok": False, "error": str(exc) if isinstance(exc, workflows.WorkflowError)
+                             else "Body must be JSON"}, status_code=400)
+    return {"ok": True, "workflow": {k: wf[k] for k in ("name", "steps")}}
+
+
+@app.post("/api/layouts/{page}")
+async def layout_save(request: Request, page: str):
+    """Save the user's own arrangement of a page's panels ({"layout": null} goes back to the defaults)."""
+    if request.headers.get("x-aos-layout") != "1":
+        return JSONResponse({"ok": False, "error": "Missing X-AOS-Layout header"}, status_code=400)
+    raw = await request.body()
+    if len(raw) > 64 * 1024:
+        return JSONResponse({"ok": False, "error": "That layout is too large"}, status_code=413)
+    try:
+        body = json.loads(raw or b"{}")
+        if not isinstance(body, dict) or "layout" not in body:
+            raise panels.LayoutError('Send {"layout": {...}} or {"layout": null}')
+        if page not in panels.PAGES:
+            raise panels.LayoutError(f"No customizable page called {page!r}")
+        panels.save(get_db(), current_user(request).id, page, body["layout"])
+    except ValueError as exc:  # LayoutError, or a body that isn't JSON
+        return JSONResponse({"ok": False, "error": str(exc) if isinstance(exc, panels.LayoutError)
+                             else "Body must be JSON"}, status_code=400)
+    return {"ok": True}
+
+
+@app.post("/workflows/save")
+async def workflow_save(request: Request, definition: str = Form(default="")):
+    try:
+        wf = workflows.parse(definition)
+        slug = workflows.save(get_db(), current_user(request), wf)
+    except workflows.WorkflowError as exc:
+        return _workflows_page(request, error=str(exc), editor=definition, status_code=400)
+    return RedirectResponse(url=f"/workflows?edit={quote(slug)}&msg={quote('Saved ' + wf['name'] + '.')}",
+                            status_code=303)
+
+
+@app.post("/workflows/import")
+async def workflow_import(request: Request, file: UploadFile = File(...)):
+    raw = await file.read(MAX_WORKFLOW_UPLOAD + 1)
+    if len(raw) > MAX_WORKFLOW_UPLOAD:
+        return _back("/workflows", error="That file is too large (1 MB max).")
+    try:
+        saved = workflows.import_text(get_db(), current_user(request), raw.decode("utf-8", errors="replace"))
+    except workflows.WorkflowError as exc:
+        return _back("/workflows", error=f"Nothing was imported. {exc}")
+    return _back("/workflows", msg=f"Imported {len(saved)} workflow{'s' if len(saved) != 1 else ''}.")
+
+
+@app.get("/workflows/export")
+async def workflow_export(request: Request):
+    backup = workflows.export(get_db(), current_user(request))
+    name = f"agency-os-workflows-{datetime.now():%Y-%m-%d}.json"
+    return Response(json.dumps(backup, indent=2), media_type="application/json",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@app.post("/workflows/{slug}/delete")
+async def workflow_delete(request: Request, slug: str):
+    if workflows.delete(get_db(), current_user(request), slug):
+        return _back("/workflows", msg="Deleted.")
+    return _back("/workflows", error="That workflow was not found.")
 
 
 # ── Evidence webhooks (core/evidence.py): no login; signed or keyed ─
@@ -1959,7 +2172,7 @@ async def admin_selling_publish(request: Request):
     if saved is None or tier not in contact_depth.RANK:
         return _selling_page(request, error="Pick a saved list and a contact depth.", form=form)
     if form.get("action") != "publish" or form.get("confirm") != "yes":
-        found = await run_in_threadpool(selling.preview, db, saved["criteria"], tier)
+        found = await run_in_threadpool(selling.preview, db, saved["criteria"], tier, hidden_for(request))
         return _selling_page(request, preview={**found, "eligible": len(found["eligible"]), "list": saved["name"]},
                              form=form, error="" if form.get("action") != "publish" else "Tick the box to publish.")
     package_id, problem = await run_in_threadpool(lambda: selling.publish(
@@ -2575,8 +2788,27 @@ async def admin_delete_role(request: Request, role_id: int):
 async def admin_audit(request: Request):
     return templates.TemplateResponse(request, "admin_audit.html", {
         "active": "admin",
-        "entries": get_db().list_audit(),
+        "entries": _visible_audit(request, get_db().list_audit()),
     })
+
+
+def _visible_audit(request: Request, entries: list) -> list:
+    """Leave out entries about campaigns (or their prospects) this user can't see."""
+    hidden = hidden_for(request)
+    if not hidden:
+        return entries
+    db = get_db()
+    kept = []
+    for e in entries:
+        if e["target_type"] == "campaign" and e["target_id"] in hidden:
+            continue
+        if any(name in (e["details"] or "") for name in hidden):
+            continue
+        if e["target_type"] == "prospect" and str(e["target_id"] or "").isdigit() \
+                and db.prospect_hidden(int(e["target_id"]), hidden):
+            continue
+        kept.append(e)
+    return kept
 
 
 @app.get("/admin/jobs", response_class=HTMLResponse)
@@ -2648,10 +2880,16 @@ def _get_registry_plugins():
 @app.get("/admin/campaigns", response_class=HTMLResponse)
 async def admin_campaigns(request: Request, msg: str = Query(default=""), error: str = Query(default="")):
     """Admin campaign management — list campaigns with YAML viewer and plugin association."""
-    campaigns = get_campaigns()
+    campaigns = visible_campaigns(request)
     db = get_db()
 
     campaign_data = []
+    members_by_campaign: dict[str, list] = defaultdict(list)
+    for m in db.campaign_members():
+        members_by_campaign[m["campaign"]].append(m)
+    owners_by_campaign: dict[str, list] = defaultdict(list)
+    for o in db.campaign_owners():
+        owners_by_campaign[o["campaign"]].append(o)
     for c in campaigns:
         stats = db.get_pipeline_stats(c.db_name)
         # Read the raw YAML for display
@@ -2661,6 +2899,8 @@ async def admin_campaigns(request: Request, msg: str = Query(default=""), error:
             "config": c,
             "stats": stats,
             "yaml": yaml_content,
+            "members": [m["name"] for m in members_by_campaign.get(c.db_name, [])],
+            "owners": [o["name"] for o in owners_by_campaign.get(c.db_name, [])],
         })
 
     # Get available plugins for the create-campaign form
@@ -2897,6 +3137,7 @@ async def admin_campaign_detail(request: Request, campaign_slug: str):
 
     db = get_db()
     campaign_id = db.get_campaign_id(campaign.db_name)
+    owner_role_id = next(r["id"] for r in db.list_roles() if r["name"] == access.OWNER_ROLE)
     return templates.TemplateResponse(request, "admin_campaign_detail.html", {
         "active": "admin",
         "campaign": campaign,
@@ -2904,11 +3145,73 @@ async def admin_campaign_detail(request: Request, campaign_slug: str):
         "plugins": _get_registry_plugins(),
         "networks": list(payments.NETWORKS),
         "unlocked": db.list_lead_packages(campaign_id) if campaign_id else [],
+        "members": db.campaign_members(campaign.db_name),
+        "owners": db.campaign_owners(campaign.db_name),
+        "owner_candidates": [u for u in db.list_users() if u["is_active"] and owner_role_id in u["role_ids"]],
+        "team": [u for u in db.list_users() if u["is_active"]],
+        "roles": [r for r in db.list_roles() if r["name"] not in access.PROTECTED_ROLES],
         "paused": lead_packages.paused_refs(campaign),
         "default_rules": verify.DEFAULT_RULES.merged((campaign.lead_packages or {}).get("guarantee_rules")),
         "ratings": claims.ratings(db),
         "package_ref": lead_packages.package_ref,
     })
+
+
+def _members_back(campaign_slug: str, *, msg: str = "", error: str = "") -> RedirectResponse:
+    key, text = ("members_msg", msg) if msg else ("members_error", error)
+    return RedirectResponse(url=f"/admin/campaigns/{quote(campaign_slug)}?{key}={quote(text)}", status_code=303)
+
+
+@app.post("/admin/campaigns/{campaign_slug}/members")
+async def admin_campaign_member_add(request: Request, campaign_slug: str, member: str = Form(...)):
+    """Add a person or a role to a campaign; once it has members, only they (and Owners) see it."""
+    if campaign_slug not in {c.db_name for c in get_campaigns()}:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    kind, _, raw_id = member.partition(":")
+    if kind not in ("user", "role") or not raw_id.isdigit():
+        return _members_back(campaign_slug, error="Pick a person or a role.")
+    try:
+        added = get_db().add_campaign_member(campaign_slug, current_user(request), **{f"{kind}_id": int(raw_id)})
+    except AccessError as e:
+        return _members_back(campaign_slug, error=str(e))
+    return _members_back(campaign_slug, msg="Added. Only members (and Owners) see this campaign now."
+                         if added else "They're already on this campaign.")
+
+
+@app.post("/admin/campaigns/{campaign_slug}/owners")
+async def admin_campaign_owner_add(request: Request, campaign_slug: str, user_id: int = Form(...)):
+    """Super Admins: assign an Owner to a campaign; once it has any, other Owners can't see it."""
+    if campaign_slug not in {c.db_name for c in get_campaigns()}:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    try:
+        added = get_db().add_campaign_owner(campaign_slug, user_id, current_user(request))
+    except AccessError as e:
+        return _members_back(campaign_slug, error=str(e))
+    return _members_back(campaign_slug, msg="Assigned. Other Owners no longer see this campaign."
+                         if added else "They're already assigned to this campaign.")
+
+
+@app.post("/admin/campaigns/{campaign_slug}/owners/{owner_id}/delete")
+async def admin_campaign_owner_remove(request: Request, campaign_slug: str, owner_id: int):
+    db = get_db()
+    try:
+        removed = db.remove_campaign_owner(campaign_slug, owner_id, current_user(request))
+    except AccessError as e:
+        return _members_back(campaign_slug, error=str(e))
+    if not removed:
+        return _members_back(campaign_slug, error="That Owner was not found.")
+    return _members_back(campaign_slug, msg="Removed." if db.campaign_owners(campaign_slug) else
+                         "Removed. With no Owners assigned, every Owner sees this campaign again.")
+
+
+@app.post("/admin/campaigns/{campaign_slug}/members/{member_id}/delete")
+async def admin_campaign_member_remove(request: Request, campaign_slug: str, member_id: int):
+    db = get_db()
+    if not db.remove_campaign_member(campaign_slug, member_id, current_user(request)):
+        return _members_back(campaign_slug, error="That member was not found.")
+    left = db.campaign_members(campaign_slug)
+    return _members_back(campaign_slug, msg="Removed." if left else
+                         "Removed. With no members left, everyone whose role allows it sees this campaign again.")
 
 
 @app.post("/admin/campaigns/{campaign_slug}")

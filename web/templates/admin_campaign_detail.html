@@ -12,6 +12,80 @@
     </div>
 </div>
 
+{# ── Which Owners run this campaign (assigned by a Super Admin) ── #}
+{% set me = request.state.user %}
+{% if request.query_params.get('members_msg') %}<div class="save-notice">{{ request.query_params.get('members_msg') }}</div>{% endif %}
+{% if request.query_params.get('members_error') %}<div class="form-error">{{ request.query_params.get('members_error') }}</div>{% endif %}
+{% if me.is_super_admin or owners %}
+<div class="campaign-section" id="owners">
+    <div class="campaign-header">
+        <h2>Owners of this campaign</h2>
+        <span class="badge badge-product">{{ 'Assigned Owners only' if owners else 'Every Owner' }}</span>
+    </div>
+    {% if owners %}
+    <p class="muted">Only these Owners (and Super Admins) see and manage this campaign; other Owners don't see it at all.{% if not me.is_super_admin %} A Super Admin assigns them.{% endif %}</p>
+    <div class="table-scroll">
+    <table class="data-table">
+        <thead><tr><th>Owner</th><th>Assigned</th>{% if me.is_super_admin %}<th></th>{% endif %}</tr></thead>
+        <tbody>
+        {% for o in owners %}
+        <tr>
+            <td><strong>{{ o.name }}</strong> <span class="subtitle">· {{ o.email }}{% if not o.is_active %} · deactivated{% endif %}</span></td>
+            <td>{{ o.added_at|fmt_date }}</td>
+            {% if me.is_super_admin %}<td><form method="post" action="/admin/campaigns/{{ campaign.db_name }}/owners/{{ o.id }}/delete"><button type="submit" class="btn btn-sm btn-secondary">Remove</button></form></td>{% endif %}
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% else %}
+    <p class="muted">Every Owner sees and manages this campaign. Assign Owners to give it only to them; Super Admins always see every campaign.</p>
+    {% endif %}
+    {% if me.is_super_admin %}
+    <form method="post" action="/admin/campaigns/{{ campaign.db_name }}/owners" style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px;">
+        <select name="user_id" class="filter-select" aria-label="Owner" required>
+            {% for u in owner_candidates %}<option value="{{ u.id }}">{{ u.name }} ({{ u.email }})</option>{% else %}<option value="" disabled>No Owners yet</option>{% endfor %}
+        </select>
+        <button type="submit" class="btn btn-sm">Assign Owner</button>
+    </form>
+    {% endif %}
+</div>
+{% endif %}
+
+{# ── Who works this campaign (campaign members) ── #}
+<div class="campaign-section" id="members">
+    <div class="campaign-header">
+        <h2>Who works this campaign</h2>
+        <span class="badge badge-product">{{ 'Members only' if members else 'Everyone' }}</span>
+    </div>
+    {% if members %}
+    <p class="muted">Only these people and roles see this campaign and its leads{% if campaign.requires_permission %} (and they still need <code>{{ campaign.requires_permission }}</code>){% endif %}. Owners and Super Admins always see every campaign.</p>
+    <div class="table-scroll">
+    <table class="data-table">
+        <thead><tr><th>Member</th><th>Added</th><th></th></tr></thead>
+        <tbody>
+        {% for m in members %}
+        <tr>
+            <td>{% if m.kind == 'role' %}<strong>{{ m.name }}</strong> <span class="subtitle">· everyone with this role</span>{% else %}<strong>{{ m.name }}</strong> <span class="subtitle">· {{ m.email }}{% if not m.is_active %} · deactivated{% endif %}</span>{% endif %}</td>
+            <td>{{ m.added_at|fmt_date }}</td>
+            <td><form method="post" action="/admin/campaigns/{{ campaign.db_name }}/members/{{ m.id }}/delete"><button type="submit" class="btn btn-sm btn-secondary">Remove</button></form></td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% else %}
+    <p class="muted">Everyone whose role allows it sees this campaign{% if campaign.requires_permission %} (it needs <code>{{ campaign.requires_permission }}</code>){% endif %}. Add people or roles to limit it to them; Owners and Super Admins always see every campaign.</p>
+    {% endif %}
+    <form method="post" action="/admin/campaigns/{{ campaign.db_name }}/members" class="inline-form" style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px;">
+        <select name="member" class="filter-select" aria-label="Person or role" required>
+            <optgroup label="People">{% for u in team %}<option value="user:{{ u.id }}">{{ u.name }} ({{ u.email }})</option>{% endfor %}</optgroup>
+            <optgroup label="Roles (everyone with it)">{% for r in roles %}<option value="role:{{ r.id }}">{{ r.name }}</option>{% endfor %}</optgroup>
+        </select>
+        <button type="submit" class="btn btn-sm">Add to campaign</button>
+    </form>
+</div>
+
 <form method="post" action="/admin/campaigns/{{ campaign.db_name }}">
 
 {# ── Product (single select) ── #}

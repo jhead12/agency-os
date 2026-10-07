@@ -70,7 +70,14 @@ class ApolloEnricher:
         self._plan_accessible = None  # cache: None=unknown, True=ok, False=403
 
     def is_configured(self) -> bool:
-        return bool(self._api_key)
+        """True only when a key is set and the plan allows API access.
+
+        Probes once (cached) so the pipeline can skip Apollo entirely on a
+        free plan instead of trying it for every prospect.
+        """
+        if not self._api_key:
+            return False
+        return self._check_access()
 
     def _check_access(self) -> bool:
         """Quick check if the API plan allows access. Caches the result."""

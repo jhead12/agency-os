@@ -163,11 +163,56 @@ for you to share instead of emailing it.
 | `users invite --email E [--name N] [--role R ...] [--no-send]` | Owner | Add a member and email a one-time set-password link (`--no-send` shows the link instead). Inviting with Owner or Super Admin needs a Super Admin |
 | `users create-owner --email E [--name N] [--no-send]` | Super Admin | Add a new Owner (they set their own password from the link) |
 | `users set-roles --email E [--role R ...]` | Owner | Replace a member's roles; Owner/Super Admin changes need a Super Admin |
+| `campaigns members --campaign C` | Owner | Who works a campaign (members only, or everyone) |
+| `campaigns assign --campaign C --user E` / `--role R` | Owner | Limit a campaign to its members: a person, or everyone with a role |
+| `campaigns unassign --campaign C --user E` / `--role R` | Owner | Remove a member; with none left, everyone whose role allows it sees it again |
+| `campaigns owners --campaign C` | Owner | Which Owners run a campaign |
+| `campaigns add-owner --campaign C --user E` | Super Admin | Give a campaign to specific Owners; other Owners stop seeing it |
+| `campaigns remove-owner --campaign C --user E` | Super Admin | Unassign; with none left, every Owner sees it again |
+| `workflows list` | everyone | Tutorials and your own workflows |
+| `workflows play --name N` | everyone | Play one in the browser (the remote CLI tells you to open the browser) |
+| `workflows export` | everyone | Print a backup of your workflows: `agency_os.py remote workflows export > backup.json` |
 | `search-prospects`, `get-prospect`, `list-calls`, `get-campaign`, `log-call`, `set-stage`, `add-prospect-note`, ... | per permission | Every tool in `core/tools.py` the user's role allows |
 
 Commands come from the tool registry (`core/tools.py`): a new tool shows up in the
 console, the remote CLI and (unless it's console-only) AI assistants automatically.
 Team-administration tools are console-only; AI assistants never see them.
+
+---
+
+## Tutorials & Workflows
+
+**Account → Tutorials & workflows** (`/workflows`). Press Play and a player acts the
+workflow out on your own screen: a cursor moves to each element, fields are typed into,
+pages change, console commands run in the console window, and a caption explains each
+step. Pause, Next and Stop sit in a bar at the bottom; it keeps its place across pages.
+
+- **Tutorials** are built in (`workflows/tutorials/*.yaml`) and only shown to roles
+  that can do what they teach.
+- **Your workflows** are saved per user. Write one on the page (YAML or JSON), press
+  *Try it* to watch it before saving.
+- **Backup:** *Export all* downloads one JSON file; *Import* reads it back (here or on
+  another agency-os). Same-named workflows are replaced, and a file with any problem
+  imports nothing.
+
+A workflow is data, never code, so it's safe to import one from someone else: it can
+only do what the person playing it could do by hand. Pages are limited to this app,
+and anything that changes data asks first (a click that submits a form shows
+*Do it / Skip*; a console command asks `Run this? [y/N]`).
+
+```yaml
+name: My morning check
+description: Cold leads first.
+steps:
+  - goto: /prospects?stage=cold              # open a page of this app
+    say: These are today's cold leads.        # a caption (any step can have one)
+  - fill: {target: 'input[name="q"]', value: food}   # type into a field
+  - click: '#filter-form button[type="submit"]'      # click (a saving click asks first)
+  - wait: {for: table.data-table}            # or wait: 1000 (milliseconds)
+  - highlight: table.data-table              # point at something
+  - run: search-prospects --stage cold --limit 5     # run a console command
+  - pause: Call the first one, then log it.  # wait for Next
+```
 
 ---
 
@@ -177,7 +222,7 @@ Team-administration tools are console-only; AI assistants never see them.
 
 | Role | Description | Permissions |
 |---|---|---|
-| **Super Admin** | Everything an Owner can do, plus creating Owners and granting/removing the Owner and Super Admin roles. Owners can't change a Super Admin's account. | All permissions (automatic) |
+| **Super Admin** | Everything an Owner can do, plus creating Owners, granting/removing the Owner and Super Admin roles, and assigning campaigns to specific Owners. Owners can't change a Super Admin's account. Always sees every campaign. | All permissions (automatic) |
 | **Owner** | Full access. Bypasses all permission checks; manages users, roles, and the audit log. Can't grant Owner or Super Admin. | All permissions (automatic) |
 | **Caller** | Works the phones: views prospects and scripts, logs calls, moves stages | `dashboard.view`, `prospects.view`, `pipeline.edit`, `calls.view`, `calls.log`, `calendar.view`, `royalties.view_own` |
 | **Sales Rep** | Caller access plus editing prospects and reading sent email | `dashboard.view`, `prospects.view`, `prospects.export`, `prospects.edit`, `pipeline.edit`, `calls.view`, `calls.log`, `calendar.view`, `campaigns.view`, `emails.view`, `templates.view`, `portals.manage`, `packages.view`, `spend.view`, `agents.use`, `ai.connect`, `royalties.view_own` |
@@ -216,6 +261,8 @@ Team-administration tools are console-only; AI assistants never see them.
 
 - **Owner** is a protected role — it bypasses all permission checks and manages users, roles, and the audit log (but can't grant or remove Owner or Super Admin).
 - **Super Admin** is a protected role above Owner. Only Super Admins (or the server-side `users` commands) can grant or remove Owner or Super Admin. Create the first one with `users grant-super-admin`.
+- **Campaign members:** a campaign with no members is seen by everyone whose role allows it. Add people or roles under **Administration → Campaign Settings → (campaign) → Who works this campaign** (or `campaigns assign` in the console) and only they see it and its leads, everywhere (lists, detail pages, call log, stats, AI tools). Owners and Super Admins always see every campaign, and a campaign's `requires_permission` still applies to members.
+- **Campaign Owners:** a Super Admin can assign specific Owners to a campaign (**Campaign Settings → (campaign) → Owners of this campaign**, or `campaigns add-owner`). Then only those Owners and Super Admins see and manage it; other Owners don't see it anywhere (prospects, settings, audit log), and lead packages they publish never include its leads. With no Owners assigned, every Owner sees it.
 - No starter role includes `cli.use`; add it to a role on Team → Roles to give its members the console.
 - New users get **no access** until an owner assigns them a role.
 - Owners can create custom roles by picking from the permission catalog via the dashboard's Team → Roles page.
@@ -478,6 +525,7 @@ Pages:
 - `/lead-packages` — Browse and unlock x402 lead packages
 - `/account` — Your roles, password, AI features, MCP keys and CLI keys
 - `/console` — Command console (needs `cli.use`)
+- `/workflows` — Tutorials, your workflows, backup (export/import)
 - `/admin/users`, `/admin/roles`, `/admin/audit` — Team administration (Owners)
 
 ---

@@ -1,11 +1,26 @@
 {% extends "base.html" %}
 {% block title %}{{ prospect.name }} — agency-os{% endblock %}
+{% block chat_context %}data-prospect="{{ prospect.id }}" data-prospect-name="{{ prospect.name }}"{% if request.state.user.can('prospects.edit') %} data-can-save="1"{% endif %}{% endblock %}
 {% block content %}
 <div class="active" style="display:none"></div>
+<script>/* arriving from the previous/next record: start off to the side, then slide in (record_nav.js) */
+try { var enter = sessionStorage.getItem("aos.recordEnter"); sessionStorage.removeItem("aos.recordEnter");
+  if (enter && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    document.documentElement.setAttribute("data-record-enter", enter);
+    requestAnimationFrame(function () { requestAnimationFrame(function () {
+      document.querySelector("main.container").classList.add("record-moving");
+      document.documentElement.removeAttribute("data-record-enter"); }); });
+  } } catch (e) {}
+</script>
 {% set user = request.state.user %}
+{% set page_background = board.background or stage_background %}
+<style id="page-background">{% if page_background %}body { background: {{ page_background }}; }{% endif %}</style>
+{% if board.background_tone %}<script>document.currentScript.closest("main").setAttribute("data-page-tone", "{{ board.background_tone }}");</script>{% endif %}
+<div hidden data-page-layout data-background="{{ board.background or '' }}" data-stage-background="{{ stage_background or '' }}"
+     data-stage="{{ outreach_rows[0].stage if outreach_rows else '' }}" data-custom="{{ '1' if board.custom else '' }}"></div>
 
 <div class="page-header">
-    <div class="breadcrumb"><a href="/prospects">← Prospects</a></div>
+    <div class="breadcrumb"><a href="/prospects" data-record-back>← Prospects</a></div>
     <div class="page-header-row">
         <div>
             <h1>{{ prospect.name }}</h1>
@@ -15,8 +30,22 @@
         {% if prospect.ntee_code %} · NTEE: {{ prospect.ntee_code }}{% endif %}
     </p>
         </div>
-        <div class="page-header-actions">
-            <a href="/call-scripts?prospect_id={{ prospect.id }}" class="btn btn-sm">📞 Call Scripts</a>
+        <div class="record-header-side">
+            <div class="page-header-actions">
+                {% set search = '"' ~ prospect.name ~ '" ' ~ (prospect.city or '') ~ ' ' ~ (prospect.state or '') %}
+                <a href="https://www.google.com/search?q={{ search|trim|urlencode }}" target="_blank" rel="noopener noreferrer"
+                   class="btn btn-sm btn-secondary" data-google-search title="Search Google for {{ prospect.name }} (opens a new tab)">🔍 Google</a>
+                <button type="button" class="btn btn-sm btn-secondary" data-layout-edit title="Arrange, resize and color this page's panels">🎨 Customize</button>
+                <a href="/call-scripts?prospect_id={{ prospect.id }}" class="btn btn-sm" data-script-panel="{{ prospect.id }}"
+                   data-stage="{{ outreach_rows[0].stage if outreach_rows else '' }}" title="Open the call script beside this record">📞 Call Scripts</a>
+            </div>
+            <div class="record-nav-slot">
+                <nav class="record-nav" data-record-nav="{{ prospect.id }}" aria-label="Move between prospects" hidden>
+                    <a class="btn btn-sm btn-secondary" data-record-go="prev" aria-disabled="true" title="Previous prospect (←)">‹ Prev</a>
+                    <span class="record-pos" data-record-pos></span>
+                    <a class="btn btn-sm btn-secondary" data-record-go="next" aria-disabled="true" title="Next prospect (→)">Next ›</a>
+                </nav>
+            </div>
         </div>
     </div>
 </div>
@@ -24,8 +53,8 @@
 {% if msg %}<div class="save-notice">{{ msg }}</div>{% endif %}
 {% if error %}<div class="form-error">{{ error }}</div>{% endif %}
 
-<div class="detail-grid">
-    <div class="detail-card">
+<div class="detail-grid panel-board" data-panel-page="prospect">
+    <div class="detail-card" {{ board.attrs('org') }}>
         <h3>Organization Info {% if user.can('prospects.edit') %}<button class="btn btn-sm btn-secondary" style="float: right; margin-top: -4px;" onclick="toggleEditInfo()">✎ Edit</button>{% endif %}</h3>
 
         {# Read-only view #}
@@ -109,7 +138,7 @@
         {% endif %}
     </div>
 
-    <div class="detail-card">
+    <div class="detail-card" {{ board.attrs('pipeline') }}>
         <h3>Pipeline</h3>
         {% for o in outreach_rows %}
         <div class="outreach-block">
@@ -141,7 +170,7 @@
         {% endfor %}
     </div>
 
-    <div class="detail-card">
+    <div class="detail-card" {{ board.attrs('contact') }}>
         <h3>Contact Info</h3>
         {% for o in outreach_rows %}
         <form method="post" action="/prospects/{{ prospect.id }}/contact" class="contact-form">
@@ -188,10 +217,10 @@
         {% endif %}
         {% endfor %}
     </div>
-</div>
+
 
 {% if agent_panel %}
-<div class="detail-card full-width" id="agent-panel" data-prospect="{{ prospect.id }}">
+<div class="detail-card" {{ board.attrs('agent') }} id="agent-panel" data-prospect="{{ prospect.id }}">
     <h3>Ask an agent <span class="ai-badge">AI beta</span></h3>
     {% if not agent_panel.model %}
     <p class="muted">No AI model is set up on this server yet. An owner can set <code>ANTHROPIC_API_KEY</code>, or point <code>AGENCY_OS_LLM</code> at a local model (see README).</p>
@@ -225,7 +254,7 @@
 {% endif %}
 
 {% if credit is not none %}
-<div class="detail-card full-width">
+<div class="detail-card" {{ board.attrs('credit') }}>
     <h3>Who built this lead</h3>
     <p class="muted">If this lead is sold as part of a package, these reps share its royalties: found the contact 50%, reached the decision-maker 30%, sourced it 20%.</p>
     {% for c in credit %}
@@ -252,7 +281,7 @@
 
 {% if verification %}
 {% set v = verification %}
-<div class="detail-card full-width">
+<div class="detail-card" {{ board.attrs('guarantee') }}>
     <h3>Package guarantee</h3>
     <div class="detail-row"><span>Status</span><span>
         <span class="badge {% if v.status == 'verified' %}badge-success{% elif v.status == 'failed' %}badge-warning{% endif %}">{{ v.status }}</span>
@@ -286,7 +315,7 @@
 {% set event_labels = {
     'portal.viewed': 'Viewed the demo', 'portal.claimed': 'Claimed the page',
     'portal_published': 'Published the page'} %}
-<div class="detail-card full-width portal-card">
+<div class="detail-card portal-card" {{ board.attrs('portal') }}>
     <h3>{{ portal_label }}
         {% if portal.status %}<span class="stage-badge stage-{{ {'demo': 'contacted', 'expired': 'closed_lost', 'claimed': 'demo_scheduled', 'published': 'closed_won'}[portal.status] or 'cold' }}">{{ status_labels[portal.status] or portal.status }}</span>{% endif %}
     </h3>
@@ -333,7 +362,7 @@
 {% endif %}
 
 {% if email_logs %}
-<div class="detail-card full-width">
+<div class="detail-card" {{ board.attrs('emails') }}>
     <h3>Email History</h3>
     <div class="table-scroll">
     <table class="data-table compact">
@@ -386,7 +415,7 @@ function toggleEmail(id) {
 
 {% if user.can('calls.log') %}
 {# ── Call Log Form ───────────────────────────────────── #}
-<div class="detail-card full-width">
+<div class="detail-card" {{ board.attrs('log-call') }}>
     <h3>📞 Log a Call</h3>
     {% for o in outreach_rows %}
     <form method="post" action="/call-log/record" class="call-log-form" id="log-call-{{ o.id }}">
@@ -465,7 +494,7 @@ function toggleEmail(id) {
 
 {# ── Call History for this Prospect ───────────────────── #}
 {% if call_history %}
-<div class="detail-card full-width">
+<div class="detail-card" {{ board.attrs('calls') }}>
     <h3>📞 Call History ({{ call_history|length }})</h3>
     <div class="table-scroll">
     <table class="data-table compact">
@@ -504,6 +533,49 @@ function toggleEmail(id) {
 </div>
 {% endif %}
 
+{# ── Library panels: hidden until the user adds them with 🎨 Customize ── #}
+{% set last_call = call_history[0] if call_history else none %}
+{% set last_email = email_logs[0] if email_logs else none %}
+<div class="detail-card" {{ board.attrs('last-contact') }}>
+    <h3>Last contact</h3>
+    {% for o in outreach_rows %}
+    <div class="detail-row"><span>Last contacted</span><span>{{ o.last_contacted_at|fmt_date }}{% if o.last_contacted_at %} · {{ o.last_contacted_at|days_ago }}{% endif %}</span></div>
+    <div class="detail-row"><span>Touches</span><span>{{ o.touch_count or 0 }}</span></div>
+    {% endfor %}
+    {% if last_call %}
+    <div class="detail-row"><span>Last call</span><span>{{ last_call.called_at|fmt_date }} · <span class="status-badge status-{{ last_call.outcome }}">{{ last_call.outcome }}</span></span></div>
+    {% if last_call.called_by %}<div class="detail-row"><span>Called by</span><span>{{ last_call.called_by }}</span></div>{% endif %}
+    {% if last_call.notes %}<div class="detail-row"><span>Notes</span><span>{{ last_call.notes[:140] }}{% if last_call.notes|length > 140 %}…{% endif %}</span></div>{% endif %}
+    {% else %}<div class="detail-row"><span>Last call</span><span>None yet</span></div>{% endif %}
+    {% if last_email %}<div class="detail-row"><span>Last email</span><span>{{ last_email.sent_at|fmt_date }} · {{ last_email.subject or '(no subject)' }}</span></div>{% endif %}
+</div>
+
+<div class="detail-card" {{ board.attrs('follow-up') }}>
+    <h3>Follow-up</h3>
+    {% for o in outreach_rows %}
+    <div class="detail-row"><span>Next follow-up</span><span>
+        {% if o.next_follow_up_at %}{{ o.next_follow_up_at|fmt_date }} ·
+            {% set due = o.next_follow_up_at|days_until %}
+            <span class="{{ 'text-warning' if due < 0 else ('text-success' if due == 0 else 'muted') }}">{{ 'overdue by ' ~ (-due) ~ (' day' if due == -1 else ' days') if due < 0 else ('today' if due == 0 else 'in ' ~ due ~ (' day' if due == 1 else ' days')) }}</span>
+        {% else %}Not set{% endif %}
+    </span></div>
+    {% endfor %}
+    <div class="detail-row"><span>Agreed next step</span><span>{{ (last_call.next_step if last_call else '') or '—' }}</span></div>
+</div>
+
+<div class="detail-card" {{ board.attrs('glance') }}>
+    <h3>At a glance</h3>
+    {% for o in outreach_rows %}
+    <div class="detail-row"><span>Stage</span><span class="stage-badge stage-{{ o.stage }}">{{ o.stage }}</span></div>
+    <div class="detail-row"><span>Contact</span><span>{{ o.contact_name or '—' }}{% if o.contact_title %} · {{ o.contact_title }}{% endif %}</span></div>
+    <div class="detail-row"><span>Phone</span><span>{% if o.contact_phone|tel %}<a href="{{ o.contact_phone|tel }}">{{ o.contact_phone }}</a>{% else %}{{ o.contact_phone or '—' }}{% endif %}</span></div>
+    {% endfor %}
+    <div class="detail-row"><span>Revenue</span><span>{{ prospect.annual_revenue|currency }}</span></div>
+    <div class="detail-row"><span>Focus area</span><span>{{ (prospect.focus_area or '—')|replace('_', ' ') }}</span></div>
+</div>
+</div>{# /panel-board #}
+
+
 <script>
 function toggleEditInfo() {
     var view = document.getElementById('info-view');
@@ -527,4 +599,7 @@ document.querySelectorAll('[data-copy]').forEach(function (button) {
     });
 });
 </script>
+<script src="/static/record_nav.js" defer></script>
+<script src="/static/panel_editor.js" defer></script>
+<script src="/static/script_panel.js" defer></script>
 {% endblock %}

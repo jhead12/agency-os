@@ -60,13 +60,20 @@
                 });
                 if (r.status === 401) { print('Your session ended. Sign in again.', 'console-error'); return; }
                 const data = await r.json();
+                if (data.play && window.aosPlayer) window.aosPlayer.start(data.play);
                 if (data.needs_confirmation) {
                     print(data.output, 'console-muted');
                     pending = line;
                     promptLabel.textContent = 'Run this? [y/N]';
                     return;
                 }
-                if (data.output) print(data.output, data.ok ? '' : 'console-error');
+                if (data.output && data.ok) print(data.output);
+                else if (data.output) {
+                    // The problem in red; the guidance under it (usage, example, a command to try) stays readable.
+                    const [problem, ...help] = data.output.split('\n');
+                    print(problem, 'console-error');
+                    if (help.length) print(help.join('\n'), 'console-hint');
+                }
             } catch (_) {
                 print('Could not reach agency-os.', 'console-error');
             } finally {
@@ -114,18 +121,39 @@
         const screen = load(sessionStorage, SCREEN_KEY, []);
         if (screen.length) screen.forEach(([text, cls]) => show(text, cls));
         else print('agency-os console. Type help to list the commands you can run.', 'console-muted');
-        return { focus: () => input.focus() };
+
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        // For the workflow player: type a line visibly, run it, and resolve once it's finished,
+        // including any "Run this? [y/N]" the user answers. Resolves {asked} (whether it asked).
+        async function run(line, charDelay = 35) {
+            while (busy || pending !== null) await sleep(100);
+            input.focus();
+            input.value = '';
+            for (const ch of line) { input.value += ch; await sleep(charDelay); }
+            await sleep(250);
+            form.requestSubmit();
+            await sleep(50);
+            let asked = false;
+            while (busy || pending !== null) { asked = asked || pending !== null; await sleep(100); }
+            return { asked };
+        }
+        return { focus: () => input.focus(), run, waiting: () => pending !== null };
     }
 
     // ── The /console page ──
     const page = document.getElementById('console');
-    if (page) mount(page).focus();
+    if (page) {
+        const term = mount(page);
+        term.focus();
+        window.aosConsole = { open: () => {}, run: term.run, waiting: term.waiting };
+    }
 
     // ── The floating window ──
     const dock = document.getElementById('console-dock');
     const launcher = document.getElementById('console-launcher');
     if (!dock || !launcher) return;
     const term = mount(dock.querySelector('.console'));
+    window.aosConsole = { open: () => { if (dock.hidden) setOpen(true, false); }, run: term.run, waiting: term.waiting };
     const bar = dock.querySelector('.console-dock-bar');
     const phone = window.matchMedia('(max-width: 640px)');
     let state = load(localStorage, DOCK_KEY, {});

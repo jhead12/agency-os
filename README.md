@@ -4,6 +4,13 @@ A plugin-driven, evergreen sales outreach engine. Find prospects, enrich contact
 send sequenced emails, track pipeline progress, and generate weekly digests — for
 any product or service.
 
+| Metric | Value |
+|---|---|
+| Campaigns | 5 |
+| Plugins | 18 across 5 categories |
+| Code base | ~23.4k lines of Python |
+| Web templates | 34 dashboard pages |
+
 ## Quick start
 
 Data lives in PostgreSQL. Point `DATABASE_URL` at a database (tables are
@@ -223,6 +230,14 @@ campaigns and prospects); roles control what each person can see and do.
   so it holds in the dashboard, the console and the remote CLI alike. The
   server-side `users` commands can always do it, for bootstrap and recovery.
 - **New users get no access** until an owner gives them a role.
+- **Campaign members** split the work: a campaign with no members is seen by
+  everyone whose role allows it; once an Owner adds people or roles under
+  **Campaign Settings → Who works this campaign** (or `campaigns assign` in the
+  console), only they see it and its leads.
+- **Campaign Owners:** a Super Admin can give a campaign to specific Owners
+  (**Owners of this campaign** on its settings page, or `campaigns add-owner`).
+  Other Owners then don't see it anywhere, and packages they publish never
+  include its leads. Super Admins always see every campaign.
 - **Every route is listed in `access.ROUTE_RULES`.** A route that isn't
   listed is denied for everyone, owners included. `tests/test_access.py`
   fails if a route is added without a rule.
@@ -297,6 +312,21 @@ command list: [CLI_REFERENCE.md](CLI_REFERENCE.md#command-console-browser-and-re
 
 Run the tests against a scratch database (it is wiped, and its name must
 contain "test"): `TEST_DATABASE_URL=postgresql://localhost/agency_os_test python -m pytest tests/`.
+
+## Tutorials & workflows
+
+**Account → Tutorials & workflows** plays a workflow on your own screen, like a
+visible Playwright: a cursor moves to each element, fields are typed into, pages
+change, console commands run, and a caption explains each step. Built-in
+tutorials (`workflows/tutorials/`) show each role how to use the app; users save
+their own workflows, and back them up with Export/Import (one JSON file).
+
+Workflows are data, never code (`core/workflows.py` validates them; the player is
+`web/static/player.js`), which keeps sharing them safe and is the basis for a
+future marketplace: a workflow can only do what the person playing it could do
+by hand, can only open this app's pages, and anything that changes data asks
+first. The format and step list are in
+[CLI_REFERENCE.md](CLI_REFERENCE.md#tutorials--workflows).
 
 ## Lead packages (x402)
 
@@ -565,13 +595,18 @@ export CALENDLY_API_TOKEN=...
 | prospect_source | `sos_partners` | CA Secretary of State voter engagement partners |
 | prospect_source | `oia_grantees` | LA County Office of Immigrant Affairs CBO grantees |
 | prospect_source | `miv_partners` | Mobilize the Immigrant Vote CA partner CBOs |
+| prospect_source | `npi_registry` | NPI registry — healthcare practices |
+| prospect_source | `pacer_attorneys` | PACER federal court attorney records |
+| prospect_source | `courtlistener_attorneys` | CourtListener attorney search |
 | product | `u9itus_voter_guide` | u9itus digital voter guide platform |
+| product | `u9itus_client` | u9itus portal API client (demo provisioning, events) |
 | channel | `email_smartlead` | Smartlead API cold email |
 | channel | `email_smtp` | Direct SMTP email |
 | channel | `sms_twilio` | Twilio SMS |
+| channel | `lob_direct_mail` | Lob postcards & letters |
 | channel | `manual` | Log a manual touch (phone, in-person) |
 | enricher | `local_scraper` | Local web scraper — finds websites, phones, emails (no API key needed) |
-| enricher | `apollo` | Apollo.io contact enrichment |
+| enricher | `apollo` | Apollo.io contact enrichment (paid plan required) |
 | enricher | `hunter` | Hunter.io email finder + verifier |
 | scheduler | `calendly` | Calendly booking links + booking sync |
 

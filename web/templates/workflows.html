@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Tutorials & workflows — agency-os{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Tutorials &amp; workflows</h1>
+    <p class="subtitle">Press Play and watch: the player moves around the app, fills things in and explains each step. Anything that would change data asks you first.</p>
+</div>
+
+{% if msg %}<div class="save-notice">{{ msg }}</div>{% endif %}
+{% if error %}<div class="form-error">{{ error }}</div>{% endif %}
+
+<h2 class="section-title">Tutorials</h2>
+<div class="workflow-grid">
+    {% for t in tutorials %}
+    <div class="detail-card workflow-card">
+        <h3>{{ t.name }}</h3>
+        <p class="muted">{{ t.description }}</p>
+        <div class="workflow-card-foot">
+            <span class="subtitle">{{ t.steps|length }} steps</span>
+            <button type="button" class="btn btn-sm" data-workflow-play="tutorial/{{ t.slug }}">▶ Play</button>
+        </div>
+    </div>
+    {% else %}
+    <p class="muted">No tutorials match your role yet.</p>
+    {% endfor %}
+</div>
+
+<h2 class="section-title">Your workflows</h2>
+<div class="detail-card full-width">
+    {% if mine %}
+    <div class="table-scroll">
+    <table class="data-table">
+        <thead><tr><th>Name</th><th>Steps</th><th>Updated</th><th></th></tr></thead>
+        <tbody>
+        {% for w in mine %}
+        <tr>
+            <td><strong>{{ w.name }}</strong>{% if w.description %}<br><span class="subtitle">{{ w.description }}</span>{% endif %}</td>
+            <td>{{ w.steps|length }}</td>
+            <td>{{ w.updated_at|fmt_date }}</td>
+            <td class="workflow-actions">
+                <button type="button" class="btn btn-sm" data-workflow-play="mine/{{ w.slug }}">▶ Play</button>
+                <a class="btn btn-sm btn-secondary" href="/workflows?edit={{ w.slug }}#workflow-editor">Edit</a>
+                <form method="post" action="/workflows/{{ w.slug }}/delete" onsubmit="return confirm('Delete {{ w.name|e }}?')">
+                    <button type="submit" class="btn btn-sm btn-secondary">Delete</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% else %}
+    <p class="muted">None yet. Write one below, or import a backup.</p>
+    {% endif %}
+</div>
+
+<div class="detail-grid">
+    <div class="detail-card" id="workflow-backup">
+        <h3>Back up</h3>
+        <p class="muted">Export saves all your workflows to one file. Import reads a backup (or a single workflow) back, here or on another agency-os; same-named workflows are replaced. A file with any problem imports nothing.</p>
+        <p><a class="btn btn-secondary" href="/workflows/export" id="workflow-export">⬇ Export all</a></p>
+        <form method="post" action="/workflows/import" enctype="multipart/form-data" class="stack-form" id="workflow-import">
+            <label>Backup or workflow file (.json, .yaml)
+                <input type="file" name="file" accept=".json,.yaml,.yml,application/json,text/yaml" required class="filter-input">
+            </label>
+            <button type="submit" class="btn btn-secondary">⬆ Import</button>
+        </form>
+    </div>
+
+    <div class="detail-card" id="workflow-editor">
+        <h3>Write a workflow</h3>
+        <form method="post" action="/workflows/save" class="stack-form">
+            <textarea name="definition" rows="16" spellcheck="false" class="filter-input workflow-source" aria-label="Workflow (YAML or JSON)">{{ editor }}</textarea>
+            <div class="workflow-editor-actions">
+                <button type="submit" class="btn">Save</button>
+                <button type="button" class="btn btn-secondary" data-workflow-play-editor>▶ Try it</button>
+            </div>
+        </form>
+        <details class="mcp-examples">
+            <summary>Step reference</summary>
+            <pre class="agent-output">goto: /prospects                      open a page of this app
+say: Some text                        a caption (add say: to any step)
+highlight: "table.data-table"         point at something (CSS selector)
+fill: {target: "input[name=q]", value: food}   type into a field
+click: "#filter-form button"          click; a click that saves a change asks first
+wait: 1000  |  wait: {for: ".detail-grid"}     wait, or wait for something to appear
+run: search-prospects --q food        run a console command (needs the console)
+pause: Your turn...                   stop until you press Next</pre>
+        </details>
+    </div>
+</div>
+{% endblock %}

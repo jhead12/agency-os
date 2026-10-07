@@ -1,0 +1,11 @@
+name: Invite a teammate
+description: How Owners add people from the console. Nothing is sent.
+requires: '@owner'
+steps:
+  - run: users list
+    say: users list shows everyone on the team and their roles.
+  - run: help users invite
+    say: users invite adds someone and emails them a one-time link to set their password.
+  - say: 'For example: users invite --email jane@example.com --name "Jane" --role Caller'
+  - say: Add --no-send to get the link instead of emailing it. Only a Super Admin can invite an Owner.
+  - pause: Your turn. Invite your next teammate from the console.

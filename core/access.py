@@ -145,6 +145,7 @@ ROUTE_RULES: dict[str, str] = {
     "POST /prospects/saved-lists/{list_id}/delete": "prospects.view",
     "GET /prospects": "prospects.view",  # print=1 additionally needs prospects.export
     "GET /prospects/{prospect_id}": "prospects.view",
+    "GET /api/prospects/{prospect_id}/neighbors": "prospects.view",
     "POST /prospects/{prospect_id}/stage": "pipeline.edit",
     "POST /prospects/{prospect_id}/contact": "prospects.edit",
     "POST /prospects/{prospect_id}/info": "prospects.edit",
@@ -175,6 +176,10 @@ ROUTE_RULES: dict[str, str] = {
     "GET /admin/campaigns/{campaign_slug}": OWNER,
     "POST /admin/campaigns/{campaign_slug}": OWNER,
     "POST /admin/campaigns/{campaign_slug}/import-csv": OWNER,
+    "POST /admin/campaigns/{campaign_slug}/members": OWNER,
+    "POST /admin/campaigns/{campaign_slug}/owners": SUPER_ADMIN,
+    "POST /admin/campaigns/{campaign_slug}/owners/{owner_id}/delete": SUPER_ADMIN,
+    "POST /admin/campaigns/{campaign_slug}/members/{member_id}/delete": OWNER,
     "GET /admin/campaigns/{campaign_slug}/import-template": OWNER,
     "GET /plugins": "campaigns.view",
     "POST /plugins/{plugin_key}/test": "portals.manage",
@@ -191,8 +196,17 @@ ROUTE_RULES: dict[str, str] = {
     "POST /prospects/{prospect_id}/refresh-email": "prospects.edit",
     "POST /prospects/{prospect_id}/agent": "agents.use",
     "POST /prospects/{prospect_id}/agent/note": "agents.use",
+    "POST /agent/chat": "agents.use",
     "GET /api/tools": "ai.connect",
     "POST /api/tools/{tool_name}": "ai.connect",
+    "GET /workflows": ANY_USER,  # tutorials (filtered by permission) and the user's own workflows
+    "GET /api/workflows/{source}/{slug}": ANY_USER,
+    "POST /api/workflows/preview": ANY_USER,  # validates an unsaved workflow for "Try it"
+    "POST /workflows/save": ANY_USER,
+    "POST /workflows/import": ANY_USER,
+    "GET /workflows/export": ANY_USER,
+    "POST /workflows/{slug}/delete": ANY_USER,
+    "POST /api/layouts/{page}": ANY_USER,  # the user's own panel arrangement (core/panels.py)
     "GET /console": "cli.use",
     "POST /api/console": "cli.use",  # also accepts a CLI key (Authorization: Bearer aos_cli_...)
     "POST /account/cli-keys": "cli.use",
@@ -221,6 +235,10 @@ class CurrentUser:
     roles: tuple[str, ...] = ()
     permissions: frozenset[str] = field(default_factory=frozenset)
     ai_enabled: bool = False  # the user opted in to AI features (Account page)
+    restricted_campaigns: frozenset[str] = field(default_factory=frozenset)  # campaigns that have members
+    member_campaigns: frozenset[str] = field(default_factory=frozenset)      # ...of which this user is one
+    owner_restricted_campaigns: frozenset[str] = field(default_factory=frozenset)  # campaigns with assigned Owners
+    owner_campaigns: frozenset[str] = field(default_factory=frozenset)             # ...assigned to this user
 
     @property
     def is_super_admin(self) -> bool:
@@ -242,13 +260,23 @@ class CurrentUser:
         return self.is_owner or permission in self.permissions
 
     def sees_campaign(self, campaign) -> bool:
-        """A campaign with `requires_permission` (and its leads) is visible only to holders of it.
+        """Whether this user sees a campaign and its leads.
 
-        Owners see every campaign; a misspelled permission hides the campaign
-        from everyone else rather than showing it.
+        Super Admins see every campaign. Owners see every campaign except one a
+        Super Admin has assigned to other Owners. Anyone else needs the
+        campaign's `requires_permission`, if it has one (a misspelled permission
+        hides it rather than showing it), and, once the campaign has members
+        (Admin → Campaign Settings), to be one of them, directly or by role.
         """
+        name = getattr(campaign, "db_name", "")
+        if self.is_super_admin:
+            return True
+        if self.is_owner:
+            return name not in self.owner_restricted_campaigns or name in self.owner_campaigns
         required = getattr(campaign, "requires_permission", "")
-        return not required or self.is_owner or self.can(required)
+        if required and not self.can(required):
+            return False
+        return name not in self.restricted_campaigns or name in self.member_campaigns
 
     def uses_ai(self, permission: str) -> bool:
         """An AI feature is on for this user: allowed on the server, opted in, and permitted.

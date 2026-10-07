@@ -1,6 +1,6 @@
 """
 The app's own language model: the built-in agent panel and the lead-package
-AI review both call generate().
+AI review call generate(); the agent chat calls chat() with the conversation.
 
 Chosen by environment:
 
@@ -83,18 +83,26 @@ def generate(system: str, prompt: str, *, max_tokens: int = 4000, effort: str = 
     json_schema asks for a JSON object matching it (strictly on Claude; as a
     JSON-mode hint on OpenAI-style servers, so callers still validate).
     """
+    return chat(system, [{"role": "user", "content": prompt}], max_tokens=max_tokens, effort=effort,
+                json_schema=json_schema, http=http)
+
+
+def chat(system: str, messages: list[dict], *, max_tokens: int = 4000, effort: str = "medium",
+         json_schema: Optional[dict] = None, http: Optional[httpx.Client] = None) -> Reply:
+    """The next reply in a conversation. messages alternate user/assistant and end
+    with the user's turn: [{"role": "user", "content": "..."}, ...]. Never raises."""
     kind = backend()
     if not kind:
         return Reply(False, error="No AI model is configured (AGENCY_OS_LLM)")
     try:
         if kind == "anthropic":
-            return _anthropic(system, prompt, max_tokens, effort, json_schema)
-        return _openai_compatible(system, prompt, max_tokens, json_schema, http)
+            return _anthropic(system, messages, max_tokens, effort, json_schema)
+        return _openai_compatible(system, messages, max_tokens, json_schema, http)
     except Exception as exc:  # a model outage must never take a page down
         return Reply(False, error=f"The AI model failed: {type(exc).__name__}: {str(exc)[:200]}")
 
 
-def _anthropic(system: str, prompt: str, max_tokens: int, effort: str, json_schema: Optional[dict]) -> Reply:
+def _anthropic(system: str, messages: list[dict], max_tokens: int, effort: str, json_schema: Optional[dict]) -> Reply:
     import anthropic
 
     output_config: dict = {"effort": effort}
@@ -105,7 +113,7 @@ def _anthropic(system: str, prompt: str, max_tokens: int, effort: str, json_sche
         max_tokens=max_tokens,
         # The persona is the long, repeated part; cache it across requests.
         system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
-        messages=[{"role": "user", "content": prompt}],
+        messages=messages,
         output_config=output_config,
     )
     if response.stop_reason == "refusal":
@@ -116,11 +124,11 @@ def _anthropic(system: str, prompt: str, max_tokens: int, effort: str, json_sche
     return Reply(True, text=text)
 
 
-def _openai_compatible(system: str, prompt: str, max_tokens: int, json_schema: Optional[dict],
+def _openai_compatible(system: str, messages: list[dict], max_tokens: int, json_schema: Optional[dict],
                        http: Optional[httpx.Client]) -> Reply:
     body: dict = {
         "model": os.environ["AGENCY_OS_LLM_MODEL"],
-        "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+        "messages": [{"role": "system", "content": system}, *messages],
         "max_tokens": max_tokens,
     }
     if json_schema:

@@ -1,0 +1,19 @@
+name: Find a prospect
+description: Search the prospect list and open a prospect's page.
+requires: prospects.view
+steps:
+  - goto: /prospects
+    say: This is the prospect list.
+  - fill: {target: 'input[name="q"]', value: food}
+    say: Type part of a name, city, EIN, zip or focus area into the search box.
+  - click: '#filter-form button[type="submit"]'
+    say: Then filter.
+  - wait: {for: table.data-table}
+  - highlight: table.data-table
+    say: Matching prospects are listed here. Click a column header to sort.
+  - click: 'table.data-table tbody a[href^="/prospects/"]'
+    say: Open a prospect to see everything about them.
+  - wait: {for: .detail-grid}
+  - highlight: .detail-grid
+    say: Organization info, pipeline stage and contact details are at the top.
+  - pause: Your turn. Use the search box to find one of your own prospects.
