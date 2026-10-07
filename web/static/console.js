@@ -184,6 +184,12 @@
     };
 
     launcher.addEventListener('click', () => setOpen(true));
+    // Links that open the console (e.g. on the Account page) use this window, not the full page.
+    document.addEventListener('click', (event) => {
+        if (!event.target.closest('[data-console-open]')) return;
+        event.preventDefault();
+        setOpen(true);
+    });
     dock.querySelector('[data-console-close]').addEventListener('click', () => setOpen(false));
     document.addEventListener('keydown', (event) => {
         if (event.ctrlKey && (event.key === '`' || event.code === 'Backquote')) {
