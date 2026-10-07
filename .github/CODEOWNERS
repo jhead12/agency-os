@@ -1,0 +1,15 @@
+# Code owners: a PR touching a path needs approval from one of its owners.
+# The last matching pattern wins, so the default comes first.
+
+# Everything else (core/, web/app.py, agency_os.py, config, deploy) is yours only.
+*                   @jhead12
+
+# Areas the developer can approve on their own
+/plugins/           @jhead12 @sirgawain0x
+/web/templates/     @jhead12 @sirgawain0x
+/web/static/        @jhead12 @sirgawain0x
+/tests/             @jhead12 @sirgawain0x
+/docs/              @jhead12 @sirgawain0x
+
+# Keep this file locked so ownership can't be widened in a PR
+/.github/           @jhead12
