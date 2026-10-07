@@ -74,46 +74,50 @@ agency-os is a complete sales operations platform that automates every step of t
 ### Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                     agency-os                           │
-│                                                         ││  ┌─────────────┐  ┌──────────┐  ┌──────────────┐   │
-│  │  Prospect     │  │  Product  │  │   Channel    │   │
-│  │  Sources      │  │  Plugins  │  │   Plugins    │   │
-│  │               │  │           │  │              │   │
-│  │ • IRS BMF     │  │ • U9itus  │  │ • Email      │   │
-│  │ • SOS Partners│  │   Voter   │  │   (SMTP/     │   │
-│  │ • OIA Grantees│  │   Guide   │  │   Smartlead) │   │
-│  │ • MIV Partners│  │           │  │ • Direct Mail│   │
-│  │               │  └──────────┘  │   (Lob)      │   │
-│  └─────────────┘                │ • SMS (Twilio)│   │
-│                                  │ • Phone       │   │
-│  ┌─────────────┐  ┌──────────┐  │ • Manual      │   │
-│  │  Enrichers   │  │Scheduler │  └──────────────┘   │
-│  │              │  │          │                      │
-│  │ • Local      │  │• Calendly│  ┌──────────────┐   │
-│  │   Scraper    │  └──────────┘  │   Pipeline    │   │
-│  │ • Apollo     │                │              │   │
-│  │ • Hunter     │                │  cold →      │   │
-│  └─────────────┘                │  contacted → │   │
-│                                  │  engaged →   │   │
-│  ┌────────────────────────┐     │  demo →      │   │
-│  │   Web Dashboard         │     │  proposal →  │   │
-│  │   (FastAPI + Jinja2)    │     │  closed_won  │   │
-│  │                         │     └──────────────┘   │
-│  │34 pages, 5 user roles  │                        │
-│  └────────────────────────┘                        │
-│                                                     │
-│  Database: PostgreSQL (Railway)                     │
-│  Deploy: Docker on Railway with persistent volume   │
-└─────────────────────────────────────────────────────┘
-                    │
-                    ▼
-           ┌──────────────┐
-           │   U9itus     │
-           │   Platform   │
-           │              │
-           │ www.u9itus.com│
-           └──────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                         agency-os                            │
+│                                                              │
+│  ┌────────────────┐  ┌──────────┐  ┌────────────────────┐   │
+│  │ Prospect       │  │ Product  │  │ Channels           │   │
+│  │ Sources        │  │ Plugins  │  │                    │   │
+│  │                │  │          │  │ • Email            │   │
+│  │ • IRS BMF      │  │ • U9itus │  │   (SMTP /          │   │
+│  │ • SOS Partners │  │   Voter  │  │   Smartlead)       │   │
+│  │ • OIA Grantees │  │   Guide  │  │ • Direct Mail      │   │
+│  │ • MIV Partners │  └──────────┘  │   (Lob)            │   │
+│  │ • NPI Registry │              │ • SMS (Twilio)       │   │
+│  │ • PACER        │              │ • Phone              │   │
+│  │ • CourtListener│              │ • Manual             │   │
+│  └────────────────┘              └────────────────────┘   │
+│                                                              │
+│  ┌──────────────────────┐  ┌──────────┐  ┌─────────────┐   │
+│  │ Enrichers            │  │Scheduler │  │ Pipeline    │   │
+│  │                      │  │          │  │             │   │
+│  │ • local_scraper      │  │• Calendly│  │ cold →      │   │
+│  │   (free, no key)     │  └──────────┘  │ contacted → │   │
+│  │ • Apollo             │              │ engaged →   │   │
+│  │   (free tier 403s —  │              │ demo →      │   │
+│  │    paid plan needed) │              │ proposal →  │   │
+│  │ • Hunter             │              │ closed_won  │   │
+│  └──────────────────────┘              └─────────────┘   │
+│                                                              │
+│  ┌────────────────────────────┐                             │
+│  │ Web Dashboard              │                             │
+│  │ (FastAPI + Jinja2)         │                             │
+│  │ 34 pages, 5 user roles     │                             │
+│  └────────────────────────────┘                             │
+│                                                              │
+│  Database: PostgreSQL (Railway)                              │
+│  Deploy: Docker on Railway                                   │
+└──────────────────────────────────────────────────────────────┘
+                     │
+                     ▼
+            ┌──────────────┐
+            │   U9itus     │
+            │   Platform   │
+            │              │
+            │ www.u9itus.com│
+            └──────────────┘
 ```
 
 ### How It Works — The Sales Pipeline
