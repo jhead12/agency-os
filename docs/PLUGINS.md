@@ -170,6 +170,20 @@ person first, and the player skips steps that point at things not on the page.
 The protocols are in `core/protocols.py`; copy a plugin in the same folder to
 start. `python agency_os.py plugins` lists what's installed.
 
+### Searches and the lead package generator
+
+`plugins/searches/` (`city`, `rss`, `scrape`) take parameters instead of a
+campaign: a class with `key`, `validate(params)` and `run(params, ctx)` yielding
+`Prospect`s. Fetch customer-supplied URLs only through `ctx.fetch`
+(`core/safe_fetch.py`), never with `ctx.http`. They run in two places:
+
+- **Paid account searches** for u9itus customers (`docs/U9ITUS_BILLING.md`).
+- **The lead package generator** (`/admin/generator`, Super Admins only,
+  `core/generator.py`). It runs searches on a set of criteria, saves the results
+  as house prospects in a campaign, runs the chosen enrichers, and makes a saved
+  list that can be published at the `enriched` guarantee from `/admin/selling`.
+  `agency-os generator run` runs any run left queued.
+
 ## What still needs a core change
 
 A plugin can use only what already exists. A new permission

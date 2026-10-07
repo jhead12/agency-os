@@ -18,7 +18,15 @@ Status (2026-10-07):
 - **B3 and B5 built** on the same branch: the search runner and the `city` search
   (OpenStreetMap through Overpass, until decision 8.1 is made). Tests:
   `tests/test_search_runner.py` (15).
-- Everything else is planned. Decisions still open for the owner are in section 8.
+- **B6, B7 and B8 built** on the same branch: the `rss` and `scrape` searches,
+  the guarded fetcher `core/safe_fetch.py`, and the Owners' Accounts page
+  (`/admin/accounts`). Tests: `tests/test_safe_fetch.py` (20), six more in
+  `tests/test_search_runner.py`, two more in `tests/test_accounts.py`.
+- The same search plugins also power the Super Admins' **lead package generator**
+  (`/admin/generator`, `core/generator.py`). It saves what it finds as *house*
+  prospects, never touches an account's, and feeds the `enriched` guarantee tier.
+- B4 (usage table, `GET /api/v1/usage`, per-account caps) is still planned.
+  Decisions still open for the owner are in section 8.
 
 ## Goal
 
@@ -193,8 +201,8 @@ so a plugin can't over-deliver.
 | Type | Params | Where the data comes from | Notes |
 |---|---|---|---|
 | `city` ✅ | `city`, `state` (two-letter US code), `query` (e.g. "dentist") | **Built on OpenStreetMap through Overpass** (free, no key; one request per search). `query` matches OSM category tags (amenity, shop, office, craft, healthcare), plus names containing it. Google Places is still open (8.1) | `external_ref` = the OSM element (`node/123`), so repeat searches dedupe. Only letters, digits and a few punctuation marks reach the Overpass query. US cities only for now. |
-| `rss` | `feed_url`, optional `keywords`, `since` | The feed's items: each item's link and title, plus organization names and sites found in the item | Optional AI extraction through `core/llm.py` counts toward `usage`. A recurring "watch this feed" mode is a later version. |
-| `scrape` | `url`, `item_selector`, `fields` (`name`, `website`, `city`, … → CSS selector), optional `next_selector`, `max_pages` ≤ 20 | One list page and its "next" pages on the **same host** | Uses the selectolax parser already used by `plugins/enrichers/local_scraper.py`. Checks robots.txt and fetches at most 1 request/s per host. |
+| `rss` ✅ | `feed_url`, optional `keywords`, `since` | The feed's items: each item's link and title, plus organization names and sites found in the item | Optional AI extraction through `core/llm.py` (not built yet) would count toward `usage`. A recurring "watch this feed" mode is a later version. |
+| `scrape` ✅ | `url`, `item_selector`, `fields` (`name`, `website`, `city`, … → CSS selector), optional `next_selector`, `max_pages` ≤ 20 | One list page and its "next" pages on the **same host** | Uses the selectolax parser already used by `plugins/enrichers/local_scraper.py`. Checks robots.txt and fetches at most 1 request/s per host. |
 
 Results are organizations, not people. Searches don't collect personal emails or
 phone numbers of individuals (section 7).
@@ -242,9 +250,9 @@ show the real cost per type so margins can be checked.
 | **B3 ✅** | Runner: claims `queued` searches (`FOR UPDATE SKIP LOCKED`, at most 2 running per account, active accounts only), runs the plugin, saves through `searches.save_result`, stops at `max_results`, honors cancel, records `delivered` and `usage`. Its own loop every 5 s (`AGENCY_OS_RUN_SEARCHES=1`), not the 5-minute job schedule; `agency-os searches run` runs the queue once. Create validates params with the type's plugin, and refuses types with no plugin (422). | `core/searches.py`, `core/registry.py` (`plugins/searches/`), `web/app.py` (lifespan), `core/cli.py` | `tests/test_search_runner.py`: stops at `max_results`; a plugin `ValueError` fails the search with its message, anything else with a plain one (details in the log); cancel mid-run; a search with no heartbeat for 10 minutes is failed, never run twice |
 | B4 | `account_usage` per account per day, `GET /api/v1/usage`, per-account caps (section 5) | `core/searches.py`, `core/db.py` | Usage totals equal the sum of searches; the cap returns 429 and doesn't create the search |
 | **B5 ✅** | `city` search (Overpass) | `plugins/searches/city.py` | Faked Overpass responses, no network; unnamed places skipped; found again → not billed again; busy (429), empty and broken answers each fail with a clear message |
-| B6 | `rss` search | `plugins/searches/rss.py` | RSS 2.0 and Atom fixtures; `keywords` filter; malformed feed → `failed` with a clear message |
-| B7 | `scrape` search and the guarded fetcher | `plugins/searches/scrape.py`, `core/safe_fetch.py` | Refuses private, loopback, link-local and metadata IPs, **including after redirects and DNS changes**; honors robots.txt; stays on the start host; ≤ 1 request/s per host; 2 MB and 15 s limits per page |
-| B8 | Team → Accounts page for Owners: accounts, usage, suspend, rotate key | `web/templates/admin_accounts.html`, `web/app.py`, `core/access.py` | Owner only; never shows a key except right after it's issued |
+| **B6 ✅** | `rss` search | `plugins/searches/rss.py` | RSS 2.0 and Atom fixtures; `keywords` filter; malformed feed → `failed` with a clear message |
+| **B7 ✅** | `scrape` search and the guarded fetcher | `plugins/searches/scrape.py`, `core/safe_fetch.py` | Refuses private, loopback, link-local and metadata IPs, **including after redirects and DNS changes**; honors robots.txt; stays on the start host; ≤ 1 request/s per host; 2 MB and 15 s limits per page |
+| **B8 ✅** | Team → Accounts page for Owners: accounts, usage, suspend, rotate key | `web/templates/admin_accounts.html`, `web/app.py`, `core/access.py` | Owner only; never shows a key except right after it's issued |
 
 ### u9itus (the u9itus.dev repo)
 
