@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}{{ prospect.name }} — agency-os{% endblock %}
+{% block chat_context %}data-prospect="{{ prospect.id }}" data-prospect-name="{{ prospect.name }}"{% if request.state.user.can('prospects.edit') %} data-can-save="1"{% endif %}{% endblock %}
 {% block content %}
 <div class="active" style="display:none"></div>
 <script>/* arriving from the previous/next record: start off to the side, then slide in (record_nav.js) */

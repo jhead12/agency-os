@@ -337,6 +337,8 @@ templates.env.filters["days_until"] = days_until
 templates.env.filters["days_ago"] = days_ago
 templates.env.globals["nav_active"] = nav_active
 templates.env.globals["CALL_OUTCOMES"] = contact_depth.CALL_OUTCOMES
+templates.env.globals["chat_personas"] = lambda: list(agents.load_personas().values())
+templates.env.globals["ai_model"] = llm.describe
 
 
 # ── Routes ──────────────────────────────────────────────────────────
@@ -1805,6 +1807,38 @@ async def prospect_agent_note(request: Request, prospect_id: int, note: str = Fo
         return refusal
     result = tools.run_tool(get_db(), current_user(request), "add_prospect_note",
                             {"prospect_id": prospect_id, "note": note}, source="panel", confirmed=True)
+    return JSONResponse(result)
+
+
+_MAX_CHAT_BODY = 256 * 1024
+
+
+@app.post("/agent/chat")
+async def agent_chat(request: Request):
+    """The chat robot: a persona's next reply. Body: {"agent", "messages": [{role, content}...], "prospect_id"?}.
+    Returns JSON; the conversation lives in the browser and nothing is sent or saved."""
+    refusal = _ai_refusal(request, "agents.use")
+    if refusal:
+        return refusal
+    raw = await request.body()
+    if len(raw) > _MAX_CHAT_BODY:
+        return JSONResponse({"ok": False, "error": "This conversation is too long; start a new one"}, status_code=413)
+    try:
+        body = json.loads(raw or b"{}")
+    except ValueError:
+        body = None
+    if not isinstance(body, dict) or not isinstance(body.get("agent"), str):
+        return JSONResponse({"ok": False, "error": "Body must be a JSON object with an agent"}, status_code=400)
+    user, prospect_id = current_user(request), body.get("prospect_id")
+    context = None
+    if prospect_id is not None:
+        if not isinstance(prospect_id, int) or isinstance(prospect_id, bool):
+            return JSONResponse({"ok": False, "error": "prospect_id must be a number"}, status_code=400)
+        try:
+            context = await run_in_threadpool(tools.build_prospect_context, get_db(), user, prospect_id)
+        except tools.ToolError as exc:
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=404)
+    result = await run_in_threadpool(agents.chat, body["agent"], body.get("messages"), context)
     return JSONResponse(result)
 
 

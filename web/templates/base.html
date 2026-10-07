@@ -98,6 +98,32 @@
     {% endif %}
     <script src="/static/console.js" defer></script>
     {% endif %}
+    {% if user and user.uses_ai('agents.use') %}
+    {% set chat_model = ai_model() %}
+    <button type="button" class="chat-launcher" id="chat-launcher" aria-controls="chat-dock" aria-expanded="false" title="Chat with an agent">
+        <span aria-hidden="true">&#x1F916;</span><span class="chat-launcher-label">Ask an agent</span>
+    </button>
+    <section class="chat-dock" id="chat-dock" aria-label="Chat with an agent" hidden {% block chat_context %}{% endblock %}>
+        <div class="chat-bar">
+            <select id="chat-agent" aria-label="Agent">
+                {% for p in chat_personas() %}<option value="{{ p.key }}" title="{{ p.description }}">{{ p.emoji }} {{ p.name }}</option>{% endfor %}
+            </select>
+            <button type="button" class="chat-bar-btn" data-chat-new title="Start a new conversation">New</button>
+            <button type="button" class="chat-bar-btn" data-chat-close title="Close (Esc)" aria-label="Close chat">&times;</button>
+        </div>
+        <div class="chat-log" id="chat-log" role="log" aria-live="polite"></div>
+        {% if chat_model %}
+        <form class="chat-form" id="chat-form" autocomplete="off">
+            <textarea id="chat-input" rows="2" maxlength="4000" placeholder="Message the agent…" aria-label="Message"></textarea>
+            <button type="submit" class="btn btn-sm">Send</button>
+        </form>
+        <p class="chat-foot muted">{{ chat_model }} · Replies are drafts; nothing is sent.</p>
+        {% else %}
+        <p class="chat-foot muted">No AI model is set up on this server yet. An owner can set <code>ANTHROPIC_API_KEY</code>, or point <code>AGENCY_OS_LLM</code> at a local model (see README).</p>
+        {% endif %}
+    </section>
+    <script src="/static/agent_chat.js" defer></script>
+    {% endif %}
     <script src="/static/app.js"></script>
     {% if user %}<script src="/static/player.js" defer></script>{% endif %}
     {% if user and user.uses_ai('ai.connect') %}<script src="/static/webmcp.js" defer></script>{% endif %}

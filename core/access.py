@@ -196,6 +196,7 @@ ROUTE_RULES: dict[str, str] = {
     "POST /prospects/{prospect_id}/refresh-email": "prospects.edit",
     "POST /prospects/{prospect_id}/agent": "agents.use",
     "POST /prospects/{prospect_id}/agent/note": "agents.use",
+    "POST /agent/chat": "agents.use",
     "GET /api/tools": "ai.connect",
     "POST /api/tools/{tool_name}": "ai.connect",
     "GET /workflows": ANY_USER,  # tutorials (filtered by permission) and the user's own workflows
