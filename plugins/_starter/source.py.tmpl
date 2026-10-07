@@ -1,0 +1,72 @@
+"""
+${title} source: prospects from a JSON feed you point it at.
+
+Off until ${ENV}_SOURCE_URL is set to an https URL that returns a list of
+records (or {"prospects": [...]}) like:
+
+    [{"name": "Eastside Families United", "city": "Pasadena", "state": "CA",
+      "zip": "91101", "website_url": "https://example.org", "focus_area": "youth",
+      "ein": "11-1111111"}]
+
+Turn it on for a campaign by adding `- ${module}` under prospect_sources in its
+campaign.yaml, then `agency-os sync --campaign <name>`. Replace fetch() to read
+an API, a CSV or a scraped page instead; keep _prospect() as the one place a
+record becomes a Prospect.
+"""
+
+from __future__ import annotations
+
+import os
+from typing import Iterator
+from urllib.parse import urlsplit
+
+import httpx
+
+from core.models import Prospect
+
+MAX_RECORDS = 5000
+MAX_BYTES = 5 * 1024 * 1024
+FIELDS = ("city", "state", "zip", "county", "website_url", "focus_area", "ein", "address")
+
+
+class ${Class}Source:
+    key = "${module}"
+
+    def _url(self) -> str:
+        url = os.environ.get("${ENV}_SOURCE_URL", "").strip()
+        parts = urlsplit(url)
+        local = parts.hostname in ("localhost", "127.0.0.1")
+        return url if parts.hostname and (parts.scheme == "https" or (local and parts.scheme == "http")) else ""
+
+    def is_configured(self) -> bool:
+        return bool(self._url())
+
+    def fetch(self) -> list[dict]:
+        """The raw records. Never follows redirects to another host."""
+        with httpx.Client(timeout=30, follow_redirects=False) as client:
+            response = client.get(self._url())
+        response.raise_for_status()
+        if len(response.content) > MAX_BYTES:
+            raise ValueError(f"The feed is over {MAX_BYTES // (1024 * 1024)} MB")
+        data = response.json()
+        records = data.get("prospects") if isinstance(data, dict) else data
+        if not isinstance(records, list):
+            raise ValueError("The feed must be a list of records, or {\"prospects\": [...]}")
+        return [r for r in records[:MAX_RECORDS] if isinstance(r, dict)]
+
+    def _prospect(self, record: dict) -> Prospect | None:
+        name = str(record.get("name") or "").strip()[:300]
+        if not name:
+            return None
+        values = {f: str(record[f]).strip()[:300] for f in FIELDS if record.get(f) not in (None, "")}
+        return Prospect(name=name, source=self.key, source_url=urlsplit(self._url())._replace(query="").geturl(),
+                        **values)
+
+    def discover(self, filters: dict) -> Iterator[Prospect]:
+        if not self.is_configured():
+            return
+        state = (filters.get("state") or "").upper()
+        for record in self.fetch():
+            prospect = self._prospect(record)
+            if prospect and (not state or (prospect.state or "").upper() == state):
+                yield prospect

@@ -218,11 +218,12 @@
     <div class="plugin-checkbox-grid">
         {% for p in plugins.channels %}
         <label class="plugin-card{% if not p.configured %} plugin-card-warning{% endif %}">
-            <input type="checkbox" name="channels" value="{{ p.key }}" {% if p.key in campaign.channels %}checked{% endif %}>
+            {% set locked = p.key in super_admin_channels and not request.state.user.is_super_admin %}<input type="checkbox" name="channels" value="{{ p.key }}" {% if p.key in campaign.channels %}checked{% endif %} {% if locked %}disabled title="Only a Super Admin can turn this on or off"{% endif %}>{% if locked and p.key in campaign.channels %}<input type="hidden" name="channels" value="{{ p.key }}">{% endif %}
             <div class="plugin-card-body">
                 <strong>{{ p.key }}</strong>
                 <p>{{ p.description }}</p>
                 {% if not p.configured %}<span class="badge badge-warning">⚠ Not configured</span>{% endif %}
+                    {% if p.key in super_admin_channels %}<span class="badge">Super Admin only</span>{% endif %}
             </div>
         </label>
         {% endfor %}

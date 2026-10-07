@@ -1,0 +1,13 @@
+name: Save a prospect list
+description: Save a filtered view of prospects, the starting point for a lead package. Nothing is saved.
+requires: prospects.view
+steps:
+  - goto: /prospects
+    say: A saved list is a filter you can come back to. Packages we sell are published from a saved list, so this is where one starts.
+  - highlight: '#filter-form'
+    say: Narrow the list first, by campaign, stage, city, focus area or search text.
+  - highlight: 'form[action="/prospects/saved-lists"]'
+    say: Then name the view and save it. It shows up under My saved lists.
+  - highlight: '#saved-lists-heading'
+    say: Click a saved list to reopen that exact filter. The list follows your prospects as they change; it's a filter, not a snapshot. Lists are private to you; whoever publishes a package saves their own.
+  - pause: Your turn. Filter to the prospects you've worked most and save them as a list.

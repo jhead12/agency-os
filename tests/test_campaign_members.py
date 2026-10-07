@@ -202,3 +202,56 @@ def test_packages_only_draw_from_campaigns_the_publisher_sees(db, leads):
     assert leads["dentist"] not in selling.candidates(db, {}, hidden=selling.hidden_for_publisher(db, b))
     # A publisher who's gone: only campaigns open to everyone.
     assert leads["attorney"] not in selling.candidates(db, {}, hidden=selling.hidden_for_publisher(db, None))
+
+
+# ── Super Admin–only channels (Lob) ────────────────────────────────────
+
+
+ORIGIN = {"origin": "http://testserver"}
+
+
+def pasadena_channels(db) -> list[str]:
+    import yaml
+    row = db.conn.execute("SELECT content FROM campaign_files WHERE path = ?",
+                          ("healthcare-practices-pasadena/campaign.yaml",)).fetchone()
+    return yaml.safe_load(row["content"])["channels"]
+
+
+def test_only_super_admins_turn_lob_on_or_off(db, leads):
+    make_user(db, "a@x.com", access.OWNER_ROLE)
+    make_user(db, "boss@x.com", access.SUPER_ADMIN_ROLE)
+    owner, boss = client_for("a@x.com"), client_for("boss@x.com")
+    page = f"/admin/campaigns/{HEALTHCARE}"
+
+    # An Owner can't add Lob to a campaign or create one with it; the checkbox is locked
+    assert 'value="lob_direct_mail" disabled' in owner.get(page).text.replace("  ", " ")
+    r = owner.post(page, data={"channels": ["manual", "lob_direct_mail"]}, headers=ORIGIN)
+    assert "Only%20a%20Super%20Admin" in r.headers["location"]
+    assert pasadena_channels(db) == ["manual"]
+    r = owner.post("/admin/campaigns/create", headers=ORIGIN, data={
+        "name": "Mail Test", "product": "u9itus_voter_guide", "prospect_sources": ["irs_bmf"],
+        "channels": ["lob_direct_mail"]})
+    assert "Only%20a%20Super%20Admin" in r.headers["location"]
+
+    # A Super Admin can; the Owner can then edit other channels but can't remove Lob
+    boss.post(page, data={"channels": ["manual", "lob_direct_mail"]}, headers=ORIGIN)
+    assert pasadena_channels(db) == ["manual", "lob_direct_mail"]
+    owner.post(page, data={"channels": ["email_smtp", "manual", "lob_direct_mail"]}, headers=ORIGIN)
+    assert pasadena_channels(db) == ["email_smtp", "manual", "lob_direct_mail"]
+    r = owner.post(page, data={"channels": ["manual"]}, headers=ORIGIN)
+    assert "Only%20a%20Super%20Admin" in r.headers["location"]
+    assert "lob_direct_mail" in pasadena_channels(db)
+
+
+def test_owners_cannot_reach_campaigns_assigned_to_other_owners(db, leads):
+    a = make_user(db, "a@x.com", access.OWNER_ROLE)
+    make_user(db, "b@x.com", access.OWNER_ROLE)
+    db.add_campaign_owner(HEALTHCARE, a, None)
+    other = client_for("b@x.com")
+    page = f"/admin/campaigns/{HEALTHCARE}"
+    assert other.get(page).status_code == 404
+    assert other.post(page, data={"channels": ["email_smtp"]}, headers=ORIGIN).status_code == 404
+    assert pasadena_channels(db) == ["manual"]
+    assert other.post(f"{page}/members", data={"member": f"user:{a}"}).status_code == 404
+    assert other.post(f"{page}/members/1/delete").status_code == 404
+    assert client_for("a@x.com").get(page).status_code == 200

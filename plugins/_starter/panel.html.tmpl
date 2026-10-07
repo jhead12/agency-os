@@ -1,0 +1,7 @@
+{# The ${title} card on a prospect's page. The app draws the card and its title around this. #}
+{% if ours %}
+<p>Found by the ${title} source.</p>
+{% else %}
+<p class="muted">Not from the ${title} source{% if prospect.source %} (from {{ prospect.source }}){% endif %}.</p>
+{% endif %}
+<a href="/p/{{ page_key }}?q={{ prospect.name|urlencode }}" class="btn btn-sm btn-secondary">Open in ${title} →</a>

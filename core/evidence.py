@@ -6,7 +6,10 @@ itself and the prospect page prompts for a new email.
 Sources (web/app.py routes, all off until their secret is set):
 
 - Lob   POST /webhooks/lob       letters / postcards / self-mailers returned
-                                 to sender. Signed: Lob-Signature is the hex
+                                 to sender, and delivered ("processed for
+                                 delivery" is USPS's out-for-delivery scan; Lob
+                                 has no proof of delivery for regular mail), which
+                                 starts the mailer follow-up call. Signed: Lob-Signature is the hex
                                  HMAC-SHA256 of "<Lob-Signature-Timestamp>.<raw body>"
                                  with LOB_WEBHOOK_SECRET; older than 5 minutes is refused.
 - Smartlead POST /webhooks/smartlead?key=...   EMAIL_BOUNCE events. Smartlead
@@ -15,8 +18,9 @@ Sources (web/app.py routes, all off until their secret is set):
 - Any other sender (SMTP relays, Postmark, Zapier...)
           POST /webhooks/bounce?key=...  {"email": "...", "type": "hard"|"soft", "id": "..."}
 
-Each provider event is recorded once (by its event id), soft bounces are
-ignored, and an email that matches nobody is acknowledged and dropped.
+Each provider event is recorded once (by its event id), a mail piece is marked
+delivered once however many scans arrive, soft bounces are ignored, and an
+email or piece that matches nobody is acknowledged and dropped.
 """
 
 from __future__ import annotations
@@ -32,6 +36,8 @@ from core import verify
 
 MAX_BODY = 256 * 1024
 LOB_TOLERANCE_SECONDS = 300
+# Lob tracking events (the part after the last dot) that mean the piece arrived
+LOB_DELIVERED_EVENTS = ("processed_for_delivery", "delivered")
 
 
 def webhook_key_ok(given: str) -> bool:
@@ -76,35 +82,58 @@ def record_bounce(db, email: str, *, source: str, event_id: str = "", detail: Op
     return len(rows)
 
 
-def record_returned_mail(db, piece_id: str, *, source: str, event_id: str = "", detail: Optional[dict] = None) -> int:
-    """Record returned mail for the mail piece we sent (matched by its Lob id). Returns 0 or 1."""
-    if not piece_id or _seen(db, source, event_id):
-        return 0
-    row = db.conn.execute(
+def _mail_piece(db, piece_id: str):
+    """The prospect and campaign a mail piece we sent went to (matched by its Lob id), or None."""
+    return db.conn.execute(
         """SELECT o.prospect_id, o.campaign_id, p.address FROM email_log e
            JOIN outreach o ON o.id = e.outreach_id JOIN prospects p ON p.id = o.prospect_id
            WHERE e.provider_message_id = ? LIMIT 1""", (piece_id,)).fetchone()
+
+
+def _record_mail_event(db, kind: str, piece_id: str, *, source: str, event_id: str, detail: Optional[dict]) -> int:
+    if not piece_id or _seen(db, source, event_id):
+        return 0
+    row = _mail_piece(db, piece_id)
     if row is None:
         return 0
-    verify.record_event(db, row["prospect_id"], "mail_returned", row["address"] or "", campaign_id=row["campaign_id"],
+    verify.record_event(db, row["prospect_id"], kind, row["address"] or "", campaign_id=row["campaign_id"],
                         detail={"source": source, "event_id": event_id, "piece_id": piece_id, **(detail or {})})
     return 1
+
+
+def record_returned_mail(db, piece_id: str, *, source: str, event_id: str = "", detail: Optional[dict] = None) -> int:
+    """Record returned mail for the mail piece we sent. Returns 0 or 1."""
+    return _record_mail_event(db, "mail_returned", piece_id, source=source, event_id=event_id, detail=detail)
+
+
+def record_mail_delivered(db, piece_id: str, *, source: str, event_id: str = "", detail: Optional[dict] = None) -> int:
+    """Record that a mail piece we sent arrived, once per piece. Returns 0 or 1."""
+    already = piece_id and db.conn.execute(
+        "SELECT 1 FROM contact_events WHERE kind = 'mail_delivered' AND detail::jsonb ->> 'piece_id' = ? LIMIT 1",
+        (piece_id,)).fetchone()
+    if already:
+        return 0
+    return _record_mail_event(db, "mail_delivered", piece_id, source=source, event_id=event_id, detail=detail)
 
 
 # ── Provider payloads ──────────────────────────────────────────────────
 
 
 def handle_lob(db, payload: Any) -> int:
-    """A Lob tracking event; only "<piece>.returned_to_sender" counts (not a return envelope's)."""
+    """A Lob tracking event: "<piece>.returned_to_sender" or a delivered scan (never a return envelope's)."""
     if not isinstance(payload, dict):
         return 0
     event_type = str((payload.get("event_type") or {}).get("id") or "")
-    if not event_type.endswith(".returned_to_sender") or ".return_envelope." in event_type:
+    if ".return_envelope." in event_type:
         return 0
     body = payload.get("body") if isinstance(payload.get("body"), dict) else {}
     piece_id = str(body.get("id") or payload.get("reference_id") or "")
-    return record_returned_mail(db, piece_id, source="lob", event_id=str(payload.get("id") or ""),
-                                detail={"event_type": event_type})
+    args = dict(source="lob", event_id=str(payload.get("id") or ""), detail={"event_type": event_type})
+    if event_type.endswith(".returned_to_sender"):
+        return record_returned_mail(db, piece_id, **args)
+    if event_type.rpartition(".")[2] in LOB_DELIVERED_EVENTS:
+        return record_mail_delivered(db, piece_id, **args)
+    return 0
 
 
 def _first(data: dict, *paths: str) -> str:

@@ -1,0 +1,22 @@
+name: Build a lead we can sell
+description: What turns a prospect into a lead worth selling, and how your work earns you credit. Nothing is saved.
+requires: prospects.edit
+steps:
+  - goto: /prospects
+    say: A lead is worth what we can prove about it. Everything you record on a prospect's page is that proof.
+  - click: 'table.data-table tbody a[href^="/prospects/"]'
+    say: Open a prospect.
+  - wait: {for: .contact-form}
+  - highlight: 'form.contact-form[action$="/contact"]'
+    say: Step 1, a contact on file. Leads without an email or phone are never sold. Whoever saves the current email or phone gets "found the contact" credit, worth 50% of the reps' share.
+  - highlight: 'form[action$="/contact-event"]'
+    say: If an email bounces, mark it here (or it's recorded automatically from webhooks). A bounced email keeps a lead out of every package until someone finds a new one.
+  - highlight: .call-log-form
+    say: Step 2, contact depth. Each call, email and mailer proves how far the lead has been worked, from mailed to emailed, phone verified, connected and pitched. Buyers pay more for deeper leads.
+  - highlight: '.call-log-form select[name="outcome"]'
+    say: Reaching the decision-maker earns "qualified" credit (30%). Record wrong and disconnected numbers too; honest outcomes are what keep our 90% guarantee true.
+  - highlight: '[data-panel="credit"]'
+    say: Who built this lead. If it's sold, these reps share its royalties. Owners can add "sourced" credit (20%) here.
+  - highlight: 'form[action$="/do-not-sell"]'
+    say: If someone asks not to have their data sold, mark them do not sell. They're never published, sold or used as a replacement.
+  - pause: Your turn. Fill in a missing contact or log a call on one of your prospects.

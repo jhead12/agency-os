@@ -1,0 +1,22 @@
+name: Sell a lead package
+description: Publish a saved list as an x402 lead package that other agency-os owners can buy. Nothing is published.
+requires: packages.sell
+steps:
+  - goto: /admin/selling
+    say: This is where we sell our own data to other agency-os owners. Buyers pay in USDC to unlock a package, then a royalty for each lead they contact.
+  - highlight: '.detail-card:has(code)'
+    say: Store status. Selling must be switched on for this server (AGENCY_OS_SELL and a wallet to be paid to). Give buyers the provider address shown here.
+  - highlight: '.detail-card:has(strong)'
+    say: Read this before selling. Honor do-not-sell requests and keep a consent note on every package.
+  - highlight: '#saved_list_id'
+    say: Pick a saved list to publish.
+  - highlight: '#guarantee_tier'
+    say: Choose the guarantee. 90% of the leads must be at least this deep. Only leads that meet it go in, and they're checked again at every sale.
+  - highlight: '#unlock_usd'
+    say: Set the unlock price and a royalty per contact for each contact depth. Deeper leads earn more.
+  - highlight: '#contributor_pool_pct'
+    say: This share goes to the reps who built the leads, split by who found the contact, who qualified it and who sourced it.
+  - highlight: 'button[value="preview"]'
+    say: Check the list first. It shows how many prospects qualify and their contact depth before anything is published.
+  - say: After you publish, packages and their income appear below, along with any buyers' claims. Replacements are automatic; refunds are always reviewed by hand.
+  - pause: Your turn. Check one of your saved lists to see how many leads qualify.

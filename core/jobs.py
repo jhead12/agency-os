@@ -13,6 +13,23 @@ Owners can also run a job now from /admin/jobs.
 
 Only jobs that are safe to repeat are here: provisioning and event pulls are
 idempotent. Sending email (enqueue) stays a deliberate, manual step.
+
+Plugins add jobs in plugins/jobs/<name>.py, found once per process (restart to
+add one):
+
+    class StaleLeadsJob:
+        key = "stale-leads"            # lowercase; can't reuse a built-in job's key
+        label = "Rank stale leads with an agent"
+        every_minutes = 24 * 60        # at least 5; AGENCY_OS_JOB_STALE_LEADS_MINUTES overrides
+
+        def run(self, job: JobContext) -> dict:
+            return {"ranked": 12}      # the run's summary, shown on /admin/jobs
+
+The same rules hold: a plugin job must be safe to repeat and must never send
+anything (email, texts, mail) or spend money. job.ask_agent() drafts with a
+persona and returns text; a job stores what it found in its summary, and a
+plugin page shows it with last_result(). Jobs see every campaign, so a job
+keeps results per campaign and its page shows only the campaigns the viewer sees.
 """
 
 from __future__ import annotations
@@ -20,12 +37,15 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import threading
 import traceback
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Callable
+from pathlib import Path
+from typing import Any, Callable, Optional
 
+from core import agents
 from core.campaign import CampaignConfig
 from core.db import Database
 from core.pipeline import Pipeline
@@ -33,11 +53,36 @@ from core.protocols import portal_product
 from core.registry import PluginRegistry
 
 
+PLUGINS_DIR = Path(__file__).resolve().parent.parent / "plugins"
+BUILT_IN = ("pull-events", "provision")
+KEY_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+MIN_MINUTES = 5
+
+
 @dataclass(frozen=True)
 class Job:
     key: str
     label: str
     every_minutes: int
+    plugin: Any = field(default=None, compare=False, repr=False)  # a plugins/jobs/ instance
+
+
+@dataclass
+class JobContext:
+    """What a plugin job gets for one run."""
+    key: str
+    db: Database
+    registry: PluginRegistry
+    pipeline: Pipeline
+    campaigns: list[CampaignConfig]  # active campaigns, all of them (jobs run as no one)
+
+    def ask_agent(self, persona_key: str, ask: str, data) -> dict:
+        """Ask a persona (agents/ or plugins/agents/) about `data`. Returns {ok, text, error, agent}; never sends."""
+        return agents.ask(persona_key, ask, data)
+
+    def last_result(self) -> Optional[dict]:
+        """This job's previous run (see last_result()), e.g. to pick up where it left off."""
+        return last_result(self.db, self.key)
 
 
 def _minutes(env: str, default: int) -> int:
@@ -47,13 +92,51 @@ def _minutes(env: str, default: int) -> int:
         return default
 
 
+_plugin_jobs: list[Job] | None = None
+
+
+def plugin_jobs() -> list[Job]:
+    """The valid jobs in plugins/jobs/, found once per process."""
+    global _plugin_jobs
+    if _plugin_jobs is None:
+        registry = PluginRegistry()
+        registry.discover(str(PLUGINS_DIR), categories=("jobs",))
+        _plugin_jobs = []
+        for key, plugin in registry.jobs.items():
+            label, every = getattr(plugin, "label", None), getattr(plugin, "every_minutes", None)
+            if (not KEY_RE.match(key) or key in BUILT_IN or not isinstance(label, str) or not label
+                    or not isinstance(every, int) or isinstance(every, bool) or not callable(getattr(plugin, "run", None))):
+                print(f"  ! jobs/{key}: needs a lowercase key (not {' or '.join(BUILT_IN)}), a label, "
+                      "every_minutes and run()")
+                continue
+            env = "AGENCY_OS_JOB_" + re.sub(r"[^A-Z0-9]", "_", key.upper()) + "_MINUTES"
+            _plugin_jobs.append(Job(key, label, _minutes(env, max(MIN_MINUTES, every)), plugin))
+    return _plugin_jobs
+
+
 def configured_jobs() -> list[Job]:
     return [
         Job("pull-events", "Pull demo portal events (views, claims, publishes)",
             _minutes("AGENCY_OS_PULL_EVENTS_MINUTES", 60)),
         Job("provision", "Create demo pages for new prospects",
             _minutes("AGENCY_OS_PROVISION_MINUTES", 24 * 60)),
+        *plugin_jobs(),
     ]
+
+
+def last_result(db: Database, key: str) -> Optional[dict]:
+    """A job's latest finished run: {started_at, finished_at, ok, trigger, summary (a dict)}, or None."""
+    row = db.conn.execute(
+        "SELECT * FROM job_runs WHERE job = ? AND finished_at IS NOT NULL ORDER BY id DESC LIMIT 1", (key,)
+    ).fetchone()
+    if row is None:
+        return None
+    found = dict(row)
+    try:
+        found["summary"] = json.loads(found.get("summary") or "{}")
+    except ValueError:
+        found["summary"] = {}
+    return found
 
 
 def jobs_enabled() -> bool:
@@ -87,8 +170,8 @@ class JobRunner:
         try:
             summary = self._execute(key, db)
             # A product that isn't configured did nothing; show that as a problem.
-            ok = not any(("error" in stats or stats.get("api_not_configured"))
-                         for stats in summary.values() if isinstance(stats, dict))
+            ok = "error" not in summary and not any(("error" in stats or stats.get("api_not_configured"))
+                                                    for stats in summary.values() if isinstance(stats, dict))
         except Exception as exc:  # a job must never take the web app down
             summary = {"error": f"{type(exc).__name__}: {exc}", "trace": traceback.format_exc(limit=5)}
             ok = False
@@ -122,7 +205,11 @@ class JobRunner:
                     for campaign in campaigns
                     if portal_product(registry.get_product(campaign.product))}
 
-        raise ValueError(f"Unknown job {key!r}")
+        job = next((j for j in plugin_jobs() if j.key == key), None)
+        if job is None:
+            raise ValueError(f"Unknown job {key!r}")
+        summary = job.plugin.run(JobContext(key, db, registry, pipeline, campaigns))
+        return summary if isinstance(summary, dict) else {"result": summary}
 
     @staticmethod
     def _campaign_active(db: Database, campaign: CampaignConfig) -> bool:

@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}{{ plugin_page.title }} — agency-os{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="/plugin-static/${module}.css">
+
+<div class="page-header">
+    <div>
+        <h1>{{ plugin_page.title }}</h1>
+        <p class="subtitle">Search prospects, read what the ${title} agent found, and save a search as a list.</p>
+    </div>
+</div>
+
+{% if msg %}<div class="save-notice">{{ msg }}</div>{% endif %}
+{% if error %}<div class="form-error">{{ error }}</div>{% endif %}
+
+<form method="get" action="/p/{{ plugin_page.key }}" class="filters ${module}-search">
+    <input type="text" name="q" value="{{ criteria.q or '' }}" placeholder="Name, city, EIN, zip or focus area"
+           aria-label="Search prospects" class="filter-input">
+    <select name="campaign" class="filter-select" aria-label="Campaign">
+        <option value="">All campaigns</option>
+        {% for c in campaigns %}<option value="{{ c.db_name }}" {% if criteria.campaign == c.db_name %}selected{% endif %}>{{ c.name }}</option>{% endfor %}
+    </select>
+    <label class="check-label"><input type="checkbox" name="ours" value="1" {% if criteria.source %}checked{% endif %}> Only from the ${title} source</label>
+    <button type="submit" class="btn btn-sm">Search</button>
+</form>
+
+<div class="campaign-section">
+    <div class="campaign-header"><h2>Prospects</h2></div>
+    {% if prospects %}
+    <div class="table-scroll">
+    <table class="data-table">
+        <thead><tr><th>Name</th><th>City</th><th>Source</th></tr></thead>
+        <tbody>
+        {% for p in prospects %}
+        <tr><td><a href="/prospects/{{ p.id }}">{{ p.name }}</a></td><td>{{ p.city or '' }}{% if p.state %}, {{ p.state }}{% endif %}</td><td>{{ p.source }}</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% if prospects|length >= page_size %}<p class="muted">Showing the first {{ page_size }}. Narrow the search to see others.</p>{% endif %}
+    {% else %}
+    <p class="muted">No prospects match.</p>
+    {% endif %}
+
+    {% if can_post %}
+    <form method="post" action="/p/{{ plugin_page.key }}" class="${module}-save">
+        {% for k, v in criteria.items() %}<input type="hidden" name="{{ 'ours' if k == 'source' else k }}" value="{{ '1' if k == 'source' else v }}">{% endfor %}
+        <input type="text" name="name" required maxlength="80" placeholder="Name this list" aria-label="List name" class="filter-input">
+        <button type="submit" class="btn btn-sm btn-secondary">Save as a list</button>
+    </form>
+    {% endif %}
+</div>
+
+<div class="campaign-section">
+    <div class="campaign-header"><h2>What the agent found</h2></div>
+    {% if not run %}
+    <p class="muted">The ${title} job hasn't run yet. An Owner can run it now from Administration → Jobs.</p>
+    {% else %}
+    <p class="muted">Last run {{ run.finished_at }}{% if not run.ok %} · <span class="text-warning">{{ run.summary.error or 'had problems' }}</span>{% endif %}.</p>
+    {% for f in findings %}
+    <div class="detail-card ${module}-finding">
+        <h3>{{ f.campaign }}</h3>
+        {% if f.error %}<div class="form-error">{{ f.error }}</div>{% else %}<div class="${module}-text">{{ f.text }}</div>{% endif %}
+        <p class="muted">Looked at {{ f.looked_at }} prospect(s). A draft for you to review; nothing was sent.</p>
+    </div>
+    {% else %}
+    <p class="muted">Nothing for the campaigns you can see.</p>
+    {% endfor %}
+    {% endif %}
+</div>
+{% endblock %}

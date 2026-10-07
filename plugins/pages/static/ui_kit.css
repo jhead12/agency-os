@@ -1,0 +1,12 @@
+/* UI kit page (plugins/pages/ui_kit.py): only the kit's own frame. The examples use style.css. */
+.ui-kit-toc { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-bottom: 24px; }
+.ui-kit-example { border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; }
+.ui-kit-example > h3 { margin-bottom: 4px; }
+.ui-kit-live { margin: 12px 0; }
+.ui-kit-live > * + * { margin-top: 8px; }
+.ui-kit-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.ui-kit-code { overflow-x: auto; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+               padding: 12px; font-size: 12px; line-height: 1.45; white-space: pre; margin-top: 8px; }
+.ui-kit-colors { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+.ui-kit-color { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.ui-kit-color span { width: 28px; height: 28px; border-radius: 6px; border: 1px solid var(--border); flex: none; }

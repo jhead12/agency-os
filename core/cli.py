@@ -11,6 +11,7 @@ Usage:
     agency-os digest --campaign voter-guide-cbo
     agency-os campaigns
     agency-os plugins
+    agency-os new-plugin grant-finder --title "Grant finder"
     agency-os import-sqlite --from db.sqlite
     agency-os users list
     agency-os users create-owner --email you@example.com
@@ -25,6 +26,9 @@ Usage:
     agency-os packages verify --campaign voter-guide-cbo [--ai]
     agency-os packages claim --id 3 --email you@example.com
     agency-os spend pending
+    agency-os accounts platform-key
+    agency-os accounts create --ref org_42 --name "Acme Realty"
+    agency-os searches run
     agency-os spend resolve --id 12 --status settled --tx 0x...
     agency-os connect --url https://your-app.up.railway.app --key aos_cli_...
     agency-os remote users invite --email rep@example.com --role Caller
@@ -609,6 +613,32 @@ def plugins(ctx, plugin_type):
             click.echo(f"  {k}")
 
 
+@cli.command("new-plugin")
+@click.argument("name")
+@click.option("--title", default="", help='Shown in the nav and on the page (default: from the name)')
+def new_plugin(name, title):
+    """Create a plugin with every part wired together: a page, a prospect-page panel,
+    a prospect source, a scheduled AI job, an agent and a test (see docs/PLUGINS.md)."""
+    from core import scaffold
+
+    try:
+        written = scaffold.create(name, title)
+    except scaffold.ScaffoldError as exc:
+        click.echo(f"Error: {exc}")
+        sys.exit(1)
+    values = scaffold.names(name, title)
+    click.echo(f"Created the {values['title']} plugin:")
+    for path in written:
+        click.echo(f"  {path.relative_to(scaffold.PROJECT_ROOT)}")
+    click.echo(f"""
+Next:
+  1. python -m pytest tests/test_plugin_{values['module']}.py
+  2. Restart the app: the page is at /p/{values['key']} (More menu), the job is on Administration -> Jobs,
+     and its panel and agent are on every prospect page.
+  3. Point the source at your data with {values['ENV']}_SOURCE_URL, and add `- {values['module']}`
+     under prospect_sources in a campaign.yaml.""")
+
+
 @cli.command("import-sqlite")
 @click.option("--from", "sqlite_path", required=True, type=click.Path(exists=True, dir_okay=False),
               help="SQLite database file from before the PostgreSQL move (e.g. db.sqlite)")
@@ -784,6 +814,110 @@ def users_invite(ctx, email, name, role_names, base_url, no_send):
         click.echo(f"Email not sent ({result.error}). Share this link with them instead:\n  {link}", err=True)
         sys.exit(1)
     click.echo(f"Welcome email sent to {user.email} (link expires {expires_at:%b %d, %Y})")
+
+
+# ── Customer accounts (u9itus billing) ──────────────────────────────
+
+
+@cli.group("accounts")
+def accounts_group():
+    """Customer accounts that use the /api/v1 search API (docs/U9ITUS_BILLING.md)."""
+
+
+@accounts_group.command("platform-key")
+def accounts_platform_key():
+    """Make a platform key for u9itus. Prints the key (for u9itus) and its hash (for agency-os)."""
+    from core import accounts
+
+    key, digest = accounts.new_platform_key()
+    click.echo("Give this key to u9itus (AGENCY_OS_PLATFORM_KEY). It is shown once:")
+    click.echo(f"  {key}")
+    click.echo("Set this on agency-os; it replaces any earlier platform key:")
+    click.echo(f"  AGENCY_OS_PLATFORM_KEY_HASH={digest}")
+
+
+@accounts_group.command("list")
+@click.pass_context
+def accounts_list(ctx):
+    """List accounts, their status and how many prospects they have."""
+    from core import accounts
+
+    rows = accounts.list_accounts(Database(ctx.obj["db_url"] or None))
+    if not rows:
+        click.echo("No accounts.")
+    for a in rows:
+        click.echo(f"  {a['external_ref']:<24} {a['name']:<32} {a['status']:<10} "
+                   f"{a['prospects']:>6} prospects  key ...{a['key_hint'] or ''}")
+
+
+@accounts_group.command("create")
+@click.option("--ref", "external_ref", required=True, help="u9itus's id for the customer")
+@click.option("--name", required=True)
+@click.pass_context
+def accounts_create(ctx, external_ref, name):
+    """Make an account by hand (u9itus normally does this through the API)."""
+    from core import accounts
+
+    try:
+        account, key = accounts.create(Database(ctx.obj["db_url"] or None), external_ref, name)
+    except accounts.AccountError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    if key is None:
+        click.echo(f"{account['external_ref']} already exists; use `accounts rotate-key` for a new key.")
+        return
+    click.echo(f"Created {account['external_ref']}. Its key, shown once:\n  {key}")
+
+
+@accounts_group.command("rotate-key")
+@click.option("--ref", "external_ref", required=True)
+@click.pass_context
+def accounts_rotate_key(ctx, external_ref):
+    """Issue a new key for an account; the old one stops working."""
+    from core import accounts
+
+    try:
+        key = accounts.rotate_key(Database(ctx.obj["db_url"] or None), external_ref)
+    except accounts.AccountError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    click.echo(f"New key for {external_ref}, shown once:\n  {key}")
+
+
+@accounts_group.command("set-status")
+@click.option("--ref", "external_ref", required=True)
+@click.option("--status", type=click.Choice(["active", "suspended"]), required=True)
+@click.pass_context
+def accounts_set_status(ctx, external_ref, status):
+    """Suspend an account or make it active again."""
+    from core import accounts
+
+    try:
+        accounts.set_status(Database(ctx.obj["db_url"] or None), external_ref, status)
+    except accounts.AccountError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    click.echo(f"{external_ref} is now {status}.")
+
+
+@cli.group("searches")
+def searches_group():
+    """Paid account searches (docs/U9ITUS_BILLING.md)."""
+
+
+@searches_group.command("run")
+@click.option("--limit", default=20, show_default=True, help="Most searches to run")
+@click.pass_context
+def searches_run(ctx, limit):
+    """Run queued searches now (the web app does this itself with AGENCY_OS_RUN_SEARCHES=1)."""
+    from core import searches
+
+    finished = searches.SearchRunner(ctx.obj["db_url"] or None).run_pending(limit=limit)
+    if not finished:
+        click.echo("No queued searches.")
+    for s in finished:
+        click.echo(f"  #{s['id']:<6} {s['type']:<7} {s['status']:<9} delivered {s['delivered']}/{s['max_results']}"
+                   + (f"  ({s['error']})" if s["error"] else ""))
 
 
 # ── Lead packages (x402) ───────────────────────────────────────────

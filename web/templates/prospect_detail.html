@@ -573,6 +573,14 @@ function toggleEmail(id) {
     <div class="detail-row"><span>Revenue</span><span>{{ prospect.annual_revenue|currency }}</span></div>
     <div class="detail-row"><span>Focus area</span><span>{{ (prospect.focus_area or '—')|replace('_', ' ') }}</span></div>
 </div>
+
+{# ── Plugin panels (plugins/panels/, see core/plugin_panels.py) ── #}
+{% for p in plugin_panels %}
+<div class="detail-card plugin-panel" {{ board.attrs(p.id) }}>
+    <h3>{{ p.title }}</h3>
+    {{ p.html }}
+</div>
+{% endfor %}
 </div>{# /panel-board #}
 
 

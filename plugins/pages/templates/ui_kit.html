@@ -1,0 +1,243 @@
+{% extends "base.html" %}
+{% block title %}{{ plugin_page.title }} — agency-os{% endblock %}
+
+{# Each example shows the component live, then its HTML to copy. #}
+{% macro example(title, note="") %}
+{% set html = caller() %}
+<div class="ui-kit-example">
+    <h3>{{ title }}</h3>
+    {% if note %}<p class="muted">{{ note }}</p>{% endif %}
+    <div class="ui-kit-live">{{ html }}</div>
+    <details><summary>HTML</summary><pre class="ui-kit-code"><code>{{ html|trim|forceescape }}</code></pre></details>
+</div>
+{% endmacro %}
+
+{% block content %}
+<link rel="stylesheet" href="/plugin-static/ui_kit.css">
+
+<div class="page-header">
+    <div>
+        <h1>{{ plugin_page.title }}</h1>
+        <p class="subtitle">The app's styles, for plugin pages and panels. Everything here is sample data.</p>
+    </div>
+</div>
+
+<p class="muted" style="margin-bottom: 12px;">
+    Extend <code>base.html</code> and use these classes from <code>/static/style.css</code>, and your page
+    matches the app, including on phones. Put only your own extras in <code>plugins/pages/static/</code>.
+    How to build pages and panels: <code>docs/PLUGINS.md</code>.
+</p>
+<nav class="ui-kit-toc" aria-label="Sections">
+    <a href="#colors">Colors</a><a href="#layout">Page layout</a><a href="#messages">Messages</a>
+    <a href="#buttons">Buttons</a><a href="#badges">Badges</a><a href="#stats">Stats</a>
+    <a href="#cards">Cards</a><a href="#tables">Tables</a><a href="#forms">Forms</a><a href="#panels">Panels</a>
+</nav>
+
+<h2 class="section-title" id="colors">Colors</h2>
+<div class="ui-kit-example">
+    <p class="muted">CSS variables on <code>:root</code>. Use <code>var(--accent)</code> rather than a hex value so
+        your styles follow the theme.</p>
+    <div class="ui-kit-colors ui-kit-live">
+        {% for c in colors %}<div class="ui-kit-color"><span style="background: var(--{{ c }});"></span><code>--{{ c }}</code></div>{% endfor %}
+    </div>
+</div>
+
+<h2 class="section-title" id="layout">Page layout</h2>
+{% call example("Page header", "Every page starts with one. Templates get plugin_page.title.") %}
+<div class="page-header">
+    <div>
+        <h1>Grant finder</h1>
+        <p class="subtitle">One line about what this page is for</p>
+    </div>
+</div>
+{% endcall %}
+
+{% call example("Header with actions") %}
+<div class="page-header">
+    <div class="page-header-row">
+        <div>
+            <h1>Grant finder</h1>
+            <p class="subtitle">12 open grants</p>
+        </div>
+        <div class="page-header-actions">
+            <a href="#" class="btn btn-sm btn-secondary">Export</a>
+            <a href="#" class="btn btn-sm">New search</a>
+        </div>
+    </div>
+</div>
+{% endcall %}
+
+{% call example("Section", "Groups part of a page under a heading.") %}
+<div class="campaign-section">
+    <div class="campaign-header">
+        <h2>Los Angeles CBOs</h2>
+        <span class="badge badge-product">voter-guide</span>
+        <a href="#" class="btn btn-sm btn-secondary">View Prospects →</a>
+    </div>
+    <div class="campaign-meta">
+        <div class="meta-item"><span class="meta-label">Open Rate</span><span class="meta-value">41%</span></div>
+        <div class="meta-item"><span class="meta-label">Reply Rate</span><span class="meta-value">6%</span></div>
+    </div>
+</div>
+{% endcall %}
+
+{% call example("Back link") %}
+<div class="breadcrumb"><a href="#">← Prospects</a></div>
+{% endcall %}
+
+<h2 class="section-title" id="messages">Messages</h2>
+{% call example("After a form post", "Plugin page templates get msg and error from the last post.") %}
+<div class="save-notice">Saved the list.</div>
+<div class="form-error">Name the list first.</div>
+{% endcall %}
+
+{% call example("Alerts") %}
+<div class="alert alert-success">Mail template saved.</div>
+<div class="alert alert-error">The provider didn't answer. Try again.</div>
+{% endcall %}
+
+{% call example("Empty state and quiet text") %}
+<div class="empty-state">Nothing recorded yet.</div>
+<p class="muted">A note in smaller, quieter text.</p>
+<p><span class="text-success">on track</span> · <span class="text-warning">overdue by 3 days</span></p>
+{% endcall %}
+
+<h2 class="section-title" id="buttons">Buttons</h2>
+{% call example("Buttons", "On a link or a button. btn-sm in tables, toolbars and forms that sit in a row.") %}
+<div class="ui-kit-row">
+    <button type="button" class="btn">Primary</button>
+    <button type="button" class="btn btn-secondary">Secondary</button>
+    <button type="button" class="btn btn-sm">Small</button>
+    <a href="#" class="btn btn-sm btn-secondary">Small link</a>
+</div>
+{% endcall %}
+
+<h2 class="section-title" id="badges">Badges</h2>
+{% call example("Badges and tags") %}
+<div class="ui-kit-row">
+    <span class="badge">plain</span>
+    <span class="badge badge-success">✓ Configured</span>
+    <span class="badge badge-warning">No guarantee</span>
+    <span class="badge badge-product">voter-guide</span>
+    <span class="tag">you</span>
+    <span class="tag tag-voter">voter</span>
+</div>
+{% endcall %}
+
+{% call example("Pipeline stages", "stage-badge stage-<stage>, with the stage names the pipeline uses.") %}
+<div class="ui-kit-row">
+    {% for s in stages %}<span class="stage-badge stage-{{ s }}">{{ s }}</span>
+    {% endfor %}
+</div>
+{% endcall %}
+
+{% call example("Email and call status") %}
+<div class="ui-kit-row">
+    {% for s in statuses %}<span class="status-badge status-{{ s }}">{{ s }}</span>
+    {% endfor %}
+</div>
+{% endcall %}
+
+<h2 class="section-title" id="stats">Stats</h2>
+{% call example("Stat cards") %}
+<div class="stats-grid">
+    <div class="stat-card"><div class="stat-label">Total Prospects</div><div class="stat-value">1,284</div></div>
+    <div class="stat-card"><div class="stat-label">Emails Sent</div><div class="stat-value">310</div></div>
+    <div class="stat-card"><div class="stat-label">Open grants</div><div class="stat-value">12</div></div>
+</div>
+{% endcall %}
+
+{% call example("Stage bars") %}
+<div class="stage-bars">
+    <div class="stage-row">
+        <div class="stage-label"><span class="stage-dot stage-contacted"></span>contacted</div>
+        <div class="stage-bar-container"><div class="stage-bar stage-contacted" style="width: 60%"></div><span class="stage-count">60</span></div>
+    </div>
+    <div class="stage-row">
+        <div class="stage-label"><span class="stage-dot stage-closed_won"></span>closed_won</div>
+        <div class="stage-bar-container"><div class="stage-bar stage-closed_won" style="width: 15%"></div><span class="stage-count">15</span></div>
+    </div>
+</div>
+{% endcall %}
+
+<h2 class="section-title" id="cards">Cards</h2>
+{% call example("Cards with label and value rows", "detail-grid lays cards out side by side, and stacks them on phones.") %}
+<div class="detail-grid">
+    <div class="detail-card">
+        <h3>Organization info</h3>
+        <div class="detail-row"><span>City</span><span>Pasadena, CA</span></div>
+        <div class="detail-row"><span>Focus area</span><span>food security</span></div>
+    </div>
+    <div class="detail-card">
+        <h3>Payouts</h3>
+        <div class="detail-row"><span>Status</span><span><span class="badge badge-success">Open</span></span></div>
+        <div class="detail-row"><span>Minimum payout</span><span>$10.00</span></div>
+    </div>
+</div>
+{% endcall %}
+
+{% call example("Board of cards in three widths", "panel-board, with data-width third, two-thirds or full on each card.") %}
+<div class="detail-grid panel-board">
+    <div class="detail-card" data-width="third"><h3>A third</h3><p class="muted">The default.</p></div>
+    <div class="detail-card" data-width="two-thirds"><h3>Two thirds</h3><p class="muted">For a wider list.</p></div>
+    <div class="detail-card" data-width="full"><h3>Full width</h3><p class="muted">For tables and timelines.</p></div>
+</div>
+{% endcall %}
+
+<h2 class="section-title" id="tables">Tables</h2>
+{% call example("Data table", "Wrap it in table-scroll so it scrolls sideways on phones instead of widening the page.") %}
+<div class="table-scroll">
+<table class="data-table">
+    <thead><tr><th>Name</th><th>City</th><th>Stage</th></tr></thead>
+    <tbody>
+        <tr><td><a href="#">Eastside Families United</a></td><td>Pasadena, CA</td><td><span class="stage-badge stage-engaged">engaged</span></td></tr>
+        <tr><td><a href="#">Harbor Food Bank</a></td><td>Long Beach, CA</td><td><span class="stage-badge stage-cold">cold</span></td></tr>
+    </tbody>
+</table>
+</div>
+{% endcall %}
+
+<h2 class="section-title" id="forms">Forms</h2>
+{% call example("Search and filters", "A row of inputs, like the Prospects page. A GET form keeps the search in the address.") %}
+<form method="get" action="/p/ui-kit" class="filters">
+    <input type="text" name="q" placeholder="Name, city or EIN" aria-label="Search" class="filter-input">
+    <select name="stage" class="filter-select" aria-label="Stage">
+        <option value="">All stages</option>
+        <option value="cold">cold</option>
+    </select>
+    <label class="check-label"><input type="checkbox" name="ours" value="1"> Only ours</label>
+    <button type="submit" class="btn btn-sm">Search</button>
+</form>
+{% endcall %}
+
+{% call example("Form with labelled fields", "stack-form stacks its fields. form-grid puts fields side by side on wide screens.") %}
+<form method="get" action="/p/ui-kit" class="stack-form">
+    <div class="form-grid">
+        <div class="form-field"><label for="kit-name">List name</label>
+            <input type="text" id="kit-name" name="name" maxlength="80" class="filter-input"></div>
+        <div class="form-field"><label for="kit-tier">Guarantee</label>
+            <select id="kit-tier" name="tier" class="filter-select"><option>phone verified</option></select></div>
+    </div>
+    <label class="check-label"><input type="checkbox" name="confirm" value="yes"> I checked the list</label>
+    <button type="submit" class="btn">Save</button>
+</form>
+{% endcall %}
+
+{% call example("A button that posts", "inline-form keeps a one-button form in line with the text around it.") %}
+<form method="get" action="/p/ui-kit" class="inline-form">
+    <button type="submit" class="btn btn-sm btn-secondary">Run now</button>
+</form>
+{% endcall %}
+
+{% call example("Value to copy", "Buttons with data-copy copy their value; app.js handles it.") %}
+<div class="copy-field"><code>https://example.com/feed.json</code><button type="button" class="btn btn-secondary btn-sm" data-copy="https://example.com/feed.json">Copy</button></div>
+{% endcall %}
+
+<h2 class="section-title" id="panels">Panels</h2>
+<div class="ui-kit-example">
+    <p>A plugin panel (<code>plugins/panels/</code>) is a card on the dashboard or on every prospect's page. The
+        app draws the card and its title; your template is only what goes inside, so use the classes above
+        (<code>detail-row</code>, badges, a small table). On the prospect page people can move, resize, color and
+        hide it like the built-in cards. See "Panels" in <code>docs/PLUGINS.md</code>.</p>
+</div>
+{% endblock %}

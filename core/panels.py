@@ -8,7 +8,9 @@ color the page background. The arrangement is saved per user in user_layouts;
 with none saved the page uses its defaults.
 
 Panels the user may not see (no permission, no data) are never rendered, so a
-saved layout can name them safely: they're skipped.
+saved layout can name them safely: they're skipped. Plugin panels
+(core/plugin_panels.py) join a page's board as "plugin-<key>"; a saved layout
+naming one that's since been removed just drops it.
 
 Layout, as saved and as posted by the editor (web/static/panel_editor.js):
     {"background": "#1e293b" | null,
@@ -25,6 +27,8 @@ import re
 from dataclasses import dataclass
 
 from markupsafe import Markup, escape
+
+from core import plugin_panels
 
 WIDTHS = ("third", "two-thirds", "full")
 COLOR = re.compile(r"^#[0-9a-f]{6}$")
@@ -63,6 +67,14 @@ PAGES: dict[str, dict[str, Panel]] = {
                         about="Stage, contact and phone, revenue and focus area in one small card"),
     },
 }
+
+
+def page_panels(page: str) -> dict[str, Panel]:
+    """A page's panels: the built-in ones, then the plugin panels for that page."""
+    extra = {plugin_panels.panel_id(p): Panel(p.title, plugin_panels.width(p), bool(getattr(p, "shown", True)),
+                                              str(getattr(p, "about", "") or ""))
+             for p in plugin_panels.for_slot(page)}
+    return {**PAGES[page], **extra}
 
 
 # The prospect page's background follows the pipeline stage unless the user
@@ -111,9 +123,9 @@ def _placed(panels: dict, item, seen: set) -> dict:
 
 def validate(page: str, layout) -> dict:
     """The layout, cleaned up, or LayoutError."""
-    panels = PAGES.get(page)
-    if panels is None:
+    if page not in PAGES:
         raise LayoutError(f"No customizable page called {page!r}")
+    panels = page_panels(page)
     if not isinstance(layout, dict):
         raise LayoutError("A layout is an object with background, panels and hidden")
     unknown = set(layout) - {"background", "panels", "hidden"}
@@ -139,7 +151,13 @@ def load(db, user_id: int, page: str) -> dict | None:
     if not row:
         return None
     try:
-        return validate(page, json.loads(row["layout"]))
+        layout = json.loads(row["layout"])
+        if isinstance(layout, dict):  # plugin panels come and go; forget ones that are gone
+            known = page_panels(page)
+            gone = lambda pid: str(pid).startswith(plugin_panels.ID_PREFIX) and pid not in known  # noqa: E731
+            layout["panels"] = [p for p in layout.get("panels") or [] if not (isinstance(p, dict) and gone(p.get("id")))]
+            layout["hidden"] = [pid for pid in layout.get("hidden") or [] if not gone(pid)]
+        return validate(page, layout)
     except ValueError:  # a LayoutError too: panels renamed since: fall back to the defaults
         return None
 
@@ -163,7 +181,7 @@ class Board:
 
     def __init__(self, page: str, layout: dict | None):
         self.page = page
-        self.panels = PAGES[page]
+        self.panels = page_panels(page)
         self.custom = layout is not None
         layout = layout or {}
         self.background = layout.get("background")

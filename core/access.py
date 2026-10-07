@@ -72,6 +72,23 @@ def describe_channel(source: str) -> str:
         return f"AI connector ({source.removeprefix('mcp:')})"
     return {"webmcp": "in-page AI assistant", "cli": "CLI key"}.get(source, source)
 
+# ── Outreach channels ──────────────────────────────────────────────────
+
+# Channels that spend money on the one shared provider account (Lob: physical
+# mail). Only a Super Admin turns them on or off for a campaign, until the
+# costs and liabilities are worked out for anyone else.
+SUPER_ADMIN_CHANNELS = frozenset({"lob_direct_mail"})
+
+
+def channel_change_problem(user: "CurrentUser", before, after) -> str | None:
+    """Why `user` can't change a campaign's channels from `before` to `after`, or None."""
+    if user.is_super_admin:
+        return None
+    changed = sorted((set(before) ^ set(after)) & SUPER_ADMIN_CHANNELS)
+    if changed:
+        return f"Only a Super Admin can turn {', '.join(changed)} on or off for a campaign."
+    return None
+
 # ── Permission catalog ─────────────────────────────────────────────────
 
 CATALOG: dict[str, str] = {
@@ -162,6 +179,15 @@ ROUTE_RULES: dict[str, str] = {
     "GET /x402/packages/{slug}/leads": PUBLIC,
     "POST /x402/packages/{slug}/contacts": PUBLIC,
     "POST /x402/packages/{slug}/claims": PUBLIC,
+    # Customer accounts (core/accounts.py): the platform key or an account key authorizes them.
+    "POST /api/v1/accounts": PUBLIC,
+    "POST /api/v1/accounts/{external_ref}/key": PUBLIC,
+    "POST /api/v1/accounts/{external_ref}/status": PUBLIC,
+    "GET /api/v1/account": PUBLIC,
+    "GET /api/v1/prospects": PUBLIC,
+    "POST /api/v1/searches": PUBLIC,
+    "GET /api/v1/searches/{search_id}": PUBLIC,
+    "POST /api/v1/searches/{search_id}/cancel": PUBLIC,
     "GET /admin/selling": "packages.sell",
     "POST /admin/selling/publish": "packages.sell",
     "POST /admin/selling/{package_id}/active": "packages.sell",
@@ -222,6 +248,10 @@ ROUTE_RULES: dict[str, str] = {
     "GET /admin/campaigns/{campaign_slug}/import-template": OWNER,
     "GET /plugins": "campaigns.view",
     "POST /plugins/{plugin_key}/test": "portals.manage",
+    # Plugin pages: each page names its own permission, checked in web/app.py
+    # through core/plugin_pages.py (a page without a valid one is denied for everyone).
+    "GET /p/{page_key}": ANY_USER,
+    "POST /p/{page_key}": ANY_USER,
     "GET /mail-templates": "templates.view",
     "POST /mail-templates/save": "templates.edit",
     "GET /mail-templates/preview/{script_idx}": "templates.view",

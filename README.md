@@ -25,6 +25,7 @@ pip install -r requirements.txt
 createdb agency_os && export DATABASE_URL=postgresql://localhost/agency_os
 python agency_os.py campaigns          # list discovered campaigns
 python agency_os.py plugins            # list discovered plugins
+python agency_os.py new-plugin grant-finder   # a page, source, AI job and agent, wired together
 python agency_os.py sync --campaign voter-guide-cbo
 python agency_os.py sync --campaign voter-guide-cbo --dry-run
 python agency_os.py enqueue --campaign voter-guide-cbo --dry-run
@@ -89,7 +90,12 @@ agency-os/
 │   ├── products/           # WHAT you're selling (u9itus voter guide, etc.)
 │   ├── channels/           # HOW you reach them (Smartlead, SMTP, Twilio SMS, manual)
 │   ├── enrichers/          # Contact enrichment (Apollo, Hunter)
-│   └── schedulers/         # Meeting booking (Calendly)
+│   ├── schedulers/         # Meeting booking (Calendly)
+│   ├── pages/              # Web pages at /p/<key> (the UI kit is at /p/ui-kit)
+│   ├── panels/             # Cards on the dashboard and prospect pages
+│   ├── jobs/               # Scheduled jobs (e.g. AI digests)
+│   ├── agents/             # AI agent personas and their tasks
+│   └── _starter/           # Templates for `new-plugin`
 ├── campaigns/      # One folder per sales effort — campaign.yaml + scripts/
 ├── data/           # Scraped prospect data, exports
 ├── config.yaml     # Global config (API keys, DB path, schedule)
@@ -104,6 +110,12 @@ agency-os/
 4. **Bookings** — Scheduler plugins pull booked meetings and move those prospects to `demo_scheduled` (out of the automated sequence)
 5. **Stale check** — Prospects with no contact in N days move to "nurture" stage
 6. **Digest** — Weekly pipeline summary (sent, opened, replied, stage breakdown)
+
+## Building a whole plugin
+
+`python agency_os.py new-plugin grant-finder` writes a page, a prospect source, a
+scheduled AI job and an agent that already work together, plus their test.
+See [docs/PLUGINS.md](docs/PLUGINS.md).
 
 ## Adding a new product (e.g., consulting services)
 

@@ -103,7 +103,7 @@ def build_server(get_db: Callable) -> Server:
         if c is None or not c.user.can("agents.use"):
             return types.ListPromptsResult(prompts=[])
         return types.ListPromptsResult(prompts=[
-            types.Prompt(name=prompt_name(p, task), title=f"{p.name}: {agents.TASKS[task][0]}",
+            types.Prompt(name=prompt_name(p, task), title=f"{p.name}: {p.task(task)[0]}",
                          description=p.description,
                          arguments=[types.PromptArgument(name="prospect_id", description="The prospect's id", required=True),
                                     types.PromptArgument(name="instructions", description="Anything to add", required=False)])
@@ -124,7 +124,7 @@ def build_server(get_db: Callable) -> Server:
             raise ValueError("prospect_id must be a number") from None
         context = await anyio.to_thread.run_sync(lambda: tools.build_prospect_context(get_db(), c.user, prospect_id))
         system, user = agents.build_prompt(persona, task, context, args.get("instructions", ""))
-        return types.GetPromptResult(description=f"{persona.name}: {agents.TASKS[task][0]}", messages=[
+        return types.GetPromptResult(description=f"{persona.name}: {persona.task(task)[0]}", messages=[
             types.PromptMessage(role="user", content=types.TextContent(type="text", text=f"{system}\n\n---\n\n{user}"))])
 
     # Resources: personas and prospects

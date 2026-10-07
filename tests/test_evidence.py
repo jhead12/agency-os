@@ -79,11 +79,27 @@ def test_lob_returned_mail(db, hooks):
     first = client.post("/webhooks/lob", content=body, headers=signed(body))
     assert first.json() == {"ok": True, "recorded": 1}
     assert client.post("/webhooks/lob", content=body, headers=signed(body)).json()["recorded"] == 0  # same event
-    for ignored in (lob_event("postcard.delivered", event_id="evt_2"),
+    for ignored in (lob_event("postcard.in_transit", event_id="evt_2"),
                     lob_event("letter.return_envelope.returned_to_sender", event_id="evt_3"),
                     lob_event(piece="psc_unknown", event_id="evt_4")):
         assert client.post("/webhooks/lob", content=ignored, headers=signed(ignored)).json()["recorded"] == 0
     assert events(db, pid) == ["mail_returned"]
+
+
+def test_lob_mail_delivered_once_per_piece(db, hooks):
+    pid = contact(db)
+    client = client_for()
+    for i, kind in enumerate(("postcard.in_transit", "postcard.in_local_area",
+                              "postcard.processed_for_delivery", "postcard.delivered"), start=1):
+        body = lob_event(kind, event_id=f"evt_d{i}")
+        recorded = client.post("/webhooks/lob", content=body, headers=signed(body)).json()["recorded"]
+        assert recorded == (1 if kind == "postcard.processed_for_delivery" else 0), kind
+    for ignored in (lob_event("letter.return_envelope.delivered", event_id="evt_d5"),
+                    lob_event("letter.delivered", piece="ltr_unknown", event_id="evt_d6")):
+        assert client.post("/webhooks/lob", content=ignored, headers=signed(ignored)).json()["recorded"] == 0
+    row = db.conn.execute("SELECT kind, detail FROM contact_events WHERE prospect_id = ?", (pid,)).fetchone()
+    assert row["kind"] == "mail_delivered"
+    assert json.loads(row["detail"])["piece_id"] == "psc_abc123"
 
 
 def test_webhooks_are_off_without_secrets(db, monkeypatch):

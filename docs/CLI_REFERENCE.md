@@ -404,6 +404,26 @@ Requires `CALENDLY_API_TOKEN` in `.env`.
 
 ---
 
+## Plugins
+
+### Create a plugin
+
+```bash
+python3 agency_os.py new-plugin grant-finder --title "Grant finder"
+```
+
+Writes a page (`/p/grant-finder`), a prospect source, a scheduled AI job, an
+agent and a test, wired together. Never overwrites a file. See
+[PLUGINS.md](PLUGINS.md).
+
+### List installed plugins
+
+```bash
+python3 agency_os.py plugins
+```
+
+---
+
 ## Pipeline Maintenance
 
 ### Move stale prospects to nurture

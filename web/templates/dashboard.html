@@ -65,4 +65,16 @@
 </div>
 {% endfor %}
 
+{# Plugin panels (plugins/panels/, see core/plugin_panels.py) #}
+{% if plugin_panels %}
+<div class="detail-grid panel-board plugin-panels">
+    {% for p in plugin_panels %}
+    <div class="detail-card plugin-panel" data-plugin-panel="{{ p.key }}" data-width="{{ p.width }}">
+        <h3>{{ p.title }}</h3>
+        {{ p.html }}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
 {% endblock %}

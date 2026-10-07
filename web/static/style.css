@@ -1541,3 +1541,6 @@ body:has(#console-launcher) .chat-dock { bottom: 108px; }
     }
     body.player-active .chat-launcher { display: none; } /* the player bar sits there */
 }
+
+/* Plugin panels on the dashboard (plugins/panels/) */
+.plugin-panels { margin-top: 24px; }
