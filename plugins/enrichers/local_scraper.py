@@ -152,12 +152,16 @@ class LocalScraperEnricher:
 
         # Extract phone
         phone = self._extract_phone(all_text)
+        if not phone:
+            phone = self._extract_phone_from_html(pages)
         if phone:
             result.contact_phone = phone
             result.confidence = min(result.confidence + 0.2, 1.0)
 
         # Extract email
         email = self._extract_email(all_text, website)
+        if not email:
+            email = self._extract_email_from_html(pages, website)
         if email:
             result.contact_email = email
             result.confidence = min(result.confidence + 0.2, 1.0)
@@ -424,6 +428,53 @@ class LocalScraperEnricher:
             if phone and phone[:3] not in JUNK_PHONE_PREFIXES:
                 return phone
 
+        return None
+
+    def _extract_phone_from_html(self, pages: list[tuple[str, str]]) -> Optional[str]:
+        """Fallback: scan raw HTML for tel: links (JS-hidden / obfuscated numbers)."""
+        for _url, page_html in pages:
+            for match in re.finditer(r'href\s*=\s*["\']tel:([^"\']+)["\']', page_html, re.IGNORECASE):
+                phone = self._normalize_phone(match.group(1))
+                if phone and phone[:3] not in JUNK_PHONE_PREFIXES:
+                    return phone
+        return None
+
+    def _extract_email_from_html(self, pages: list[tuple[str, str]], website: str) -> Optional[str]:
+        """Fallback: scan raw HTML for mailto: links when visible text has none.
+
+        Applies the same junk-domain and org-domain ranking as visible-text
+        extraction.
+        """
+        org_domain = urlparse(website).netloc.lower().replace("www.", "")
+        org_emails: list[str] = []
+        priority_emails: list[str] = []
+        other_emails: list[str] = []
+        priority_locals = ("info", "contact", "admin", "office", "hello", "mail", "director", "ed")
+
+        for _url, page_html in pages:
+            for match in re.finditer(
+                r'href\s*=\s*["\']mailto:([^?"\']+)[^"\']*["\']', page_html, re.IGNORECASE
+            ):
+                email = match.group(1).strip().lower()
+                if not EMAIL_RE.fullmatch(email):
+                    continue
+                local, _, domain = email.partition("@")
+                if domain in JUNK_EMAIL_DOMAINS:
+                    continue
+                if org_domain and domain == org_domain:
+                    org_emails.append(email)
+                elif local in priority_locals:
+                    priority_emails.append(email)
+                else:
+                    other_emails.append(email)
+
+        for pool in (org_emails, priority_emails, other_emails):
+            if pool:
+                for pref in priority_locals:
+                    for e in pool:
+                        if e.startswith(pref + "@"):
+                            return e
+                return pool[0]
         return None
 
     def _normalize_phone(self, raw: str) -> Optional[str]:

@@ -4,6 +4,13 @@ A plugin-driven, evergreen sales outreach engine. Find prospects, enrich contact
 send sequenced emails, track pipeline progress, and generate weekly digests — for
 any product or service.
 
+| Metric | Value |
+|---|---|
+| Campaigns | 5 |
+| Plugins | 18 across 5 categories |
+| Code base | ~23.4k lines of Python |
+| Web templates | 34 dashboard pages |
+
 ## Quick start
 
 Data lives in PostgreSQL. Point `DATABASE_URL` at a database (tables are
@@ -588,13 +595,18 @@ export CALENDLY_API_TOKEN=...
 | prospect_source | `sos_partners` | CA Secretary of State voter engagement partners |
 | prospect_source | `oia_grantees` | LA County Office of Immigrant Affairs CBO grantees |
 | prospect_source | `miv_partners` | Mobilize the Immigrant Vote CA partner CBOs |
+| prospect_source | `npi_registry` | NPI registry — healthcare practices |
+| prospect_source | `pacer_attorneys` | PACER federal court attorney records |
+| prospect_source | `courtlistener_attorneys` | CourtListener attorney search |
 | product | `u9itus_voter_guide` | u9itus digital voter guide platform |
+| product | `u9itus_client` | u9itus portal API client (demo provisioning, events) |
 | channel | `email_smartlead` | Smartlead API cold email |
 | channel | `email_smtp` | Direct SMTP email |
 | channel | `sms_twilio` | Twilio SMS |
+| channel | `lob_direct_mail` | Lob postcards & letters |
 | channel | `manual` | Log a manual touch (phone, in-person) |
 | enricher | `local_scraper` | Local web scraper — finds websites, phones, emails (no API key needed) |
-| enricher | `apollo` | Apollo.io contact enrichment |
+| enricher | `apollo` | Apollo.io contact enrichment (paid plan required) |
 | enricher | `hunter` | Hunter.io email finder + verifier |
 | scheduler | `calendly` | Calendly booking links + booking sync |
 

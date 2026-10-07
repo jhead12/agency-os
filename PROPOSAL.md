@@ -20,16 +20,17 @@ U9itus is a digital voter guide platform that helps community organizations dist
 - **Zero paid API dependencies** for prospect discovery or contact enrichment — the system uses public government data and a proprietary local web scraper
 - **Multi-channel outreach**: email (Smartlead/SMTP), direct mail (Lob postcards & letters), SMS (Twilio), phone (call scripts + logging), and manual touch — all configurable per campaign
 - **Product pricing** from $500 to $4,000 per election cycle, with a tiered structure designed for individual CBOs up to 10-organization coalitions
+- **18 plugins** across 5 categories power the whole engine; **34 dashboard pages** cover the sales workflow
 
 ### Traction to Date
 
 | Metric | Value |
 |--------|-------|
 | Prospects loaded | 2,442 |
-| Active campaigns | 2 (CBO Los Angeles, Elected Officials California) |
-| Plugins built | 15 across 5 categories |
-| Dashboard pages | 25 web templates |
-| Code base | ~10,500 lines of Python |
+| Campaigns | 5 |
+| Plugins built | 18 across 5 categories |
+| Dashboard pages | 34 web templates |
+| Code base | ~23,400 lines of Python |
 | Deployment | Railway (Docker, Postgres, persistent volumes) |
 | Source control | GitHub (private, multi-branch) |
 
@@ -99,7 +100,7 @@ agency-os is a complete sales operations platform that automates every step of t
 │  │   Web Dashboard         │     │  proposal →  │   │
 │  │   (FastAPI + Jinja2)    │     │  closed_won  │   │
 │  │                         │     └──────────────┘   │
-│  │ 25 pages, 5 user roles  │                        │
+│  │34 pages, 5 user roles  │                        │
 │  └────────────────────────┘                        │
 │                                                     │
 │  Database: PostgreSQL (Railway)                     │
@@ -296,7 +297,7 @@ Five plugin protocols, each auto-discovered from the `plugins/` directory:
 
 ### Dashboard
 
-25 web pages covering the full sales workflow:
+34 web pages covering the full sales workflow:
 
 - **Dashboard** — pipeline stats, campaign cards, recent activity
 - **Prospects** — searchable, sortable, paginated list with campaign filter, saved lists, print/export
@@ -467,7 +468,7 @@ Full contract and end-to-end test log: `doc/AGENCY_OS_INTEGRATION.md` (u9itus re
 - ✅ 5 channel plugins (Email SMTP, Email Smartlead, Lob Direct Mail, SMS Twilio, Manual)
 - ✅ 3 enricher plugins (Local Scraper, Apollo, Hunter)
 - ✅ 1 scheduler plugin (Calendly)
-- ✅ Web dashboard (25 pages, responsive, mobile nav)
+- ✅ Web dashboard (34 pages, responsive, mobile nav)
 - ✅ Access control (5 roles, 13 permissions, audit log)
 - ✅ Campaign segmentation (2 campaigns, self-contained)
 - ✅ Admin campaign management (plugin association UI, YAML editor)

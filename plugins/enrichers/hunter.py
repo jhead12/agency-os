@@ -22,9 +22,24 @@ class HunterEnricher:
 
     def __init__(self):
         self._api_key = os.environ.get("HUNTER_API_KEY", "")
+        self._key_valid = None  # cache: None=unknown, True/False after one probe
 
     def is_configured(self) -> bool:
-        return bool(self._api_key)
+        """True only when a key is set and works. Probes the API once and caches."""
+        if not self._api_key:
+            return False
+        if self._key_valid is not None:
+            return self._key_valid
+        try:
+            resp = httpx.get(
+                f"{self.API_BASE}/account",
+                params={"api_key": self._api_key},
+                timeout=10,
+            )
+            self._key_valid = resp.status_code == 200
+        except Exception:
+            self._key_valid = False
+        return self._key_valid
 
     def enrich(self, prospect: Prospect) -> EnrichmentResult:
         """Search Hunter for email patterns at this org's domain."""
