@@ -23,7 +23,7 @@ try { var enter = sessionStorage.getItem("aos.recordEnter"); sessionStorage.remo
     <div class="breadcrumb"><a href="/prospects" data-record-back>← Prospects</a></div>
     <div class="page-header-row">
         <div>
-            <h1>{{ prospect.name }}</h1>
+            <h1>{{ prospect.name }}{% if do_not_call %} <span class="badge badge-warning" title="They asked not to be phoned or texted">Do not call</span>{% endif %}</h1>
             <p class="subtitle">
                 {{ prospect.city or '' }}{{ ', ' if prospect.city else '' }}{{ prospect.state or '' }}
         {% if prospect.ein %} · EIN: {{ prospect.ein }}{% endif %}
@@ -84,6 +84,15 @@ try { var enter = sessionStorage.getItem("aos.recordEnter"); sessionStorage.remo
                 <form method="post" action="/prospects/{{ prospect.id }}/do-not-sell" style="display: inline;">
                     <input type="hidden" name="flag" value="{{ '0' if do_not_sell else '1' }}">
                     <button type="submit" class="btn btn-secondary btn-sm">{{ 'Allow selling' if do_not_sell else 'Mark do not sell' }}</button>
+                </form>
+                {% endif %}
+            </span></div>
+            <div class="detail-row"><span>Do not call</span><span>
+                {% if do_not_call %}<span class="badge badge-warning">Yes</span>{% else %}No{% endif %}
+                {% if user.can('prospects.edit') %}
+                <form method="post" action="/prospects/{{ prospect.id }}/do-not-call" style="display: inline;">
+                    <input type="hidden" name="flag" value="{{ '0' if do_not_call else '1' }}">
+                    <button type="submit" class="btn btn-secondary btn-sm">{{ 'Allow calls' if do_not_call else 'Mark do not call' }}</button>
                 </form>
                 {% endif %}
             </span></div>
@@ -417,6 +426,7 @@ function toggleEmail(id) {
 {# ── Call Log Form ───────────────────────────────────── #}
 <div class="detail-card" {{ board.attrs('log-call') }}>
     <h3>📞 Log a Call</h3>
+    {% if do_not_call %}<p class="muted"><span class="badge badge-warning">Do not call</span> They asked not to be called. Log only a call they started.</p>{% endif %}
     {% for o in outreach_rows %}
     <form method="post" action="/call-log/record" class="call-log-form" id="log-call-{{ o.id }}">
         <input type="hidden" name="prospect_id" value="{{ prospect.id }}">

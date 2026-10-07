@@ -1454,6 +1454,7 @@ async def prospect_detail(request: Request, prospect_id: int):
         "team": [u for u in db.list_users() if u.get("is_active")] if current_user(request).can("packages.sell") else [],
         "do_not_sell": bool(db.conn.execute("SELECT do_not_sell FROM prospects WHERE id = ?",
                                             (prospect_id,)).fetchone()["do_not_sell"]),
+        "do_not_call": db.do_not_call(prospect_id),
         "agent_panel": {"personas": list(agents.load_personas().values()),
                         "tasks": agents.all_tasks(agents.load_personas().values()),
                         "model": llm.describe()} if current_user(request).uses_ai("agents.use") else None,
@@ -2402,6 +2403,14 @@ async def prospect_do_not_sell(request: Request, prospect_id: int, flag: str = F
     """Honor a request not to sell someone's data: never published, sold or used as a replacement."""
     selling.set_do_not_sell(get_db(), current_user(request), prospect_id, flag == "1")
     return _back(f"/prospects/{prospect_id}", msg="Marked do not sell." if flag == "1" else "Do-not-sell removed.")
+
+
+@app.post("/prospects/{prospect_id}/do-not-call")
+async def prospect_do_not_call(request: Request, prospect_id: int, flag: str = Form(default="")):
+    """Honor a request not to be phoned or texted."""
+    require_visible_prospect(request, prospect_id)
+    get_db().set_do_not_call(current_user(request), prospect_id, flag == "1")
+    return _back(f"/prospects/{prospect_id}", msg="Marked do not call." if flag == "1" else "Do-not-call removed.")
 
 
 @app.post("/prospects/{prospect_id}/credit")
