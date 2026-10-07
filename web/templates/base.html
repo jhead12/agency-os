@@ -46,6 +46,15 @@
                 </div>
             </details>
             {% endif %}
+            {% set extra_pages = plugin_pages_for(user) %}
+            {% if extra_pages %}
+            <details class="nav-group {% if active.startswith('p-') %}nav-group-active{% endif %}">
+                <summary>More</summary>
+                <div class="nav-dropdown">
+                    {% for p in extra_pages %}<a href="/p/{{ p.key }}" class="{% if active == 'p-' ~ p.key %}active{% endif %}">{{ p.title }}</a>{% endfor %}
+                </div>
+            </details>
+            {% endif %}
             {% if user.is_owner or user.can('packages.sell') %}
             <details class="nav-group {% if active in ['admin', 'admin-campaigns', 'admin-selling', 'admin-payouts'] %}nav-group-active{% endif %}">
                 <summary>Administration</summary>

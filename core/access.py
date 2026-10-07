@@ -239,6 +239,10 @@ ROUTE_RULES: dict[str, str] = {
     "GET /admin/campaigns/{campaign_slug}/import-template": OWNER,
     "GET /plugins": "campaigns.view",
     "POST /plugins/{plugin_key}/test": "portals.manage",
+    # Plugin pages: each page names its own permission, checked in web/app.py
+    # through core/plugin_pages.py (a page without a valid one is denied for everyone).
+    "GET /p/{page_key}": ANY_USER,
+    "POST /p/{page_key}": ANY_USER,
     "GET /mail-templates": "templates.view",
     "POST /mail-templates/save": "templates.edit",
     "GET /mail-templates/preview/{script_idx}": "templates.view",

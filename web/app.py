@@ -47,6 +47,7 @@ from fastapi import BackgroundTasks, FastAPI, Request, Query, HTTPException, For
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from jinja2 import ChoiceLoader, FileSystemLoader, PrefixLoader
 
 from core import access
 from core.access import AccessError, CurrentUser
@@ -58,7 +59,8 @@ from core.protocols import portal_product
 from plugins.channels.lob_direct_mail import TEMPLATE_ID_RE, lob_template_url
 from core.jobs import JobRunner, configured_jobs, jobs_enabled
 from core import (
-    agents, claims, console, contact_depth, evidence, lead_packages, llm, mcp_auth, panels, payments, royalties, selling,
+    agents, claims, console, contact_depth, evidence, lead_packages, llm, mcp_auth, panels, payments, plugin_pages,
+    royalties, selling,
     tools, verify, workflows,
 )
 from core import welcome as welcome_email
@@ -172,6 +174,12 @@ async def security_headers(request: Request, call_next):
     if request.url.path.startswith(("/welcome/", "/reset-password/")):
         response.headers["Cache-Control"] = "no-store"
     return response
+# Plugin pages (core/plugin_pages.py): their templates load as "plugin/<name>",
+# after the core ones, so a plugin can extend base.html but never replace a core page.
+templates.env.loader = ChoiceLoader([templates.env.loader, PrefixLoader(
+    {plugin_pages.TEMPLATE_PREFIX: FileSystemLoader(str(plugin_pages.TEMPLATES_DIR))})])
+app.mount("/plugin-static", StaticFiles(directory=str(plugin_pages.STATIC_DIR), check_dir=False),
+          name="plugin-static")
 
 # ── Auth ────────────────────────────────────────────────────────────
 # Multi-user login with role-based permissions (policy in core/access.py).
@@ -351,6 +359,8 @@ def nav_active(path: str) -> str:
     if path == "/":
         return "dashboard"
     parts = path.strip("/").split("/")
+    if parts[0] == "p" and len(parts) > 1:
+        return f"p-{parts[1]}"
     if parts[0] == "admin":
         return {"campaigns": "admin-campaigns", "selling": "admin-selling", "payouts": "admin-payouts"}.get(
             parts[1] if len(parts) > 1 else "", "admin")
@@ -366,6 +376,7 @@ templates.env.globals["nav_active"] = nav_active
 templates.env.globals["CALL_OUTCOMES"] = contact_depth.CALL_OUTCOMES
 templates.env.globals["chat_personas"] = lambda: list(agents.load_personas().values())
 templates.env.globals["ai_model"] = llm.describe
+templates.env.globals["plugin_pages_for"] = plugin_pages.visible_to
 templates.env.globals["super_admin_channels"] = access.SUPER_ADMIN_CHANNELS
 
 
@@ -2352,6 +2363,50 @@ async def plugins_page(request: Request, msg: str = Query(default=""), error: st
         "test_portal": {"slug": test_slug, "demo_url": test_demo, "claim_url": test_claim}
                        if test_slug else None,
     })
+
+
+# ── Plugin pages (plugins/pages/, see core/plugin_pages.py) ────────
+
+
+def _plugin_page(request: Request, page_key: str, posting: bool = False):
+    """The page, or 404 if there's none; Forbidden unless its own permission allows this user."""
+    page = plugin_pages.get(page_key)
+    if page is None:
+        raise HTTPException(status_code=404, detail="Page not found")
+    user = current_user(request)
+    if not (plugin_pages.can_post(user, page) if posting else plugin_pages.can_view(user, page)):
+        raise Forbidden()
+    return page
+
+
+def _plugin_page_context(request: Request) -> plugin_pages.PageContext:
+    return plugin_pages.PageContext(
+        user=current_user(request), db=get_db(), query=dict(request.query_params),
+        campaigns=visible_campaigns(request), hidden_campaigns=hidden_for(request))
+
+
+@app.get("/p/{page_key}", response_class=HTMLResponse)
+async def plugin_page(request: Request, page_key: str, msg: str = Query(default=""), error: str = Query(default="")):
+    page = _plugin_page(request, page_key)
+    values = await run_in_threadpool(page.context, _plugin_page_context(request))
+    return templates.TemplateResponse(request, plugin_pages.template_name(page), {
+        **(values or {}),
+        "plugin_page": page,
+        "can_post": plugin_pages.can_post(current_user(request), page),
+        "msg": msg,
+        "error": error,
+    })
+
+
+@app.post("/p/{page_key}")
+async def plugin_page_post(request: Request, page_key: str):
+    page = _plugin_page(request, page_key, posting=True)
+    form = {k: v for k, v in (await request.form()).items() if isinstance(v, str)}
+    try:
+        message = await run_in_threadpool(page.post, _plugin_page_context(request), form)
+    except ValueError as exc:
+        return _back(f"/p/{page_key}", error=str(exc) or "That didn't work.")
+    return _back(f"/p/{page_key}", msg=message or "Done.")
 
 
 @app.post("/plugins/{plugin_key}/test")
