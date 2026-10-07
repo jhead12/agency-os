@@ -5,6 +5,7 @@ from the starter templates in plugins/_starter/.
     plugins/pages/<name>.py                 a page at /p/<key>: search, the job's findings, save as a list
     plugins/pages/templates/<name>.html     its HTML
     plugins/pages/static/<name>.css         its styles
+    plugins/panels/<name>.py                a card on each prospect's page (+ templates/<name>.html)
     plugins/prospect_sources/<name>.py      prospects from a JSON feed (off until its URL is set)
     plugins/jobs/<name>.py                  a daily AI job: the agent picks who to work next
     plugins/agents/<key>.md                 the agent (persona) with its own task
@@ -34,6 +35,8 @@ FILES = {
     "page.py.tmpl": "plugins/pages/${module}.py",
     "page.html.tmpl": "plugins/pages/templates/${module}.html",
     "page.css.tmpl": "plugins/pages/static/${module}.css",
+    "panel.py.tmpl": "plugins/panels/${module}.py",
+    "panel.html.tmpl": "plugins/panels/templates/${module}.html",
     "source.py.tmpl": "plugins/prospect_sources/${module}.py",
     "job.py.tmpl": "plugins/jobs/${module}.py",
     "agent.md.tmpl": "plugins/agents/${key}.md",

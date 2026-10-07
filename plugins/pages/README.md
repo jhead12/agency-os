@@ -19,7 +19,9 @@ plugins/pages/
 
 To start a page together with a prospect source, a scheduled AI job and an
 agent, run `python agency_os.py new-plugin <name>` (see
-[docs/PLUGINS.md](../../docs/PLUGINS.md)). To add just a page:
+[docs/PLUGINS.md](../../docs/PLUGINS.md)). To add a card to the dashboard or prospect pages instead, see
+[plugins/panels/README.md](../panels/README.md). For the app's styles and
+components, open the UI kit at `/p/ui-kit` (`ui_kit.py` in this folder). To add just a page:
 
 1. Create `plugins/pages/team_stats.py`:
 
@@ -74,6 +76,7 @@ restart. Editing a template only needs a browser refresh.
 | `context(page)` | yes | Returns a dict of values for the template. |
 | `post(page, form)` | no | Handles a form posted to `/p/<key>` (see "Forms"). |
 | `post_permission` | no | Who may post. Without it, `permission` applies. |
+| `nav` | no | `False` keeps the page out of the **More** menu. It still opens at `/p/<key>`. |
 
 A class that is missing a required attribute is skipped at startup, and the
 app prints `! pages/<key>: needs …` in its log.

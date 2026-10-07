@@ -108,8 +108,8 @@ def can_post(user: access.CurrentUser, page) -> bool:
 
 
 def visible_to(user) -> list:
-    """The pages this user may open, for the nav."""
-    return [p for p in pages().values() if user and can_view(user, p)]
+    """The pages this user may open, for the nav (leaving out pages with `nav = False`)."""
+    return [p for p in pages().values() if user and getattr(p, "nav", True) and can_view(user, p)]
 
 
 def template_name(page) -> str:

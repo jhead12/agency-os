@@ -1,0 +1,25 @@
+"""${title} on each prospect's page: whether the ${title} source found them,
+with a link to the ${title} page.
+
+Made by `agency-os new-plugin ${module}`. A panel only reads; forms go on the
+page (plugins/pages/${module}.py). See docs/PLUGINS.md ("Panels").
+"""
+
+SOURCE_KEY = "${module}"  # plugins/prospect_sources/${module}.py
+PAGE_KEY = "${key}"       # plugins/pages/${module}.py
+
+
+class ${Class}Panel:
+    key = "${key}"
+    title = "${title}"
+    slot = "prospect"            # or "dashboard"
+    permission = "prospects.view"
+    template = "${module}.html"  # in plugins/panels/templates/
+    width = "third"
+
+    def context(self, panel):
+        # The app only shows the page for a prospect this user may see.
+        prospect = panel.prospect
+        if prospect is None:
+            return None  # nothing to show: the card is left off
+        return {"prospect": prospect, "ours": prospect.source == SOURCE_KEY, "page_key": PAGE_KEY}

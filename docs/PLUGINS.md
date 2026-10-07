@@ -2,8 +2,11 @@
 
 A plugin adds something to agency-os by dropping files into `plugins/`. Nothing
 needs registering and nothing in `core/` changes. This guide covers making a
-whole plugin at once (a page, where its data comes from, a scheduled AI job
-and its own agent) and then each part on its own.
+whole plugin at once (a page, a card on prospect pages, where its data comes
+from, a scheduled AI job and its own agent) and then each part on its own.
+
+For the app's styles and components, open the UI kit at `/p/ui-kit`. It shows
+each one live with its HTML to copy.
 
 ## Start with `new-plugin`
 
@@ -19,6 +22,8 @@ That writes a plugin whose parts already work together:
 | `plugins/pages/grant_finder.py` | A page at `/p/grant-finder`: search prospects, read what the agent found, save a search as a list |
 | `plugins/pages/templates/grant_finder.html` | The page's HTML |
 | `plugins/pages/static/grant_finder.css` | Its styles |
+| `plugins/panels/grant_finder.py` | A card on every prospect's page, linking to the page |
+| `plugins/panels/templates/grant_finder.html` | What goes inside the card |
 | `plugins/prospect_sources/grant_finder.py` | Prospects from a JSON feed, off until `GRANT_FINDER_SOURCE_URL` is set |
 | `plugins/jobs/grant_finder.py` | A daily job: the agent reads each campaign's waiting prospects and picks who to work next |
 | `plugins/agents/grant-finder.md` | The agent (persona), with a task of its own on every prospect page |
@@ -27,6 +32,7 @@ That writes a plugin whose parts already work together:
 Restart the app and:
 
 - the page is in the **More** menu for anyone with `prospects.view`;
+- its card is on every prospect's page, where people can move or hide it;
 - the job is on **Administration → Jobs**, where an Owner can run it now; it runs
   daily once `AGENCY_OS_RUN_JOBS=1`;
 - the agent is in the **Ask an agent** panel on every prospect page and in the
@@ -46,6 +52,8 @@ source ──sync──▶ prospects ──▶ page (search, save as a list ─�
                     │                ▲
                     ▼                │ last_result()
                daily job ──ask──▶ agent
+
+each prospect's page ──▶ the plugin's panel ──link──▶ page
 ```
 
 ## Pages
@@ -59,6 +67,22 @@ It's the same search as the Prospects page and saved lists (`q`, `source`,
 `stage`, `campaign`, `cities`), and it leaves out campaigns the viewer may not
 see. A search a page saves with `page.db.save_prospect_list(...)` shows up
 under **My saved lists**, and an Owner can publish it as a lead package.
+
+Set `nav = False` on a page to keep it out of the **More** menu (it still
+opens at `/p/<key>` for people its `permission` allows). The UI kit does this.
+
+## Panels
+
+A card on the dashboard or on every prospect's page, without changing core
+templates. See [plugins/panels/README.md](../plugins/panels/README.md). A panel
+class has a `key`, `title`, `slot` (`"prospect"` or `"dashboard"`),
+`permission`, `template` and `context(panel)`, plus an optional `width`,
+`shown` and `about`. `context()` returning `None` leaves the card off.
+
+Panels only read. Put forms on a plugin page and link to it from the card.
+On the prospect page, `panel.prospect` is the prospect, already checked
+against what the viewer may see. People arrange plugin cards with
+**🎨 Customize** like the built-in ones.
 
 ## Scheduled jobs
 
@@ -123,6 +147,15 @@ same name as one in `agents/`, the `agents/` one wins.
 Agents draft; they never send. Prospect records are given to the model as
 data it must not take instructions from. That holds on prospect pages, in the
 chat robot, over MCP and in scheduled jobs.
+
+## Tutorials
+
+A tutorial is a YAML file in `workflows/tutorials/`, played in the browser
+for everyone its `requires` allows. A plugin can ship one to walk people
+through its page: name it after the plugin (`NN-grant-finder.yaml`). The
+format is in `core/workflows.py`, and the existing tutorials are good
+examples. Tutorials are data, never code. A step that changes data asks the
+person first, and the player skips steps that point at things not on the page.
 
 ## The other plugin types
 

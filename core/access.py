@@ -179,6 +179,12 @@ ROUTE_RULES: dict[str, str] = {
     "GET /x402/packages/{slug}/leads": PUBLIC,
     "POST /x402/packages/{slug}/contacts": PUBLIC,
     "POST /x402/packages/{slug}/claims": PUBLIC,
+    # Customer accounts (core/accounts.py): the platform key or an account key authorizes them.
+    "POST /api/v1/accounts": PUBLIC,
+    "POST /api/v1/accounts/{external_ref}/key": PUBLIC,
+    "POST /api/v1/accounts/{external_ref}/status": PUBLIC,
+    "GET /api/v1/account": PUBLIC,
+    "GET /api/v1/prospects": PUBLIC,
     "GET /admin/selling": "packages.sell",
     "POST /admin/selling/publish": "packages.sell",
     "POST /admin/selling/{package_id}/active": "packages.sell",

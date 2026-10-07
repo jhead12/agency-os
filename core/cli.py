@@ -26,6 +26,8 @@ Usage:
     agency-os packages verify --campaign voter-guide-cbo [--ai]
     agency-os packages claim --id 3 --email you@example.com
     agency-os spend pending
+    agency-os accounts platform-key
+    agency-os accounts create --ref org_42 --name "Acme Realty"
     agency-os spend resolve --id 12 --status settled --tx 0x...
     agency-os connect --url https://your-app.up.railway.app --key aos_cli_...
     agency-os remote users invite --email rep@example.com --role Caller
@@ -614,8 +616,8 @@ def plugins(ctx, plugin_type):
 @click.argument("name")
 @click.option("--title", default="", help='Shown in the nav and on the page (default: from the name)')
 def new_plugin(name, title):
-    """Create a plugin with every part wired together: a page, a prospect source,
-    a scheduled AI job, an agent and a test (see docs/PLUGINS.md)."""
+    """Create a plugin with every part wired together: a page, a prospect-page panel,
+    a prospect source, a scheduled AI job, an agent and a test (see docs/PLUGINS.md)."""
     from core import scaffold
 
     try:
@@ -631,7 +633,7 @@ def new_plugin(name, title):
 Next:
   1. python -m pytest tests/test_plugin_{values['module']}.py
   2. Restart the app: the page is at /p/{values['key']} (More menu), the job is on Administration -> Jobs,
-     and the agent is on every prospect page.
+     and its panel and agent are on every prospect page.
   3. Point the source at your data with {values['ENV']}_SOURCE_URL, and add `- {values['module']}`
      under prospect_sources in a campaign.yaml.""")
 
@@ -811,6 +813,90 @@ def users_invite(ctx, email, name, role_names, base_url, no_send):
         click.echo(f"Email not sent ({result.error}). Share this link with them instead:\n  {link}", err=True)
         sys.exit(1)
     click.echo(f"Welcome email sent to {user.email} (link expires {expires_at:%b %d, %Y})")
+
+
+# ── Customer accounts (u9itus billing) ──────────────────────────────
+
+
+@cli.group("accounts")
+def accounts_group():
+    """Customer accounts that use the /api/v1 search API (docs/U9ITUS_BILLING.md)."""
+
+
+@accounts_group.command("platform-key")
+def accounts_platform_key():
+    """Make a platform key for u9itus. Prints the key (for u9itus) and its hash (for agency-os)."""
+    from core import accounts
+
+    key, digest = accounts.new_platform_key()
+    click.echo("Give this key to u9itus (AGENCY_OS_PLATFORM_KEY). It is shown once:")
+    click.echo(f"  {key}")
+    click.echo("Set this on agency-os; it replaces any earlier platform key:")
+    click.echo(f"  AGENCY_OS_PLATFORM_KEY_HASH={digest}")
+
+
+@accounts_group.command("list")
+@click.pass_context
+def accounts_list(ctx):
+    """List accounts, their status and how many prospects they have."""
+    from core import accounts
+
+    rows = accounts.list_accounts(Database(ctx.obj["db_url"] or None))
+    if not rows:
+        click.echo("No accounts.")
+    for a in rows:
+        click.echo(f"  {a['external_ref']:<24} {a['name']:<32} {a['status']:<10} "
+                   f"{a['prospects']:>6} prospects  key ...{a['key_hint'] or ''}")
+
+
+@accounts_group.command("create")
+@click.option("--ref", "external_ref", required=True, help="u9itus's id for the customer")
+@click.option("--name", required=True)
+@click.pass_context
+def accounts_create(ctx, external_ref, name):
+    """Make an account by hand (u9itus normally does this through the API)."""
+    from core import accounts
+
+    try:
+        account, key = accounts.create(Database(ctx.obj["db_url"] or None), external_ref, name)
+    except accounts.AccountError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    if key is None:
+        click.echo(f"{account['external_ref']} already exists; use `accounts rotate-key` for a new key.")
+        return
+    click.echo(f"Created {account['external_ref']}. Its key, shown once:\n  {key}")
+
+
+@accounts_group.command("rotate-key")
+@click.option("--ref", "external_ref", required=True)
+@click.pass_context
+def accounts_rotate_key(ctx, external_ref):
+    """Issue a new key for an account; the old one stops working."""
+    from core import accounts
+
+    try:
+        key = accounts.rotate_key(Database(ctx.obj["db_url"] or None), external_ref)
+    except accounts.AccountError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    click.echo(f"New key for {external_ref}, shown once:\n  {key}")
+
+
+@accounts_group.command("set-status")
+@click.option("--ref", "external_ref", required=True)
+@click.option("--status", type=click.Choice(["active", "suspended"]), required=True)
+@click.pass_context
+def accounts_set_status(ctx, external_ref, status):
+    """Suspend an account or make it active again."""
+    from core import accounts
+
+    try:
+        accounts.set_status(Database(ctx.obj["db_url"] or None), external_ref, status)
+    except accounts.AccountError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    click.echo(f"{external_ref} is now {status}.")
 
 
 # ── Lead packages (x402) ───────────────────────────────────────────

@@ -91,7 +91,8 @@ agency-os/
 │   ├── channels/           # HOW you reach them (Smartlead, SMTP, Twilio SMS, manual)
 │   ├── enrichers/          # Contact enrichment (Apollo, Hunter)
 │   ├── schedulers/         # Meeting booking (Calendly)
-│   ├── pages/              # Web pages at /p/<key>
+│   ├── pages/              # Web pages at /p/<key> (the UI kit is at /p/ui-kit)
+│   ├── panels/             # Cards on the dashboard and prospect pages
 │   ├── jobs/               # Scheduled jobs (e.g. AI digests)
 │   ├── agents/             # AI agent personas and their tasks
 │   └── _starter/           # Templates for `new-plugin`

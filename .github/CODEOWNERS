@@ -10,6 +10,7 @@
 /web/static/        @jhead12 @sirgawain0x
 /tests/             @jhead12 @sirgawain0x
 /docs/              @jhead12 @sirgawain0x
+/workflows/         @jhead12 @sirgawain0x   # tutorials: YAML data the player acts out, never code
 
 # Keep this file locked so ownership can't be widened in a PR
 /.github/           @jhead12

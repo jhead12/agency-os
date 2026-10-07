@@ -59,8 +59,8 @@ from core.protocols import portal_product
 from plugins.channels.lob_direct_mail import TEMPLATE_ID_RE, lob_template_url
 from core.jobs import JobRunner, configured_jobs, jobs_enabled
 from core import (
-    agents, claims, console, contact_depth, evidence, lead_packages, llm, mcp_auth, panels, payments, plugin_pages,
-    royalties, selling,
+    accounts, agents, claims, console, contact_depth, evidence, lead_packages, llm, mcp_auth, panels, payments,
+    plugin_pages, plugin_panels, royalties, selling,
     tools, verify, workflows,
 )
 from core import welcome as welcome_email
@@ -174,10 +174,13 @@ async def security_headers(request: Request, call_next):
     if request.url.path.startswith(("/welcome/", "/reset-password/")):
         response.headers["Cache-Control"] = "no-store"
     return response
-# Plugin pages (core/plugin_pages.py): their templates load as "plugin/<name>",
-# after the core ones, so a plugin can extend base.html but never replace a core page.
-templates.env.loader = ChoiceLoader([templates.env.loader, PrefixLoader(
-    {plugin_pages.TEMPLATE_PREFIX: FileSystemLoader(str(plugin_pages.TEMPLATES_DIR))})])
+# Plugin pages (core/plugin_pages.py) and panels (core/plugin_panels.py): their
+# templates load as "plugin/<name>" and "plugin-panel/<name>", after the core
+# ones, so a plugin can extend base.html but never replace a core page.
+templates.env.loader = ChoiceLoader([templates.env.loader, PrefixLoader({
+    plugin_pages.TEMPLATE_PREFIX: FileSystemLoader(str(plugin_pages.TEMPLATES_DIR)),
+    plugin_panels.TEMPLATE_PREFIX: FileSystemLoader(str(plugin_panels.TEMPLATES_DIR)),
+})])
 app.mount("/plugin-static", StaticFiles(directory=str(plugin_pages.STATIC_DIR), check_dir=False),
           name="plugin-static")
 
@@ -400,6 +403,7 @@ async def dashboard(request: Request):
     total_emails = sum(s["total_emails_sent"] for s in all_stats)
 
     return templates.TemplateResponse(request, "dashboard.html", {
+        "plugin_panels": await render_plugin_panels(request, "dashboard"),
         "campaigns": all_stats,
         "total_prospects": total_prospects,
         "total_emails": total_emails,
@@ -1432,6 +1436,7 @@ async def prospect_detail(request: Request, prospect_id: int):
         row = db.get_lead_package(int(lead_package["lead_package_id"]))
         lead_package = {**lead_package, "title": row["title"] if row else lead_package.get("package_id")}
     return templates.TemplateResponse(request, "prospect_detail.html", {
+        "plugin_panels": await render_plugin_panels(request, "prospect", prospect),
         "board": panels.Board("prospect", panels.load(db, current_user(request).id, "prospect")),
         "stage_background": panels.STAGE_BACKGROUNDS.get(outreach_rows[0]["stage"]) if outreach_rows else None,
         "contact_tier": contact_depth.history_for_prospect(db, prospect_id)[1],
@@ -2180,6 +2185,109 @@ async def x402_claims(request: Request, slug: str):
     return _x402_reply(await run_in_threadpool(selling.handle_claim, get_db(), slug, body))
 
 
+# ── Customer accounts API (core/accounts.py, docs/U9ITUS_BILLING.md) ─────
+
+
+def _bearer(request: Request) -> str:
+    scheme, _, key = request.headers.get("authorization", "").partition(" ")
+    return key.strip() if scheme.lower() == "bearer" else ""
+
+
+def _api_error(status: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse({"error": code, "message": message}, status_code=status)
+
+
+def _platform_refusal(request: Request) -> Optional[JSONResponse]:
+    """None when the request carries u9itus's platform key."""
+    if not accounts.platform_configured():
+        return _api_error(503, "service_not_configured", "AGENCY_OS_PLATFORM_KEY_HASH is not set.")
+    if not accounts.platform_key_ok(_bearer(request)):
+        return _api_error(401, "unauthorized", "A valid platform key is required.")
+    return None
+
+
+def _account_or_refusal(request: Request) -> tuple[Optional[dict], Optional[JSONResponse]]:
+    account = accounts.for_key(get_db(), _bearer(request))
+    if account is None:
+        return None, _api_error(401, "unauthorized", "A valid account key is required.")
+    if account["status"] != "active":
+        return None, _api_error(403, "account_suspended", "This account is suspended.")
+    return account, None
+
+
+async def _json_body(request: Request) -> dict:
+    try:
+        body = json.loads(await request.body() or b"{}")
+    except ValueError:
+        body = None
+    if not isinstance(body, dict):
+        raise accounts.AccountError("body must be a JSON object")
+    return body
+
+
+@app.post("/api/v1/accounts")
+async def api_create_account(request: Request):
+    """u9itus: make an account for a customer. 201 with its key; 200 (no key) if it exists."""
+    refusal = _platform_refusal(request)
+    if refusal:
+        return refusal
+    try:
+        body = await _json_body(request)
+        account, key = await run_in_threadpool(accounts.create, get_db(), str(body.get("external_ref") or ""),
+                                               str(body.get("name") or ""))
+    except accounts.AccountError as e:
+        return _api_error(422, "invalid", str(e))
+    reply = {"account": accounts.public(account)}
+    if key:
+        reply["key"] = key
+    return JSONResponse(reply, status_code=201 if key else 200)
+
+
+@app.post("/api/v1/accounts/{external_ref}/key")
+async def api_rotate_account_key(request: Request, external_ref: str):
+    """u9itus: issue a new key for an account; the old one stops working."""
+    refusal = _platform_refusal(request)
+    if refusal:
+        return refusal
+    try:
+        key = await run_in_threadpool(accounts.rotate_key, get_db(), external_ref)
+    except accounts.AccountError as e:
+        return _api_error(404, "not_found", str(e))
+    return {"key": key}
+
+
+@app.post("/api/v1/accounts/{external_ref}/status")
+async def api_account_status(request: Request, external_ref: str):
+    """u9itus: suspend an account (e.g. a failed payment) or make it active again."""
+    refusal = _platform_refusal(request)
+    if refusal:
+        return refusal
+    try:
+        body = await _json_body(request)
+        account = await run_in_threadpool(accounts.set_status, get_db(), external_ref, str(body.get("status") or ""))
+    except accounts.AccountError as e:
+        status = 404 if "No such account" in str(e) else 422
+        return _api_error(status, "not_found" if status == 404 else "invalid", str(e))
+    return {"account": accounts.public(account)}
+
+
+@app.get("/api/v1/account")
+async def api_whoami(request: Request):
+    account, refusal = await run_in_threadpool(_account_or_refusal, request)
+    return refusal or {"account": accounts.public(account)}
+
+
+@app.get("/api/v1/prospects")
+async def api_account_prospects(request: Request, after: int = Query(default=0, ge=0),
+                                limit: int = Query(default=50, ge=1, le=accounts.MAX_PAGE)):
+    """The prospects this account's searches found, in id order. Pass the last id as `after`."""
+    account, refusal = await run_in_threadpool(_account_or_refusal, request)
+    if refusal:
+        return refusal
+    rows = await run_in_threadpool(accounts.prospects, get_db(), account["id"], after=after, limit=limit)
+    return {"prospects": rows, "next_after": rows[-1]["id"] if len(rows) == limit else None}
+
+
 @app.get("/admin/selling", response_class=HTMLResponse)
 async def admin_selling(request: Request, msg: str = Query(default=""), error: str = Query(default="")):
     return _selling_page(request, msg=msg, error=error)
@@ -2378,6 +2486,16 @@ def _plugin_page(request: Request, page_key: str, posting: bool = False):
     if not (plugin_pages.can_post(user, page) if posting else plugin_pages.can_view(user, page)):
         raise Forbidden()
     return page
+
+
+async def render_plugin_panels(request: Request, slot: str, prospect=None) -> list[dict]:
+    """The plugin panels (core/plugin_panels.py) this user sees on a page, rendered."""
+    if not plugin_panels.for_slot(slot):
+        return []
+    ctx = plugin_panels.PanelContext(
+        user=current_user(request), db=get_db(), campaigns=visible_campaigns(request),
+        hidden_campaigns=hidden_for(request), prospect=prospect)
+    return await run_in_threadpool(plugin_panels.render, templates.env, slot, ctx)
 
 
 def _plugin_page_context(request: Request) -> plugin_pages.PageContext:

@@ -189,7 +189,8 @@ def test_new_plugin_writes_every_part_and_never_overwrites(tmp_path):
     written = scaffold.create("grant-finder", "Grant finder", root=tmp_path)
     assert sorted(str(p.relative_to(tmp_path)) for p in written) == sorted([
         "plugins/pages/grant_finder.py", "plugins/pages/templates/grant_finder.html",
-        "plugins/pages/static/grant_finder.css", "plugins/prospect_sources/grant_finder.py",
+        "plugins/pages/static/grant_finder.css", "plugins/panels/grant_finder.py",
+        "plugins/panels/templates/grant_finder.html", "plugins/prospect_sources/grant_finder.py",
         "plugins/jobs/grant_finder.py", "plugins/agents/grant-finder.md", "tests/test_plugin_grant_finder.py"])
     for path in written:
         text = path.read_text()

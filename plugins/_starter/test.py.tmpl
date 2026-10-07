@@ -11,9 +11,10 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from core import access, agents, jobs, plugin_pages  # noqa: E402
+from core import access, agents, jobs, plugin_pages, plugin_panels  # noqa: E402
 from plugins.jobs.${module} import ${Class}Job  # noqa: E402
 from plugins.pages.${module} import ${Class}Page  # noqa: E402
+from plugins.panels.${module} import ${Class}Panel  # noqa: E402
 from plugins.prospect_sources.${module} import ${Class}Source  # noqa: E402
 
 
@@ -22,6 +23,15 @@ def test_page_is_found_and_needs_a_real_permission():
     assert isinstance(page, ${Class}Page)
     assert page.permission in access.CATALOG
     assert (plugin_pages.TEMPLATES_DIR / page.template).exists()
+
+
+def test_panel_is_on_the_prospect_page():
+    panel = plugin_panels.panels()["${key}"]
+    assert isinstance(panel, ${Class}Panel) and panel in plugin_panels.for_slot("prospect")
+    assert (plugin_panels.TEMPLATES_DIR / panel.template).exists()
+    prospect = SimpleNamespace(name="Eastside Families United", source="${module}")
+    assert panel.context(SimpleNamespace(prospect=prospect))["ours"] is True
+    assert panel.context(SimpleNamespace(prospect=None)) is None
 
 
 def test_job_is_scheduled_with_the_others():
