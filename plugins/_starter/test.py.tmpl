@@ -1,0 +1,75 @@
+"""
+The ${title} plugin (made by `agency-os new-plugin ${module}`): its page, source,
+job and agent load and work together. No database or AI model needed.
+
+Run: python -m pytest tests/test_plugin_${module}.py
+"""
+
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from core import access, agents, jobs, plugin_pages  # noqa: E402
+from plugins.jobs.${module} import ${Class}Job  # noqa: E402
+from plugins.pages.${module} import ${Class}Page  # noqa: E402
+from plugins.prospect_sources.${module} import ${Class}Source  # noqa: E402
+
+
+def test_page_is_found_and_needs_a_real_permission():
+    page = plugin_pages.get("${key}")
+    assert isinstance(page, ${Class}Page)
+    assert page.permission in access.CATALOG
+    assert (plugin_pages.TEMPLATES_DIR / page.template).exists()
+
+
+def test_job_is_scheduled_with_the_others():
+    job = next(j for j in jobs.configured_jobs() if j.key == "${key}")
+    assert job.every_minutes >= jobs.MIN_MINUTES and isinstance(job.plugin, ${Class}Job)
+
+
+def test_agent_offers_its_own_task():
+    persona = agents.load_personas()["${key}"]
+    label, ask = persona.task("${module}_next_step")
+    assert label and ask
+    assert "${module}_next_step" in agents.all_tasks([persona])
+
+
+def test_source_is_off_until_its_url_is_set(monkeypatch):
+    monkeypatch.delenv("${ENV}_SOURCE_URL", raising=False)
+    assert not ${Class}Source().is_configured()
+    assert list(${Class}Source().discover({})) == []
+    monkeypatch.setenv("${ENV}_SOURCE_URL", "http://evil.example/feed.json")  # http only for localhost
+    assert not ${Class}Source().is_configured()
+
+
+def test_source_turns_records_into_prospects(monkeypatch):
+    monkeypatch.setenv("${ENV}_SOURCE_URL", "https://feed.example/prospects.json?key=secret")
+    source = ${Class}Source()
+    monkeypatch.setattr(source, "fetch", lambda: [
+        {"name": "Eastside Families United", "city": "Pasadena", "state": "CA"},
+        {"name": "Elsewhere Org", "state": "NV"},
+        {"city": "No name"},
+    ])
+    found = list(source.discover({"state": "CA"}))
+    assert [p.name for p in found] == ["Eastside Families United"]
+    assert found[0].source == "${module}" and "secret" not in found[0].source_url
+
+
+def test_job_asks_the_agent_per_campaign_and_keeps_failures():
+    job = ${Class}Job()
+    campaigns = [SimpleNamespace(db_name="a", name="A"), SimpleNamespace(db_name="b", name="B"),
+                 SimpleNamespace(db_name="empty", name="Empty")]
+    job.waiting = lambda db, c: [] if c.db_name == "empty" else [{"name": f"{c.name} org"}]
+    asked = []
+
+    def ask_agent(persona, ask, data):
+        asked.append((persona, data["campaign"]))
+        return ({"ok": True, "text": "Call A org first."} if data["campaign"] == "A"
+                else {"ok": False, "error": "No AI model is configured"})
+
+    summary = job.run(SimpleNamespace(db=None, campaigns=campaigns, ask_agent=ask_agent))
+    assert asked == [("${key}", "A"), ("${key}", "B")]
+    assert summary["campaigns"]["a"] == {"text": "Call A org first.", "looked_at": 1}
+    assert summary["campaigns"]["b"]["error"] and "error" not in summary  # one failure isn't the whole run

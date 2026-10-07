@@ -11,6 +11,7 @@ Usage:
     agency-os digest --campaign voter-guide-cbo
     agency-os campaigns
     agency-os plugins
+    agency-os new-plugin grant-finder --title "Grant finder"
     agency-os import-sqlite --from db.sqlite
     agency-os users list
     agency-os users create-owner --email you@example.com
@@ -607,6 +608,32 @@ def plugins(ctx, plugin_type):
         click.echo(f"\n{plugin_type}:")
         for k in keys:
             click.echo(f"  {k}")
+
+
+@cli.command("new-plugin")
+@click.argument("name")
+@click.option("--title", default="", help='Shown in the nav and on the page (default: from the name)')
+def new_plugin(name, title):
+    """Create a plugin with every part wired together: a page, a prospect source,
+    a scheduled AI job, an agent and a test (see docs/PLUGINS.md)."""
+    from core import scaffold
+
+    try:
+        written = scaffold.create(name, title)
+    except scaffold.ScaffoldError as exc:
+        click.echo(f"Error: {exc}")
+        sys.exit(1)
+    values = scaffold.names(name, title)
+    click.echo(f"Created the {values['title']} plugin:")
+    for path in written:
+        click.echo(f"  {path.relative_to(scaffold.PROJECT_ROOT)}")
+    click.echo(f"""
+Next:
+  1. python -m pytest tests/test_plugin_{values['module']}.py
+  2. Restart the app: the page is at /p/{values['key']} (More menu), the job is on Administration -> Jobs,
+     and the agent is on every prospect page.
+  3. Point the source at your data with {values['ENV']}_SOURCE_URL, and add `- {values['module']}`
+     under prospect_sources in a campaign.yaml.""")
 
 
 @cli.command("import-sqlite")

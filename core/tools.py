@@ -217,7 +217,7 @@ def _get_campaign(db, user, args):
 def _list_agents(db, user, args):
     return {"ok": True, "agents": [
         {"key": p.key, "name": p.name, "description": p.description,
-         "tasks": [{"key": t, "label": agents.TASKS[t][0]} for t in p.tasks]}
+         "tasks": [{"key": t, "label": p.task(t)[0]} for t in p.tasks]}
         for p in agents.load_personas().values()]}
 
 
@@ -476,7 +476,8 @@ TOOLS: dict[str, Tool] = {t.name: t for t in [
     Tool("draft_with_agent", "Draft with a sales persona and agency-os's own AI model (email, call prep, deal "
          "review...). Returns text only; nothing is sent.",
          _obj({"prospect_id": PROSPECT_ID, "agent": {"type": "string", "maxLength": 64},
-               "task": {"type": "string", "enum": list(agents.TASKS)},
+               "task": {"type": "string", "maxLength": 40,
+                        "description": "One of the agent's tasks (list_agent_personas)"},
                "instructions": {"type": "string", "maxLength": agents.MAX_INSTRUCTIONS}},
               ["prospect_id", "agent", "task"]), "agents.use", "draft", _draft),
     Tool("add_prospect_note", "Add a dated note to a prospect's campaign record.",

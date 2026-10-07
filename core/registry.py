@@ -26,18 +26,24 @@ class PluginRegistry:
         self.channels: dict[str, Any] = {}
         self.enrichers: dict[str, Any] = {}
         self.schedulers: dict[str, Any] = {}
+        self.pages: dict[str, Any] = {}  # web pages (core/plugin_pages.py); not in list_plugins()
+        self.jobs: dict[str, Any] = {}  # scheduled jobs (core/jobs.py); not in list_plugins()
 
-    def discover(self, base_dir: str = "plugins") -> None:
-        """Scan all plugin categories and register found plugins."""
-        categories = [
+    def discover(self, base_dir: str = "plugins", categories: tuple[str, ...] | None = None) -> None:
+        """Scan plugin categories (all but pages and jobs, unless named) and register found plugins."""
+        all_categories = [
             ("prospect_sources", self.sources),
             ("products", self.products),
             ("channels", self.channels),
             ("enrichers", self.enrichers),
             ("schedulers", self.schedulers),
+            ("pages", self.pages),
+            ("jobs", self.jobs),
         ]
 
-        for category, registry in categories:
+        for category, registry in all_categories:
+            if (category not in categories) if categories else category in ("pages", "jobs"):
+                continue
             cat_dir = Path(base_dir) / category
             if not cat_dir.exists():
                 continue

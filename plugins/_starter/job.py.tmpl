@@ -1,0 +1,53 @@
+"""
+${title} job: once a day, the ${title} agent reads each campaign's waiting
+prospects and picks who to work next, and why. Its findings show on /p/${key}.
+
+Runs with the other jobs when AGENCY_OS_RUN_JOBS=1 (an Owner can also run it
+from Administration -> Jobs). It needs an AI model (ANTHROPIC_API_KEY or
+AGENCY_OS_LLM); without one, the run is recorded as failed and nothing else
+happens. Like every job it only reads and drafts: it never sends, spends or
+changes a prospect. AGENCY_OS_JOB_${ENV}_MINUTES changes how often it runs.
+"""
+
+from __future__ import annotations
+
+PERSONA = "${key}"   # plugins/agents/${key}.md
+PER_CAMPAIGN = 15    # prospects the agent reads per campaign
+WAITING_STAGES = ("cold", "contacted", "nurture")
+ASK = ("These prospects are waiting in one campaign. Pick the three to work next. For each, give the name, "
+       "one sentence on why now, and the first thing to say. Use only the records; say what's unknown.")
+
+
+class ${Class}Job:
+    key = "${key}"
+    label = "${title}: the agent picks who to work next"
+    every_minutes = 24 * 60
+
+    def waiting(self, db, campaign) -> list[dict]:
+        """The campaign's prospects waiting longest, as plain records for the agent."""
+        rows = db.conn.execute(
+            """SELECT p.name, p.city, p.state, p.focus_area, p.website_url, o.stage, o.touch_count,
+                      o.last_contacted_at, o.contact_title, o.notes
+               FROM outreach o JOIN prospects p ON p.id = o.prospect_id
+               JOIN campaigns c ON c.id = o.campaign_id
+               WHERE c.name = ? AND o.stage = ANY(?)
+               ORDER BY o.last_contacted_at NULLS FIRST, o.id LIMIT ?""",
+            (campaign.db_name, list(WAITING_STAGES), PER_CAMPAIGN),
+        ).fetchall()
+        return [{k: (str(v)[:500] if v is not None else None) for k, v in dict(r).items()} for r in rows]
+
+    def run(self, job) -> dict:
+        found, errors = {}, []
+        for campaign in job.campaigns:
+            records = self.waiting(job.db, campaign)
+            if not records:
+                continue
+            reply = job.ask_agent(PERSONA, ASK, {"campaign": campaign.name, "prospects": records})
+            found[campaign.db_name] = ({"text": reply["text"], "looked_at": len(records)} if reply["ok"]
+                                       else {"error": reply["error"], "looked_at": len(records)})
+            if not reply["ok"]:
+                errors.append(reply["error"])
+        summary = {"campaigns": found}
+        if found and len(errors) == len(found):
+            summary["error"] = errors[0]  # every campaign failed (often: no AI model set up)
+        return summary

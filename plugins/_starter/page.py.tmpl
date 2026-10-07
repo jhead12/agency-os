@@ -1,0 +1,75 @@
+"""${title}: search prospects, read what the ${title} agent found, save a search as a list.
+
+Made by `agency-os new-plugin ${module}`. The parts work together:
+
+    plugins/pages/${module}.py               this page, at /p/${key}
+    plugins/pages/templates/${module}.html   its HTML
+    plugins/pages/static/${module}.css       its styles
+    plugins/prospect_sources/${module}.py    where its prospects come from
+    plugins/jobs/${module}.py                the scheduled AI job whose findings show here
+    plugins/agents/${key}.md                 the agent the job uses (also on prospect pages)
+    tests/test_plugin_${module}.py           checks that they all load
+
+See docs/PLUGINS.md.
+"""
+
+from core import jobs
+from core.db import Database
+
+PAGE_SIZE = 50
+SOURCE_KEY = "${module}"  # plugins/prospect_sources/${module}.py
+JOB_KEY = "${key}"        # plugins/jobs/${module}.py
+
+
+def _criteria(values: dict, page) -> dict:
+    """The search as prospect-list filters (the same ones saved lists use)."""
+    criteria = {"q": (values.get("q") or "").strip()[:200]}
+    if values.get("ours"):
+        criteria["source"] = SOURCE_KEY
+    if values.get("campaign") in {c.db_name for c in page.campaigns}:
+        criteria["campaign"] = values["campaign"]
+    return {k: v for k, v in criteria.items() if v}
+
+
+class ${Class}Page:
+    key = "${key}"
+    title = "${title}"
+    permission = "prospects.view"
+    template = "${module}.html"
+
+    def context(self, page):
+        criteria = _criteria(page.query, page)
+        # prospect_filter leaves out hidden campaigns' prospects; always pass them.
+        where, params = Database.prospect_filter(criteria, page.hidden_campaigns)
+        rows = page.db.conn.execute(
+            f"""SELECT DISTINCT p.id, p.name, p.city, p.state, p.source FROM prospects p
+                LEFT JOIN outreach o ON o.prospect_id = p.id
+                WHERE {where} ORDER BY p.name LIMIT ?""",
+            (*params, PAGE_SIZE),
+        ).fetchall()
+
+        # The job sees every campaign; show only the ones this viewer may see.
+        run = jobs.last_result(page.db, JOB_KEY)
+        visible = {c.db_name: c.name for c in page.campaigns}
+        findings = []
+        if run:
+            for name, found in (run["summary"].get("campaigns") or {}).items():
+                if name in visible:
+                    findings.append({"campaign": visible[name], **found})
+
+        return {
+            "criteria": criteria,
+            "campaigns": page.campaigns,
+            "prospects": [dict(r) for r in rows],
+            "page_size": PAGE_SIZE,
+            "run": run,
+            "findings": findings,
+        }
+
+    def post(self, page, form):
+        """Save the current search as a prospect list (Prospects -> My saved lists)."""
+        name = (form.get("name") or "").strip()
+        if not name:
+            raise ValueError("Name the list first.")
+        page.db.save_prospect_list(page.user.id, name, _criteria(form, page))
+        return f"Saved \"{name}\". Find it under My saved lists on the Prospects page."

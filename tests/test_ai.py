@@ -168,7 +168,8 @@ def test_read_tools(db, no_model, monkeypatch):
 # ── Agents and the panel ───────────────────────────────────────────────
 
 
-def test_personas_are_vendored_with_their_tasks():
+def test_personas_are_vendored_with_their_tasks(monkeypatch, tmp_path):
+    monkeypatch.setattr(agents, "PLUGIN_AGENTS_DIR", tmp_path)  # just the vendored ones
     personas = agents.load_personas()
     assert set(personas) == set(agents.AGENT_TASKS)
     outbound = personas["sales-outbound-strategist"]
