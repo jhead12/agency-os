@@ -1710,6 +1710,7 @@ class Database:
                 raise AccessError("User not found.")
             roles_before = self._user_role_names(c, user_id)
             is_agent = bool(before["is_agent"]) if is_agent is None else is_agent
+            is_agent = is_agent or access.looks_like_agent_email(before["email"])
             c.execute(
                 "UPDATE users SET name = ?, is_active = ?, is_agent = ? WHERE id = ?",
                 (name, int(is_active), int(is_agent), user_id),

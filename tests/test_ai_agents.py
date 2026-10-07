@@ -111,3 +111,10 @@ def test_autonomous_calls_are_recorded_and_ai_never_runs_owner_tools(db):
 
     # A CLI key is recorded too, but the remote CLI keeps its team commands.
     assert tools.run_tool(db, owner, "users_list", {}, source="cli", surface="console")["ok"]
+
+
+def test_agent_inbox_stays_an_agent_when_saved_without_the_box(db):
+    owners(db)
+    agent = make_user(db, "tmobile@agentmail.to", "Recruiter")
+    assert "msg=" in save("owner@x.com", agent, is_active="1", role_ids=[role_id(db, "Recruiter")])
+    assert db.load_current_user(agent).is_agent

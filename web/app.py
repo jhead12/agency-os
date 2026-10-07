@@ -151,6 +151,28 @@ app = FastAPI(title="agency-os", docs_url=None, redoc_url=None, openapi_url=None
 templates = Jinja2Templates(directory=str(PROJECT_ROOT / "web" / "templates"))
 app.mount("/static", StaticFiles(directory=str(PROJECT_ROOT / "web" / "static")), name="static")
 
+
+# Sent on every response. No page is ever framed; links never pass the URL
+# (a one-time /welcome/ or /reset-password/ token) to another site.
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "same-origin",
+    "Permissions-Policy": "geolocation=(), camera=(), payment=()",
+}
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    for name, value in SECURITY_HEADERS.items():
+        response.headers.setdefault(name, value)
+    if request.url.scheme == "https":
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000")
+    if request.url.path.startswith(("/welcome/", "/reset-password/")):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
 # ── Auth ────────────────────────────────────────────────────────────
 # Multi-user login with role-based permissions (policy in core/access.py).
 # Every route is checked against access.ROUTE_RULES before its handler
@@ -159,7 +181,8 @@ app.mount("/static", StaticFiles(directory=str(PROJECT_ROOT / "web" / "static"))
 SESSION_COOKIE = "aos_session"
 SESSION_TTL_DAYS = 14
 LOGIN_WINDOW_SECONDS = 15 * 60
-LOGIN_MAX_FAILURES = 5
+LOGIN_MAX_FAILURES = 5          # per email and client IP
+LOGIN_ACCOUNT_MAX_FAILURES = 20  # per email from any IP, so spreading guesses over IPs doesn't help
 # Routes that also accept a CLI key (Authorization: Bearer aos_cli_...) instead of a session.
 KEY_ROUTES = {"POST /api/console"}
 _login_failures: dict[str, list[float]] = defaultdict(list)
@@ -2469,16 +2492,18 @@ async def login(
 ):
     client = request.client.host if request.client else "?"
     key = f"{email.strip().lower()}|{client}"
+    account_key = f"{email.strip().lower()}|*"
     now = time.monotonic()
-    recent = [t for t in _login_failures[key] if now - t < LOGIN_WINDOW_SECONDS]
-    _login_failures[key] = recent
+    for k in (key, account_key):
+        _login_failures[k] = [t for t in _login_failures[k] if now - t < LOGIN_WINDOW_SECONDS]
 
     def fail(message: str):
         return RedirectResponse(
             url=f"/login?error={quote(message)}&next={quote(next)}", status_code=303
         )
 
-    if len(recent) >= LOGIN_MAX_FAILURES:
+    if (len(_login_failures[key]) >= LOGIN_MAX_FAILURES
+            or len(_login_failures[account_key]) >= LOGIN_ACCOUNT_MAX_FAILURES):
         return fail("Too many failed attempts. Try again in 15 minutes.")
 
     db = get_db()
@@ -2487,9 +2512,11 @@ async def login(
     ok = access.verify_password(password, row["password_hash"] if row else _DUMMY_HASH)
     if not (row and ok and row["is_active"]):
         _login_failures[key].append(now)
+        _login_failures[account_key].append(now)
         return fail("Incorrect email or password.")
 
     _login_failures.pop(key, None)
+    _login_failures.pop(account_key, None)
     user = db.load_current_user(row["id"])
     db.audit(user, "auth.login", "user", user.id)
     return _start_session(request, user, _safe_next(next) or user.landing_page())
@@ -2562,12 +2589,13 @@ async def forgot_password_page(request: Request, sent: bool = Query(default=Fals
     })
 
 
-def _send_reset_email(email: str, link: str) -> None:
+def _send_reset_email(email: str) -> None:
     """Runs after the response is sent, so timing never reveals whether the email exists."""
     db = get_db()
     row = db.get_user_by_email(email)
-    if not row:
+    if not (row and row["is_active"]):
         return
+    link, _ = welcome_email.issue_reset(db, row["id"], site_url())
     user = db.load_current_user(row["id"])
     subject, body = welcome_email.compose_reset(user, link, site_url())
     result = welcome_email.send(user.email, subject, body)
@@ -2591,11 +2619,8 @@ async def forgot_password(request: Request, background: BackgroundTasks, email: 
     for key in keys:
         _reset_requests[key].append(now)
 
-    db = get_db()
-    row = db.get_user_by_email(email)
-    if row and row["is_active"] and welcome_email.smtp_configured():
-        link, _ = welcome_email.issue_reset(db, row["id"], site_url())
-        background.add_task(_send_reset_email, email, link)
+    if welcome_email.smtp_configured():
+        background.add_task(_send_reset_email, email)
     return RedirectResponse(url="/forgot-password?sent=1", status_code=303)
 
 

@@ -107,6 +107,28 @@ def test_wrong_password_and_rate_limit(db):
     assert "Too%20many" in r.headers["location"]
 
 
+def test_account_locks_after_failures_from_many_ips(db, monkeypatch):
+    make_user(db, "rep@x.com", "Sales Rep")
+    c = client_for()
+    ips = iter(f"10.0.0.{i}" for i in range(100))
+    monkeypatch.setattr(webapp, "LOGIN_MAX_FAILURES", 10**6)  # isolate the per-account limit
+    for _ in range(webapp.LOGIN_ACCOUNT_MAX_FAILURES):
+        r = TestClient(webapp.app, follow_redirects=False, client=(next(ips), 1)).post(
+            "/login", data={"email": "rep@x.com", "password": "nope"})
+        assert "Incorrect" in r.headers["location"]
+    r = TestClient(webapp.app, follow_redirects=False, client=(next(ips), 1)).post(
+        "/login", data={"email": "rep@x.com", "password": PASSWORD})
+    assert "Too%20many" in r.headers["location"]
+
+
+def test_security_headers(db):
+    r = client_for().get("/login")
+    assert r.headers["x-frame-options"] == "DENY"
+    assert r.headers["x-content-type-options"] == "nosniff"
+    assert r.headers["referrer-policy"] == "same-origin"
+    assert client_for().get("/reset-password/whatever").headers["cache-control"] == "no-store"
+
+
 def test_login_redirect_rejects_offsite_next(db):
     make_user(db, "rep@x.com", "Sales Rep")
     r = client_for().post("/login", data={
