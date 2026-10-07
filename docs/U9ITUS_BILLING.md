@@ -12,6 +12,9 @@ Status (2026-10-07):
 - **B1 built** on agency-os branch `feat/u9itus-billing-accounts`: accounts, the
   platform and account keys, the account endpoints, and keeping account
   prospects out of house views. Tests: `tests/test_accounts.py` (11).
+- **B2 built** on the same branch: the `searches` and `search_results` tables,
+  create / get / cancel, and `?search=` on `/api/v1/prospects`. Searches stay
+  `queued` until the runner (B3) exists. Tests: `tests/test_searches.py` (19).
 - Everything else is planned. Decisions still open for the owner are in section 8.
 
 ## Goal
@@ -107,7 +110,7 @@ errors:                                  # every error body: {error: <code>, mes
   401: unauthorized                      # missing or wrong key
   403: account_suspended
   404: not_found
-  409: conflict                          # planned: idempotency_key reused with different params
+  409: conflict                          # idempotency_key reused with different settings
   422: invalid
   429: limit_reached                     # planned: an account cap (section 5)
   503: service_not_configured            # platform key hash not set
@@ -127,20 +130,25 @@ endpoints:
       200: {account: Account}
   - GET /api/v1/prospects?after=0&limit=50:      # account key; limit ≤ 200; id order
       200: {prospects: [Prospect], next_after: int | null}
-      planned: "&search={id}" limits it to one search's results
+      "&search={id}": only what that search found, including prospects the account
+                      already had (listed, not billed); 404 if not the account's search
 
-  # ── Planned (B2-B4) ─────────────────────────────────────────
+  # ── Built (B2) ──────────────────────────────────────────────
   - POST /api/v1/searches:               # account key
       body:
         type: city | rss | scrape
         params: {}                       # per type, section 4
         max_results: 1..500              # hard ceiling on delivered prospects
         idempotency_key: "u9-search-8812"  # unique per account; a retry returns the same search
-      202: {search: Search}
+      202: {search: Search}              # created
+      200: {search: Search}              # retry with the same key and settings
+      409: conflict                      # same key, different type / params / max_results
   - GET /api/v1/searches/{id}:           # account key; only that account's searches
       200: {search: Search}
-  - POST /api/v1/searches/{id}/cancel:   # account key; stops after the current page
-      200: {search: Search}
+  - POST /api/v1/searches/{id}/cancel:   # account key; queued → canceled now,
+      200: {search: Search}              # running → cancel_requested, stops after the current page
+
+  # ── Planned (B4) ────────────────────────────────────────────
   - GET /api/v1/usage?from=2026-10-01&to=2026-10-31:  # platform key, all accounts; or account key, own
       200: {usage: [{external_ref, day, searches, delivered, pages_fetched, cost_cents}]}
 
@@ -157,6 +165,8 @@ types:
     delivered: int                       # THE billable number (section 5)
     usage: {pages_fetched: int, api_requests: int, cost_cents: int}   # our cost, for margins
     error: string | null
+    cancel_requested: bool
+    idempotency_key: string
     created_at, started_at, finished_at: timestamp | null
 ```
 
@@ -225,8 +235,8 @@ show the real cost per type so margins can be checked.
 | # | Task | Files | Acceptance |
 |---|---|---|---|
 | **B1 ✅** | Accounts, platform and account keys, account endpoints, account prospects kept out of house views | `core/accounts.py`, `core/db.py` (schema, `hidden_clause`, `upsert_prospect(account_id=)`), `core/access.py`, `web/app.py`, `core/cli.py` (`agency-os accounts …`) | `tests/test_accounts.py`: keys, idempotent create, rotate, suspend, paging, isolation between accounts, house never sees account prospects, an account never overwrites a house prospect |
-| B2 | `searches` table and endpoints: create (idempotent per account), get, cancel; `?search=` on `/prospects` | `core/searches.py`, `core/db.py`, `web/app.py`, `core/access.py` | Same `idempotency_key` twice gives one search; different params with the same key → 409; one account can't read another's search (404) |
-| B3 | Runner: picks up `queued` searches on the `core/jobs.py` loop, runs the plugin, saves through `accounts.add_prospect`, stops at `max_results`, honors cancel, records `delivered` and `usage` | `core/searches.py`, `core/jobs.py` | A fake plugin yielding 1000 → `delivered == max_results`; a crash marks `failed` with what was delivered; a restart doesn't run a search twice (`job_runs` pattern) |
+| **B2 ✅** | `searches` and `search_results` tables and endpoints: create (idempotent per account), get, cancel; `?search=` on `/prospects` | `core/searches.py`, `core/db.py`, `web/app.py`, `core/access.py` | `tests/test_searches.py`: same `idempotency_key` twice gives one search; different settings → 409; another account's search is 404; `searches.save_result` bills only prospects new to the account and never passes `max_results` |
+| B3 | Runner: picks up `queued` searches on the `core/jobs.py` loop, runs the plugin, saves through `searches.save_result`, stops at `max_results`, honors cancel, records `delivered` and `usage` | `core/searches.py`, `core/jobs.py` | A fake plugin yielding 1000 → `delivered == max_results`; a crash marks `failed` with what was delivered; a restart doesn't run a search twice (`job_runs` pattern) |
 | B4 | `account_usage` per account per day, `GET /api/v1/usage`, per-account caps (section 5) | `core/searches.py`, `core/db.py` | Usage totals equal the sum of searches; the cap returns 429 and doesn't create the search |
 | B5 | `city` search | `plugins/searches/city.py` | Recorded API responses in tests, with no network calls; dedupes by place id |
 | B6 | `rss` search | `plugins/searches/rss.py` | RSS 2.0 and Atom fixtures; `keywords` filter; malformed feed → `failed` with a clear message |

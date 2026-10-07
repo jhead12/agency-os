@@ -156,26 +156,38 @@ def for_key(db, key: str) -> Optional[dict]:
 # ── An account's prospects ─────────────────────────────────────────────
 
 
+def link_prospect(db, account_id: int, prospect: Prospect) -> tuple[int, bool]:
+    """Save a prospect an account's search found and link it to the account.
+    Returns (prospect id, whether it's new to the account). Call inside a transaction."""
+    prospect_id = db.upsert_prospect(prospect, account_id=account_id)
+    linked = db.conn.execute(
+        """INSERT INTO account_prospects (account_id, prospect_id) VALUES (?, ?)
+           ON CONFLICT DO NOTHING RETURNING prospect_id""",
+        (account_id, prospect_id),
+    ).fetchone()
+    return prospect_id, linked is not None
+
+
 def add_prospect(db, account_id: int, prospect: Prospect) -> int:
-    """Save a prospect an account's search found and link it to the account."""
-    c = db.conn
-    with c.raw.transaction():
-        prospect_id = db.upsert_prospect(prospect, account_id=account_id)
-        c.execute(
-            "INSERT INTO account_prospects (account_id, prospect_id) VALUES (?, ?) ON CONFLICT DO NOTHING",
-            (account_id, prospect_id),
-        )
-    return prospect_id
+    """Save a prospect for an account and link it; returns its id."""
+    with db.conn.raw.transaction():
+        return link_prospect(db, account_id, prospect)[0]
 
 
-def prospects(db, account_id: int, *, after: int = 0, limit: int = 50) -> list[dict]:
-    """An account's prospects in id order; pass the last id as `after` for the next page."""
+def prospects(db, account_id: int, *, after: int = 0, limit: int = 50,
+              search_id: Optional[int] = None) -> list[dict]:
+    """An account's prospects in id order; pass the last id as `after` for the next page.
+    With search_id, only what that search found (check the search is the account's first)."""
     limit = max(1, min(int(limit or 50), MAX_PAGE))
+    search_join, params = "", [account_id]
+    if search_id is not None:
+        search_join = "JOIN search_results sr ON sr.prospect_id = p.id AND sr.search_id = ?"
+        params = [search_id, account_id]
     rows = db.conn.execute(
-        """SELECT p.id, p.name, p.website_url, p.address, p.city, p.state, p.zip, p.county,
-                  p.focus_area, p.source, p.source_url, ap.added_at
-           FROM account_prospects ap JOIN prospects p ON p.id = ap.prospect_id
-           WHERE ap.account_id = ? AND p.id > ? ORDER BY p.id LIMIT ?""",
-        (account_id, int(after or 0), limit),
+        f"""SELECT p.id, p.name, p.website_url, p.address, p.city, p.state, p.zip, p.county,
+                   p.focus_area, p.source, p.source_url, ap.added_at
+            FROM account_prospects ap JOIN prospects p ON p.id = ap.prospect_id {search_join}
+            WHERE ap.account_id = ? AND p.id > ? ORDER BY p.id LIMIT ?""",
+        (*params, int(after or 0), limit),
     ).fetchall()
     return [dict(r) for r in rows]

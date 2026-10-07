@@ -60,7 +60,7 @@ from plugins.channels.lob_direct_mail import TEMPLATE_ID_RE, lob_template_url
 from core.jobs import JobRunner, configured_jobs, jobs_enabled
 from core import (
     accounts, agents, claims, console, contact_depth, evidence, lead_packages, llm, mcp_auth, panels, payments,
-    plugin_pages, plugin_panels, royalties, selling,
+    plugin_pages, plugin_panels, royalties, searches, selling,
     tools, verify, workflows,
 )
 from core import welcome as welcome_email
@@ -2279,13 +2279,54 @@ async def api_whoami(request: Request):
 
 @app.get("/api/v1/prospects")
 async def api_account_prospects(request: Request, after: int = Query(default=0, ge=0),
-                                limit: int = Query(default=50, ge=1, le=accounts.MAX_PAGE)):
-    """The prospects this account's searches found, in id order. Pass the last id as `after`."""
+                                limit: int = Query(default=50, ge=1, le=accounts.MAX_PAGE),
+                                search: Optional[int] = Query(default=None)):
+    """The prospects this account's searches found, in id order. Pass the last id as `after`;
+    `search` limits it to what one search found."""
     account, refusal = await run_in_threadpool(_account_or_refusal, request)
     if refusal:
         return refusal
-    rows = await run_in_threadpool(accounts.prospects, get_db(), account["id"], after=after, limit=limit)
+    db = get_db()
+    if search is not None and await run_in_threadpool(searches.get, db, account["id"], search) is None:
+        return _api_error(404, "not_found", "No such search.")
+    rows = await run_in_threadpool(accounts.prospects, db, account["id"], after=after, limit=limit,
+                                   search_id=search)
     return {"prospects": rows, "next_after": rows[-1]["id"] if len(rows) == limit else None}
+
+
+@app.post("/api/v1/searches")
+async def api_create_search(request: Request):
+    """Queue a paid search. 202 when created; 200 for a retry with the same idempotency_key."""
+    account, refusal = await run_in_threadpool(_account_or_refusal, request)
+    if refusal:
+        return refusal
+    try:
+        body = await _json_body(request)
+        search, created = await run_in_threadpool(searches.create, get_db(), account["id"], body)
+    except searches.SearchConflict as e:
+        return _api_error(409, "conflict", str(e))
+    except (searches.SearchError, accounts.AccountError) as e:
+        return _api_error(422, "invalid", str(e))
+    return JSONResponse({"search": searches.public(search)}, status_code=202 if created else 200)
+
+
+@app.get("/api/v1/searches/{search_id}")
+async def api_get_search(request: Request, search_id: int):
+    account, refusal = await run_in_threadpool(_account_or_refusal, request)
+    if refusal:
+        return refusal
+    search = await run_in_threadpool(searches.get, get_db(), account["id"], search_id)
+    return {"search": searches.public(search)} if search else _api_error(404, "not_found", "No such search.")
+
+
+@app.post("/api/v1/searches/{search_id}/cancel")
+async def api_cancel_search(request: Request, search_id: int):
+    """Cancel a search: a queued one ends now, a running one stops after the current page."""
+    account, refusal = await run_in_threadpool(_account_or_refusal, request)
+    if refusal:
+        return refusal
+    search = await run_in_threadpool(searches.cancel, get_db(), account["id"], search_id)
+    return {"search": searches.public(search)} if search else _api_error(404, "not_found", "No such search.")
 
 
 @app.get("/admin/selling", response_class=HTMLResponse)
