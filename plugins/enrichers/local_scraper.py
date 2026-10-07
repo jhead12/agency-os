@@ -105,6 +105,11 @@ JUNK_EMAIL_DOMAINS = {
     "shopify.com", "mailchimp.com", "constantcontact.com",
 }
 
+# Pages that describe what the org does, and the most of it we keep
+ABOUT_PATH_HINTS = ("about", "who-we-are")
+SUMMARY_MAX = 500
+SUMMARY_JUNK = ("cookie", "copyright", "©", "all rights reserved", "javascript")
+
 # Junk phone prefixes (toll-free, info lines)
 JUNK_PHONE_PREFIXES = {"800", "888", "877", "866", "855", "844", "833", "000", "555"}
 
@@ -171,6 +176,11 @@ class LocalScraperEnricher:
         if name:
             result.contact_name = name
             result.confidence = min(result.confidence + 0.1, 1.0)
+
+        # What the org says it does, for call scripts and the AI
+        summary = self._extract_summary(pages)
+        if summary:
+            result.raw["site_summary"] = summary
 
         return result
 
@@ -411,6 +421,48 @@ class LocalScraperEnricher:
         body_text = body.text(separator=" ") if body else ""
 
         return priority_text + " " + body_text
+
+    def _extract_summary(self, pages: list[tuple[str, str]]) -> Optional[str]:
+        """A few sentences on what the org does: the about page's opening
+        paragraphs, else the homepage's meta description, else its paragraphs."""
+        about = [html for url, html in pages
+                 if any(h in urlparse(url).path.lower() for h in ABOUT_PATH_HINTS)]
+        home = pages[0][1] if pages else ""
+        for text in [self._paragraphs(html) for html in about] + [
+            self._meta_description(home), self._paragraphs(home),
+        ]:
+            if text:
+                return self._clip(text)
+        return None
+
+    def _paragraphs(self, html: str) -> str:
+        """The page's first substantial paragraphs, skipping legal/cookie boilerplate."""
+        kept = []
+        for p in HTMLParser(html).css("p"):
+            text = " ".join(p.text(separator=" ").split())
+            if len(text) < 80 or any(j in text.lower() for j in SUMMARY_JUNK):
+                continue
+            kept.append(text)
+            if sum(len(t) for t in kept) >= SUMMARY_MAX:
+                break
+        return " ".join(kept)
+
+    def _meta_description(self, html: str) -> str:
+        tree = HTMLParser(html)
+        for sel in ('meta[name="description"]', 'meta[property="og:description"]'):
+            el = tree.css_first(sel)
+            content = " ".join((el.attributes.get("content") or "").split()) if el else ""
+            if len(content) >= 40:
+                return content
+        return ""
+
+    def _clip(self, text: str) -> str:
+        """Trim to SUMMARY_MAX, ending on a sentence (or word) boundary."""
+        if len(text) <= SUMMARY_MAX:
+            return text
+        cut = text[:SUMMARY_MAX]
+        end = cut.rfind(". ")
+        return cut[:end + 1] if end > SUMMARY_MAX // 2 else cut.rsplit(" ", 1)[0] + "…"
 
     def _extract_phone(self, text: str) -> Optional[str]:
         """Extract the first valid phone number."""

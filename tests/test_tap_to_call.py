@@ -48,3 +48,26 @@ def test_prospect_and_script_pages_link_the_phone(db):
 
     db.update_outreach(oid, {"contact_phone": "ask reception"})
     assert "tel:" not in client.get(f"/prospects/{pid}").text
+
+
+def test_enriched_website_and_summary_reach_the_call_scripts(db):
+    from core.models import EnrichmentResult
+    make_user(db, "rep@x.com", "Sales Rep")
+    campaign_id = db.upsert_campaign("voter-guide--cbo-outreach-los-angeles", "x")
+    pid = db.upsert_prospect(Prospect(name="Civic Org", state="CA", city="Los Angeles"))
+    oid = db.upsert_outreach(pid, campaign_id)
+    client = client_for("rep@x.com")
+
+    scripts = client.get(f"/call-scripts?prospect_id={pid}").text
+    assert "no site summary yet" in scripts and "From their website" not in scripts
+
+    db.apply_enrichment(oid, EnrichmentResult(
+        contact_name="Dana Lee", contact_title="Executive Director",
+        raw={"website": "https://civic.example.org", "site_summary": "We register first-time voters."},
+    ), prospect_id=pid)
+    assert db.get_prospect(pid).site_summary == "We register first-time voters."
+
+    scripts = client.get(f"/call-scripts?prospect_id={pid}").text
+    assert "From their website:</strong> We register first-time voters." in scripts
+    assert "[Contact: Dana Lee, Executive Director]" in scripts
+    assert "[Website: https://civic.example.org]" in scripts

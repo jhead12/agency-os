@@ -160,3 +160,40 @@ def test_scraper_mailto_filters_junk_domains():
     ])
     result = scraper.enrich(_prospect())
     assert result.contact_email == "real@example.org"
+
+
+# ── local_scraper site summary ────────────────────────────────────────
+
+ABOUT = ("We are a neighborhood nonprofit that registers first-time voters in East Los Angeles "
+         "and runs a youth civic leadership program every summer.")
+
+
+def test_scraper_summary_prefers_about_page():
+    scraper = _make_scraper()
+    scraper._find_website = lambda prospect: "https://example.org"
+    scraper._fetch_pages = lambda base_url: [
+        ("https://example.org", '<html><head><meta name="description" content="Homepage blurb about '
+                                'our organization and what we do."></head><body></body></html>'),
+        ("https://example.org/about", f"<html><body><p>Short.</p><p>{ABOUT}</p>"
+                                      "<p>© 2026 Example Org. All rights reserved and then some more words.</p></body></html>"),
+    ]
+    assert scraper.enrich(_prospect()).raw["site_summary"] == ABOUT
+
+
+def test_scraper_summary_falls_back_to_meta_description():
+    scraper = _scraper_with_pages([
+        '<html><head><meta property="og:description" content="Free legal clinics for tenants across '
+        'South LA since 1998."></head><body><p>Hi</p></body></html>'
+    ])
+    assert scraper.enrich(_prospect()).raw["site_summary"] == "Free legal clinics for tenants across South LA since 1998."
+
+
+def test_scraper_summary_is_clipped():
+    scraper = _scraper_with_pages([f"<html><body>{f'<p>{ABOUT}</p>' * 10}</body></html>"])
+    summary = scraper.enrich(_prospect()).raw["site_summary"]
+    assert len(summary) <= 500 and summary.endswith(".")
+
+
+def test_scraper_no_summary_without_text():
+    scraper = _scraper_with_pages(["<html><body><p>Contact us</p></body></html>"])
+    assert "site_summary" not in scraper.enrich(_prospect()).raw

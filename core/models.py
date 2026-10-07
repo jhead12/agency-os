@@ -32,6 +32,7 @@ class Prospect:
     annual_revenue: Optional[int] = None
     voter_engagement: bool = False
     metadata: dict = field(default_factory=dict)
+    site_summary: Optional[str] = None
     id: Optional[int] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
