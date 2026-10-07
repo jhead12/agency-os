@@ -67,15 +67,15 @@ PAGES: dict[str, dict[str, Panel]] = {
 
 # The prospect page's background follows the pipeline stage unless the user
 # picked their own background. Dark tints, so every panel stays readable.
-STAGE_BACKGROUNDS = {
-    "cold": "#0a0a0a",            # black
+STAGE_BACKGROUNDS = {  # the same hues as the stage badges and list rows (style.css)
+    "cold": "#0a0a0a",            # black (gray badge)
     "contacted": "#0b1730",       # blue
-    "engaged": "#0b2614",         # green
+    "engaged": "#082429",         # cyan
     "demo_scheduled": "#1f1236",  # purple
     "proposal_sent": "#2d1b08",   # orange
-    "closed_won": "#2a2306",      # gold
+    "closed_won": "#0b2614",      # green
     "closed_lost": "#2a0b0b",     # red
-    "nurture": "#082429",         # teal
+    "nurture": "#2a2306",         # yellow
 }
 
 

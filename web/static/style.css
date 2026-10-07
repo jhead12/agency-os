@@ -163,14 +163,21 @@ body {
     font-size: 11px;
     font-weight: 600;
 }
-.stage-cold { background: rgba(139,142,152,0.2); color: var(--text-muted); }
-.stage-contacted { background: rgba(59,130,246,0.2); color: var(--accent); }
-.stage-engaged { background: rgba(6,182,212,0.2); color: var(--cyan); }
-.stage-demo_scheduled { background: rgba(168,85,247,0.2); color: var(--purple); }
-.stage-proposal_sent { background: rgba(249,115,22,0.2); color: var(--orange); }
-.stage-closed_won { background: rgba(34,197,94,0.2); color: var(--green); }
-.stage-closed_lost { background: rgba(239,68,68,0.2); color: var(--red); }
-.stage-nurture { background: rgba(139,142,152,0.1); color: var(--text-muted); }
+/* One color per pipeline stage, shared by badges, dots, bars and prospect-list rows.
+   The prospect page's background uses dark tints of the same hues (core/panels.py). */
+.stage-cold { --stage: var(--text-muted); }
+.stage-contacted { --stage: var(--accent); }
+.stage-engaged { --stage: var(--cyan); }
+.stage-demo_scheduled { --stage: var(--purple); }
+.stage-proposal_sent { --stage: var(--orange); }
+.stage-closed_won { --stage: var(--green); }
+.stage-closed_lost { --stage: var(--red); }
+.stage-nurture { --stage: var(--yellow); }
+.stage-badge { background: color-mix(in srgb, var(--stage, var(--text-muted)) 20%, transparent); color: var(--stage, var(--text-muted)); }
+/* Prospect list: a stripe in the stage color down the left edge and a faint tint across the row. */
+.data-table tr.stage-tint > td { background: color-mix(in srgb, var(--stage) 6%, transparent); }
+.data-table tr.stage-tint > td:first-child { box-shadow: inset 3px 0 0 var(--stage); }
+.data-table tr.stage-tint:hover > td { background: color-mix(in srgb, var(--stage) 12%, var(--surface-hover)); }
 
 /* Status badges */
 .status-badge {
@@ -207,14 +214,7 @@ body {
     border-radius: 50%;
     flex-shrink: 0;
 }
-.stage-dot.stage-cold { background: var(--text-muted); }
-.stage-dot.stage-contacted { background: var(--accent); }
-.stage-dot.stage-engaged { background: var(--cyan); }
-.stage-dot.stage-demo_scheduled { background: var(--purple); }
-.stage-dot.stage-proposal_sent { background: var(--orange); }
-.stage-dot.stage-closed_won { background: var(--green); }
-.stage-dot.stage-closed_lost { background: var(--red); }
-.stage-dot.stage-nurture { background: var(--text-muted); opacity: 0.5; }
+.stage-dot { background: var(--stage, var(--text-muted)); }
 
 .stage-bar-container {
     flex: 1;
@@ -228,14 +228,7 @@ body {
     min-width: 2px;
     transition: width 0.3s;
 }
-.stage-bar.stage-cold { background: rgba(139,142,152,0.3); }
-.stage-bar.stage-contacted { background: rgba(59,130,246,0.4); }
-.stage-bar.stage-engaged { background: rgba(6,182,212,0.4); }
-.stage-bar.stage-demo_scheduled { background: rgba(168,85,247,0.4); }
-.stage-bar.stage-proposal_sent { background: rgba(249,115,22,0.4); }
-.stage-bar.stage-closed_won { background: rgba(34,197,94,0.4); }
-.stage-bar.stage-closed_lost { background: rgba(239,68,68,0.4); }
-.stage-bar.stage-nurture { background: rgba(139,142,152,0.2); }
+.stage-bar { background: color-mix(in srgb, var(--stage, var(--text-muted)) 40%, transparent); }
 .stage-count { font-size: 12px; color: var(--text-muted); min-width: 30px; }
 
 /* Campaign meta */

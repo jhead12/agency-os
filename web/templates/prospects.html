@@ -113,7 +113,7 @@
     </thead>
     <tbody>
         {% for p in prospects %}
-        <tr>
+        <tr class="stage-tint stage-{{ p.stage or 'cold' }}">
             <td>
                 <a href="/prospects/{{ p.id }}">{{ p.name }}</a>
             </td>
