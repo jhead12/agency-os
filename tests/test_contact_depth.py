@@ -120,3 +120,34 @@ def test_call_log_only_accepts_known_outcomes(db):
     [logged] = db.get_calls_for_prospect(prospect_id)
     assert logged["outcome"] == "disconnected"
     assert "Disconnected / not in service" in client.get(f"/prospects/{prospect_id}").text
+
+
+def test_do_not_call_outcome_flags_the_prospect(db):
+    make_user(db, "rep@x.com", "Caller")
+    campaign_id = db.upsert_campaign("depth", "x")
+    prospect_id = db.upsert_prospect(Prospect(name="Org", state="CA"))
+    outreach_id = db.upsert_outreach(prospect_id, campaign_id)
+    client = client_for("rep@x.com")
+    assert "asked not to be phoned" not in client.get(f"/prospects/{prospect_id}").text
+
+    client.post("/call-log/record", data={"prospect_id": prospect_id, "outreach_id": outreach_id,
+                                          "campaign_id": campaign_id, "outcome": "do_not_call"})
+    assert db.do_not_call(prospect_id)
+    assert db.get_outreach(outreach_id).stage == "closed_lost"
+    assert "asked not to be phoned" in client.get(f"/prospects/{prospect_id}").text
+    assert "asked not to be phoned" in client.get("/prospects").text
+
+
+def test_do_not_call_toggle_needs_edit_rights(db):
+    make_user(db, "caller@x.com", "Caller")
+    make_user(db, "rep@x.com", "Sales Rep")
+    prospect_id = db.upsert_prospect(Prospect(name="Org", state="CA"))
+
+    denied = client_for("caller@x.com").post(f"/prospects/{prospect_id}/do-not-call", data={"flag": "1"})
+    assert denied.status_code == 403 and not db.do_not_call(prospect_id)
+
+    rep = client_for("rep@x.com")
+    rep.post(f"/prospects/{prospect_id}/do-not-call", data={"flag": "1"})
+    assert db.do_not_call(prospect_id)
+    rep.post(f"/prospects/{prospect_id}/do-not-call", data={"flag": "0"})
+    assert not db.do_not_call(prospect_id)

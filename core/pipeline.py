@@ -186,7 +186,7 @@ class Pipeline:
             # (a channel returns "skipped" when e.g. there's no phone number)
             result = None
             for ch_key in step.channels or campaign.channels:
-                if ch_key.startswith("sms") and not gate.sms_allowed:
+                if ch_key.startswith("sms") and (not gate.sms_allowed or self.db.do_not_call(prospect.id)):
                     continue
                 channel = self.registry.get_channel(ch_key)
                 if not channel or not channel.is_configured():

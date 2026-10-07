@@ -193,6 +193,7 @@ ROUTE_RULES: dict[str, str] = {
     "POST /admin/selling/{package_id}/active": "packages.sell",
     "POST /admin/selling/claims/{claim_id}/refund": "packages.sell",
     "POST /prospects/{prospect_id}/do-not-sell": "prospects.edit",
+    "POST /prospects/{prospect_id}/do-not-call": "prospects.edit",
     "POST /prospects/{prospect_id}/credit": "packages.sell",
     "POST /account/payout-address": "royalties.view_own",
     "GET /admin/payouts": OWNER,

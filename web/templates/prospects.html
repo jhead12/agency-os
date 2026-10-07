@@ -116,6 +116,7 @@
         <tr class="stage-tint stage-{{ p.stage or 'cold' }}">
             <td>
                 <a href="/prospects/{{ p.id }}">{{ p.name }}</a>
+                {% if p.do_not_call %}<span class="badge badge-warning" title="They asked not to be phoned or texted">Do not call</span>{% endif %}
             </td>
             <td>{{ p.city or '—' }}</td>
             <td><span class="source-badge source-{{ p.source }}">{{ p.source }}</span></td>

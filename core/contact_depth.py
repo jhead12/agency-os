@@ -36,6 +36,7 @@ CALL_OUTCOMES = {
     "hung_up": "Hung up",
     "busy": "Busy signal",
     "fax_tone": "Fax / modem tone",
+    "do_not_call": "Asked not to be called again",
 }
 SPOKE_TO_PERSON = {"completed", "gatekeeper", "scheduled"}
 REACHED_MACHINE = {"voicemail", "answering_machine"}
