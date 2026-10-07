@@ -8,7 +8,9 @@ body: |
   ── BEFORE THE CALL (5 min prep) ─────────────────────────
 
   □ Open the demo link customized for their state: {{demo_link}}
-  □ Have {{org_name}}'s website open to reference their branding
+  □ Have {{org_name}}'s website open to reference their branding: {{website}}
+  □ Skim what they say they do: {{site_summary}}
+  □ Who you're meeting: {{contact_name}}, {{contact_title}}
   □ Review their focus area: {{focus_area}}
   □ Have pricing tiers ready (see proposal script)
 

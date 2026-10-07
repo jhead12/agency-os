@@ -157,6 +157,9 @@ def test_read_tools(db, no_model, monkeypatch):
     assert [p["id"] for p in found["prospects"]] == [pid]
     record = tools.run_tool(db, user, "get_prospect", {"prospect_id": pid}, source="test")["prospect"]
     assert record["campaigns"][0]["contact_name"] == "Dana Director" and "recent_calls" in record
+    assert record["site_summary"] is None
+    db.conn.execute("UPDATE prospects SET site_summary = ? WHERE id = ?", ("Registers first-time voters.", pid))
+    assert tools.build_prospect_context(db, user, pid)["site_summary"] == "Registers first-time voters."
     caller_view = tools.build_prospect_context(db, rep(db, "c@x.com", "Caller"), pid)
     assert "recent_emails" not in caller_view  # Callers can't read email
     monkeypatch.setattr(tools, "campaign_source", lambda: [SimpleNamespace(

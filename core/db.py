@@ -651,6 +651,8 @@ CREATE INDEX IF NOT EXISTS idx_searches_queued ON searches(created_at) WHERE sta
 -- The runner touches heartbeat_at as it works; a running search whose heartbeat stops
 -- (the app restarted mid-search) is marked failed, never run twice.
 ALTER TABLE searches ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMP;
+-- What the org says about itself on its website, pulled by the local scraper (call scripts, AI context).
+ALTER TABLE prospects ADD COLUMN IF NOT EXISTS site_summary TEXT;
 -- Every prospect a search found; is_new = 1 when this search first linked it to the account.
 CREATE TABLE IF NOT EXISTS search_results (
     search_id INTEGER NOT NULL REFERENCES searches(id) ON DELETE CASCADE,
@@ -969,6 +971,7 @@ class Database:
             source=row["source"],
             source_url=row["source_url"],
             metadata=json.loads(row["metadata"] or "{}"),
+            site_summary=row["site_summary"],
             created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else None,
             updated_at=datetime.fromisoformat(row["updated_at"]) if row["updated_at"] else None,
         )
@@ -1234,6 +1237,13 @@ class Database:
                     "UPDATE prospects SET website_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                     (result.raw["website"], prospect_id),
                 )
+
+        # Newer is better: the site may have changed since the last scrape
+        if prospect_id and result.raw.get("site_summary"):
+            c.execute(
+                "UPDATE prospects SET site_summary = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (result.raw["site_summary"], prospect_id),
+            )
 
     def get_upcoming_events(self, days: int = 90, hidden_campaigns=()) -> list[dict]:
         """Get all upcoming follow-ups and call next-steps as calendar events."""

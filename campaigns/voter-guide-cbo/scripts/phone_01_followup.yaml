@@ -5,6 +5,12 @@ title: "Follow-Up Call — After Sending Email"
 goal: "Confirm they saw the email, book a 20-min demo call"
 duration: "3-5 minutes"
 body: |
+  ── BEFORE YOU DIAL ──────────────────────────────────────
+
+  [Contact: {{contact_name}}, {{contact_title}}]
+  [Website: {{website}}]
+  [What they say they do: {{site_summary}}]
+
   ── OPENING ──────────────────────────────────────────────
 
   "Hi {{contact_name}}, it's {{your_name}} from u9itus. I sent you an

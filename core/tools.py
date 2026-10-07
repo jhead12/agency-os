@@ -150,7 +150,7 @@ def build_prospect_context(db, user: CurrentUser, prospect_id: int) -> dict:
     context: dict = {
         "id": prospect.id, "name": prospect.name, "city": prospect.city, "state": prospect.state,
         "website": prospect.website_url, "focus_area": prospect.focus_area, "ntee_code": prospect.ntee_code,
-        "annual_revenue": prospect.annual_revenue, "campaigns": outreach,
+        "annual_revenue": prospect.annual_revenue, "site_summary": prospect.site_summary, "campaigns": outreach,
     }
     if user.can("calls.view"):
         context["recent_calls"] = [

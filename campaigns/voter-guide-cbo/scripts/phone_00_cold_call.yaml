@@ -5,6 +5,12 @@ title: "Cold Call — First Contact"
 goal: "Get permission to send a follow-up email with demo link"
 duration: "3-5 minutes"
 body: |
+  ── BEFORE YOU DIAL ──────────────────────────────────────
+
+  [Contact: {{contact_name}}, {{contact_title}}]
+  [Website: {{website}}]
+  [What they say they do: {{site_summary}}]
+
   ── OPENING ──────────────────────────────────────────────
 
   "Hi, is this {{contact_name}}? My name is {{your_name}}, I'm with
@@ -29,6 +35,9 @@ body: |
   "I came across {{org_name}} because of your work in {{focus_area}}.
   Since you're already doing {{voter_status}} voter engagement, I
   thought this could be a natural fit."
+
+  [Name one specific thing from their site (see "What they say
+  they do" above) so this doesn't sound like a cold list call.]
 
   [If voter_engagement = Yes: "Since you're already doing voter
   engagement in the community..."]

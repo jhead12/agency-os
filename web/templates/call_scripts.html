@@ -57,6 +57,10 @@
     </div>
 </div>
 
+{% if prospect and prospect.site_summary %}
+<div class="site-summary"><strong>From their website:</strong> {{ prospect.site_summary }}</div>
+{% endif %}
+
 <div class="stage-tabs">
     {% set stages = ['cold', 'contacted', 'engaged', 'demo_scheduled', 'proposal_sent'] %}
     {% for s in stages %}

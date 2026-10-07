@@ -1300,6 +1300,10 @@ async def call_scripts(
                 "state": prospect.state or "CA",
                 "your_name": campaign_config.sender_name if campaign_config else "",
                 "voter_status": "active" if prospect.voter_engagement else "emerging",
+                # Filled in by enrichment; the fallbacks read as notes to the rep
+                "contact_title": (outreach_rows[0]["contact_title"] if outreach_rows else None) or "title unknown",
+                "website": prospect.website_url or "no website on file",
+                "site_summary": prospect.site_summary or "no site summary yet (run enrichment to pull one)",
             }
 
             # Get demo link from product plugin

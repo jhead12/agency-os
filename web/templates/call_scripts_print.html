@@ -108,6 +108,8 @@
         {% if scripts and scripts[0].prospect_phone %}· 📞 {{ scripts[0].prospect_phone }}{% endif %}
         {% if scripts and scripts[0].prospect_email %}· ✉ {{ scripts[0].prospect_email }}{% endif %}
     </div>
+    {% if prospect.website_url %}<div class="meta">🌐 {{ prospect.website_url }}</div>{% endif %}
+    {% if prospect.site_summary %}<div class="meta">From their website: {{ prospect.site_summary }}</div>{% endif %}
     {% endif %}
     <div class="meta">Generated: {{ now }}</div>
 </div>
