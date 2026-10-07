@@ -61,8 +61,28 @@
         }
       });
       nav.hidden = false;
+      floatWhenScrolled();
     })
     .catch(function () {});
+
+  // The buttons sit under the page's header actions; once those scroll away
+  // under the navbar, they float there instead so they're always in reach.
+  function floatWhenScrolled() {
+    var slot = nav.parentElement;
+    if (!("IntersectionObserver" in window) || !slot) return;
+    function place() {
+      if (!nav.classList.contains("floating")) return;
+      nav.style.right = Math.max(16, innerWidth - slot.getBoundingClientRect().right) + "px";
+    }
+    new IntersectionObserver(function (entries) {
+      var gone = !entries[0].isIntersecting && entries[0].boundingClientRect.top < 56;
+      slot.style.minHeight = gone ? slot.offsetHeight + "px" : "";  // keep the header from jumping
+      nav.classList.toggle("floating", gone);
+      if (!gone) nav.style.right = "";
+      place();
+    }, { rootMargin: "-56px 0px 0px 0px" }).observe(slot);
+    window.addEventListener("resize", place);
+  }
 
   // Typed-but-unsaved changes would be lost by moving on: ask first.
   function unsaved() {
@@ -85,7 +105,8 @@
 
   function go(dir) {
     if (leaving || !targets[dir]) { settle(); return false; }
-    if (document.body.classList.contains("player-active")) { settle(); return false; }  // a workflow is driving
+    var busy = document.body.classList;  // a workflow is driving, or the user is arranging panels
+    if (busy.contains("player-active") || busy.contains("layout-editing")) { settle(); return false; }
     if (unsaved() && !confirm("You have unsaved changes on this record. Leave without saving?")) { settle(); return false; }
     leaving = true;
     store(ENTER_KEY, dir);
@@ -100,7 +121,7 @@
 
   // Follow the finger/trackpad, then snap back if the user lets go early.
   function drag(dx) {
-    if (reduced || leaving) return;
+    if (reduced || leaving || document.body.classList.contains("layout-editing")) return;
     main.classList.remove("record-moving");
     var damped = dx * 0.5;
     if (dx > 0 && !targets.prev || dx < 0 && !targets.next) damped = dx * 0.15;  // nothing there: resist
@@ -135,7 +156,7 @@
   // that scrolls sideways itself (a wide table) belong to that element.
   function ownsSideways(el) {
     for (; el && el !== document.body; el = el.parentElement) {
-      if (typing(el) || el.id === "console-dock" || /\bplayer-/.test(el.className || "")) return true;
+      if (typing(el) || el.id === "console-dock" || /\bscript-drawer\b/.test(el.className || "") || /\bplayer-/.test(el.className || "")) return true;
       if (el.scrollWidth > el.clientWidth + 1 && /(auto|scroll)/.test(getComputedStyle(el).overflowX)) return true;
     }
     return false;

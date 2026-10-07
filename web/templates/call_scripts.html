@@ -4,6 +4,7 @@
 <div class="active" style="display:none"></div>
 
 <div class="page-header">
+    {% if prospect %}<div class="breadcrumb"><a href="/prospects/{{ prospect.id }}" data-back-to-prospect>← Back to {{ prospect.name }}</a></div>{% endif %}
     <div class="page-header-row">
         <div>
             <h1>Phone Call Scripts</h1>
@@ -44,7 +45,7 @@
 {% else %}
 <div class="prospect-info-bar">
     <div class="info-bar-left">
-        <strong>{{ prospect.name }}</strong>
+        <strong><a href="/prospects/{{ prospect.id }}" title="Back to the prospect">{{ prospect.name }}</a></strong>
         {% if prospect.city %}· {{ prospect.city }}{% endif %}
         {% if prospect.focus_area %}· {{ prospect.focus_area|replace('_', ' ') }}{% endif %}
         {% if prospect.voter_engagement %}<span class="tag tag-voter">voter</span>{% endif %}

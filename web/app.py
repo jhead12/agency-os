@@ -58,8 +58,8 @@ from core.protocols import portal_product
 from plugins.channels.lob_direct_mail import TEMPLATE_ID_RE, lob_template_url
 from core.jobs import JobRunner, configured_jobs, jobs_enabled
 from core import (
-    agents, claims, console, contact_depth, evidence, lead_packages, llm, mcp_auth, payments, royalties, selling, tools,
-    verify, workflows,
+    agents, claims, console, contact_depth, evidence, lead_packages, llm, mcp_auth, panels, payments, royalties, selling,
+    tools, verify, workflows,
 )
 from core.welcome import base_url as public_base_url
 from web.mcp_server import MCPMount
@@ -307,6 +307,18 @@ def fmt_date(val) -> str:
     return val.strftime("%b %d, %Y")
 
 
+def days_until(val) -> int:
+    """Whole days from today to a date (negative once it's past)."""
+    if isinstance(val, str):
+        val = datetime.fromisoformat(val)
+    return (val.date() - datetime.now().date()).days
+
+
+def days_ago(val) -> str:
+    days = -days_until(val)
+    return "today" if days <= 0 else "yesterday" if days == 1 else f"{days} days ago"
+
+
 def nav_active(path: str) -> str:
     """The nav item to highlight for a URL path, e.g. "/prospects/12" -> "prospects"."""
     if path == "/":
@@ -321,6 +333,8 @@ def nav_active(path: str) -> str:
 templates.env.filters["currency"] = fmt_currency
 templates.env.filters["fmt_date"] = fmt_date
 templates.env.filters["tel"] = tel_href
+templates.env.filters["days_until"] = days_until
+templates.env.filters["days_ago"] = days_ago
 templates.env.globals["nav_active"] = nav_active
 templates.env.globals["CALL_OUTCOMES"] = contact_depth.CALL_OUTCOMES
 
@@ -1377,6 +1391,8 @@ async def prospect_detail(request: Request, prospect_id: int):
         row = db.get_lead_package(int(lead_package["lead_package_id"]))
         lead_package = {**lead_package, "title": row["title"] if row else lead_package.get("package_id")}
     return templates.TemplateResponse(request, "prospect_detail.html", {
+        "board": panels.Board("prospect", panels.load(db, current_user(request).id, "prospect")),
+        "stage_background": panels.STAGE_BACKGROUNDS.get(outreach_rows[0]["stage"]) if outreach_rows else None,
         "contact_tier": contact_depth.history_for_prospect(db, prospect_id)[1],
         "lead_package": lead_package,
         "verification": verify.lead_verdict(db, prospect_id) if lead_package else None,
@@ -1921,6 +1937,27 @@ async def workflow_preview(request: Request):
         return JSONResponse({"ok": False, "error": str(exc) if isinstance(exc, workflows.WorkflowError)
                              else "Body must be JSON"}, status_code=400)
     return {"ok": True, "workflow": {k: wf[k] for k in ("name", "steps")}}
+
+
+@app.post("/api/layouts/{page}")
+async def layout_save(request: Request, page: str):
+    """Save the user's own arrangement of a page's panels ({"layout": null} goes back to the defaults)."""
+    if request.headers.get("x-aos-layout") != "1":
+        return JSONResponse({"ok": False, "error": "Missing X-AOS-Layout header"}, status_code=400)
+    raw = await request.body()
+    if len(raw) > 64 * 1024:
+        return JSONResponse({"ok": False, "error": "That layout is too large"}, status_code=413)
+    try:
+        body = json.loads(raw or b"{}")
+        if not isinstance(body, dict) or "layout" not in body:
+            raise panels.LayoutError('Send {"layout": {...}} or {"layout": null}')
+        if page not in panels.PAGES:
+            raise panels.LayoutError(f"No customizable page called {page!r}")
+        panels.save(get_db(), current_user(request).id, page, body["layout"])
+    except ValueError as exc:  # LayoutError, or a body that isn't JSON
+        return JSONResponse({"ok": False, "error": str(exc) if isinstance(exc, panels.LayoutError)
+                             else "Body must be JSON"}, status_code=400)
+    return {"ok": True}
 
 
 @app.post("/workflows/save")

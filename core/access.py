@@ -205,6 +205,7 @@ ROUTE_RULES: dict[str, str] = {
     "POST /workflows/import": ANY_USER,
     "GET /workflows/export": ANY_USER,
     "POST /workflows/{slug}/delete": ANY_USER,
+    "POST /api/layouts/{page}": ANY_USER,  # the user's own panel arrangement (core/panels.py)
     "GET /console": "cli.use",
     "POST /api/console": "cli.use",  # also accepts a CLI key (Authorization: Bearer aos_cli_...)
     "POST /account/cli-keys": "cli.use",

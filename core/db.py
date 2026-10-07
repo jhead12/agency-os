@@ -585,6 +585,15 @@ CREATE TABLE IF NOT EXISTS workflows (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (owner_id, slug)
 );
+
+-- Each user's own arrangement of a page's panels (core/panels.py)
+CREATE TABLE IF NOT EXISTS user_layouts (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    page TEXT NOT NULL,
+    layout TEXT NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, page)
+);
 """
 
 
