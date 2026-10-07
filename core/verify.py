@@ -42,6 +42,7 @@ from core.contact_depth import RANK, REACHED_MACHINE, SPOKE_TO_PERSON
 EVENT_KINDS = {
     "email_bounced": "Email bounced",
     "mail_returned": "Mail returned undeliverable",
+    "mail_delivered": "Mailer delivered",
     "enricher_match": "Enricher agrees with the package's email",
     "enricher_mismatch": "Enricher found a different email",
 }
