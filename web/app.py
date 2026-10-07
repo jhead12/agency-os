@@ -43,7 +43,7 @@ from core.env import load_dotenv  # noqa: E402
 
 load_dotenv()  # .env settings for local runs; a deploy's own environment always wins
 
-from fastapi import FastAPI, Request, Query, HTTPException, Form, Depends, UploadFile, File
+from fastapi import BackgroundTasks, FastAPI, Request, Query, HTTPException, Form, Depends, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -61,6 +61,7 @@ from core import (
     agents, claims, console, contact_depth, evidence, lead_packages, llm, mcp_auth, panels, payments, royalties, selling,
     tools, verify, workflows,
 )
+from core import welcome as welcome_email
 from core.welcome import base_url as public_base_url
 from web.mcp_server import MCPMount
 from starlette.concurrency import run_in_threadpool
@@ -162,6 +163,9 @@ LOGIN_MAX_FAILURES = 5
 # Routes that also accept a CLI key (Authorization: Bearer aos_cli_...) instead of a session.
 KEY_ROUTES = {"POST /api/console"}
 _login_failures: dict[str, list[float]] = defaultdict(list)
+# Password-reset requests per email and per client IP, same window as logins
+RESET_MAX_REQUESTS = 3
+_reset_requests: dict[str, list[float]] = defaultdict(list)
 _DUMMY_HASH = access.hash_password(secrets.token_hex(16))
 
 
@@ -2505,16 +2509,37 @@ def _start_session(request: Request, user: CurrentUser, target: str) -> Redirect
     return response
 
 
-@app.get("/welcome/{token}", response_class=HTMLResponse)
-async def welcome_page(request: Request, token: str, error: str = Query(default="")):
-    """Landing page for the one-time link in a welcome email (core/welcome.py)."""
+def _set_password_page(request: Request, token: str, error: str, reset: bool):
+    """The page behind a one-time link: welcome (new user) or password reset."""
     db = get_db()
     user_id = db.invite_user_id(access.hash_token(token))
     invitee = db.load_current_user(user_id) if user_id else None
     return templates.TemplateResponse(request, "welcome.html", {
         "invitee": invitee,
         "error": error,
+        "reset": reset,
     }, status_code=200 if invitee else 410)
+
+
+def _accept_set_password(request: Request, token: str, new_password: str,
+                         confirm_password: str, reset: bool):
+    page = f"/{'reset-password' if reset else 'welcome'}/{quote(token)}"
+    if new_password != confirm_password:
+        return RedirectResponse(url=f"{page}?error=Passwords+don%27t+match.", status_code=303)
+    db = get_db()
+    try:
+        user_id = db.accept_invite(access.hash_token(token), new_password)
+    except AccessError as e:
+        return RedirectResponse(url=f"{page}?error={quote(str(e))}", status_code=303)
+    user = db.load_current_user(user_id)
+    db.audit(user, "auth.password_reset" if reset else "auth.invite_accepted", "user", user.id)
+    return _start_session(request, user, user.landing_page())
+
+
+@app.get("/welcome/{token}", response_class=HTMLResponse)
+async def welcome_page(request: Request, token: str, error: str = Query(default="")):
+    """Landing page for the one-time link in a welcome email (core/welcome.py)."""
+    return _set_password_page(request, token, error, reset=False)
 
 
 @app.post("/welcome/{token}")
@@ -2524,18 +2549,70 @@ async def accept_welcome(
     new_password: str = Form(...),
     confirm_password: str = Form(...),
 ):
-    if new_password != confirm_password:
-        return RedirectResponse(
-            url=f"/welcome/{quote(token)}?error=Passwords+don%27t+match.", status_code=303
-        )
+    return _accept_set_password(request, token, new_password, confirm_password, reset=False)
+
+
+@app.get("/forgot-password", response_class=HTMLResponse)
+async def forgot_password_page(request: Request, sent: bool = Query(default=False),
+                               error: str = Query(default="")):
+    return templates.TemplateResponse(request, "forgot_password.html", {
+        "sent": sent,
+        "error": error,
+        "smtp_ready": welcome_email.smtp_configured(),
+    })
+
+
+def _send_reset_email(email: str, link: str) -> None:
+    """Runs after the response is sent, so timing never reveals whether the email exists."""
     db = get_db()
-    try:
-        user_id = db.accept_invite(access.hash_token(token), new_password)
-    except AccessError as e:
-        return RedirectResponse(url=f"/welcome/{quote(token)}?error={quote(str(e))}", status_code=303)
-    user = db.load_current_user(user_id)
-    db.audit(user, "auth.invite_accepted", "user", user.id)
-    return _start_session(request, user, user.landing_page())
+    row = db.get_user_by_email(email)
+    if not row:
+        return
+    user = db.load_current_user(row["id"])
+    subject, body = welcome_email.compose_reset(user, link, site_url())
+    result = welcome_email.send(user.email, subject, body)
+    if result.status != "sent":
+        print(f"[password reset] email to {user.email} not sent: {result.error}", file=sys.stderr)
+
+
+@app.post("/forgot-password")
+async def forgot_password(request: Request, background: BackgroundTasks, email: str = Form(...)):
+    """Email a one-time reset link. Answers the same whether or not the account exists."""
+    email = email.strip().lower()
+    client = request.client.host if request.client else "?"
+    now = time.monotonic()
+    keys = (f"email|{email}", f"ip|{client}")
+    for key in keys:
+        _reset_requests[key] = [t for t in _reset_requests[key] if now - t < LOGIN_WINDOW_SECONDS]
+    if any(len(_reset_requests[key]) >= RESET_MAX_REQUESTS for key in keys):
+        return RedirectResponse(
+            url="/forgot-password?error=Too+many+requests.+Try+again+in+15+minutes.", status_code=303
+        )
+    for key in keys:
+        _reset_requests[key].append(now)
+
+    db = get_db()
+    row = db.get_user_by_email(email)
+    if row and row["is_active"] and welcome_email.smtp_configured():
+        link, _ = welcome_email.issue_reset(db, row["id"], site_url())
+        background.add_task(_send_reset_email, email, link)
+    return RedirectResponse(url="/forgot-password?sent=1", status_code=303)
+
+
+@app.get("/reset-password/{token}", response_class=HTMLResponse)
+async def reset_password_page(request: Request, token: str, error: str = Query(default="")):
+    """Landing page for the one-time link in a password-reset email."""
+    return _set_password_page(request, token, error, reset=True)
+
+
+@app.post("/reset-password/{token}")
+async def reset_password(
+    request: Request,
+    token: str,
+    new_password: str = Form(...),
+    confirm_password: str = Form(...),
+):
+    return _accept_set_password(request, token, new_password, confirm_password, reset=True)
 
 
 @app.post("/logout")

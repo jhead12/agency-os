@@ -1872,10 +1872,14 @@ class Database:
 
     # Invites (welcome-email "set your password" links)
 
-    def create_invite(self, user_id: int, token_hash: str, ttl_days: int,
-                      actor: Optional[CurrentUser]) -> datetime:
-        """Issue a one-time password-setup link. Earlier unused links stop working."""
-        expires_at = datetime.now() + timedelta(days=ttl_days)
+    def create_invite(self, user_id: int, token_hash: str, ttl: timedelta,
+                      actor: Optional[CurrentUser], action: str = "user.invite") -> datetime:
+        """Issue a one-time password-setup link. Earlier unused links stop working.
+
+        Welcome links and password-reset links share this table; `action` names
+        which one in the audit log.
+        """
+        expires_at = datetime.now() + ttl
         with self.transaction() as c:
             row = c.execute("SELECT email, is_active FROM users WHERE id = ?", (user_id,)).fetchone()
             if not row:
@@ -1887,7 +1891,7 @@ class Database:
                 "INSERT INTO invites (token_hash, user_id, expires_at) VALUES (?, ?, ?)",
                 (token_hash, user_id, expires_at.isoformat()),
             )
-            self._audit(c, actor, "user.invite", "user", user_id,
+            self._audit(c, actor, action, "user", user_id,
                         {"email": row["email"], "expires_at": expires_at.isoformat()})
         return expires_at
 

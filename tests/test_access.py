@@ -25,6 +25,7 @@ def db(pg_url, tmp_path, monkeypatch):
     monkeypatch.setattr(webapp, "CAMPAIGNS_DIR", tmp_path / "campaigns")
     monkeypatch.setattr(webapp, "_campaigns_synced", False)
     webapp._login_failures.clear()
+    webapp._reset_requests.clear()
     database = Database(pg_url)
     database.install_access()
     return database
@@ -324,6 +325,84 @@ def test_welcome_link_dead_for_deactivated_or_expired_user(db):
     db.update_user(rep_id, name="rep", is_active=False, role_ids=[], actor=None)
     r = client_for().post(path, data={"new_password": "brand-new-pass", "confirm_password": "brand-new-pass"})
     assert "error=" in r.headers["location"]
+
+
+# ── Password reset ─────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def outbox(monkeypatch):
+    """Pretend SMTP is configured and capture what would be sent."""
+    from core.models import SendResult
+
+    sent: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(webapp.welcome_email, "smtp_configured", lambda: True)
+    monkeypatch.setattr(webapp.welcome_email, "send",
+                        lambda to, subject, body: sent.append((to, subject, body)) or SendResult(status="sent"))
+    return sent
+
+
+def reset_path(body: str) -> str:
+    link = next(w for w in body.split() if "/reset-password/" in w)
+    return link[link.index("/reset-password/"):]
+
+
+def test_forgot_password_emails_link_that_resets_and_signs_in(db, outbox):
+    make_user(db, "rep@x.com", "Sales Rep")
+    c = client_for()
+    assert 'href="/forgot-password"' in c.get("/login").text
+    r = c.post("/forgot-password", data={"email": " Rep@X.com "})
+    assert r.headers["location"] == "/forgot-password?sent=1"
+    assert len(outbox) == 1 and outbox[0][0] == "rep@x.com"
+    path = reset_path(outbox[0][2])
+
+    old_session = client_for("rep@x.com")
+    assert "Reset your password" in c.get(path).text
+    r = c.post(path, data={"new_password": "brand-new-pass", "confirm_password": "brand-new-pass"})
+    assert r.status_code == 303 and r.headers["location"] == "/"
+    assert c.get(path).status_code == 410
+    # Other sessions are signed out; the new password works, the old one doesn't
+    assert old_session.get("/account").status_code == 303
+    assert client_for().post("/login", data={"email": "rep@x.com", "password": PASSWORD}) \
+        .headers["location"].startswith("/login?error=")
+    r = client_for().post("/login", data={"email": "rep@x.com", "password": "brand-new-pass"})
+    assert webapp.SESSION_COOKIE in r.cookies
+    actions = [a["action"] for a in db.list_audit()]
+    assert "user.password_reset_requested" in actions and "auth.password_reset" in actions
+
+
+def test_forgot_password_same_answer_for_unknown_and_inactive(db, outbox):
+    make_user(db, "owner@x.com", access.OWNER_ROLE)
+    rep_id = make_user(db, "rep@x.com", "Caller")
+    db.update_user(rep_id, name="rep", is_active=False, role_ids=[], actor=None)
+    c = client_for()
+    for email in ("nobody@x.com", "rep@x.com"):
+        assert c.post("/forgot-password", data={"email": email}).headers["location"] == "/forgot-password?sent=1"
+    assert outbox == []
+
+
+def test_forgot_password_rate_limited_and_link_expires(db, outbox):
+    make_user(db, "rep@x.com", "Caller")
+    c = client_for()
+    for _ in range(webapp.RESET_MAX_REQUESTS):
+        c.post("/forgot-password", data={"email": "rep@x.com"})
+    r = c.post("/forgot-password", data={"email": "rep@x.com"})
+    assert "error=" in r.headers["location"]
+    assert len(outbox) == webapp.RESET_MAX_REQUESTS
+    # Only the newest link works, and only until it expires
+    assert c.get(reset_path(outbox[0][2])).status_code == 410
+    newest = reset_path(outbox[-1][2])
+    assert c.get(newest).status_code == 200
+    db.conn.execute("UPDATE invites SET expires_at = '2000-01-01'")
+    assert c.get(newest).status_code == 410
+
+
+def test_forgot_password_without_smtp_points_to_an_owner(db):
+    make_user(db, "rep@x.com", "Caller")
+    c = client_for()
+    assert "Ask an owner" in c.get("/forgot-password").text
+    c.post("/forgot-password", data={"email": "rep@x.com"})
+    assert db.conn.execute("SELECT COUNT(*) AS n FROM invites").fetchone()["n"] == 0
 
 
 def test_cli_invite_creates_user_and_prints_email(db):

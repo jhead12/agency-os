@@ -173,6 +173,10 @@ ROUTE_RULES: dict[str, str] = {
     "POST /admin/payouts/{user_id}": OWNER,
     "GET /welcome/{token}": PUBLIC,   # one-time link; the token is the credential
     "POST /welcome/{token}": PUBLIC,
+    "GET /forgot-password": PUBLIC,
+    "POST /forgot-password": PUBLIC,  # rate-limited; same answer whether or not the email exists
+    "GET /reset-password/{token}": PUBLIC,  # one-time link; the token is the credential
+    "POST /reset-password/{token}": PUBLIC,
 
     "GET /": "dashboard.view",
     "GET /api/stats": "dashboard.view",
