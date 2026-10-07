@@ -1,0 +1,11 @@
+name: Pay reps their royalties
+description: Where Owners pay the reps who built the leads we sold. Nothing is paid.
+requires: '@owner'
+steps:
+  - goto: /admin/payouts
+    say: Rep payouts lists the royalties owed to everyone who built leads we've sold.
+  - highlight: .detail-card
+    say: Payouts are in USDC. With automatic payouts on, Pay sends from the CDP wallet, up to the per-payout cap. Otherwise you pay by hand and record the transaction.
+  - highlight: table.data-table
+    say: A balance becomes payable once the buyer's guarantee period ends without a claim, and it must be at least the minimum. Reps without a payout address can't be paid yet.
+  - pause: Your turn. Pay any payable balances, or remind reps to add their payout address.

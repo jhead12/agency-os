@@ -1,0 +1,12 @@
+name: Your data royalties
+description: See what you've earned from leads you helped build, and set where it's paid. Nothing is saved.
+requires: royalties.view_own
+steps:
+  - goto: /account
+    say: When a lead you helped build is sold, you get a share of what the buyer pays.
+  - highlight: '.detail-card:has(form[action="/account/payout-address"])'
+    say: Pending is still inside the buyer's guarantee period. Ready to pay has cleared it. If a buyer's claim on a lead holds, that lead's share is taken back.
+  - highlight: 'form[action="/account/payout-address"] input[name="address"]'
+    say: Royalties are paid in USDC to this wallet address. Changing it asks for your password.
+  - say: You earn credit by finding contacts, reaching decision-makers and sourcing leads. The "Build a lead we can sell" tutorial shows how.
+  - pause: Your turn. Add your payout address if you haven't yet.

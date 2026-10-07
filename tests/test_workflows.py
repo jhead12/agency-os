@@ -90,10 +90,14 @@ def test_every_tutorial_is_valid_and_visible_by_role(db):
     make_user(db, "caller@x.com", "Caller")
     make_user(db, "nobody@x.com")
     everyone = {t["slug"] for t in workflows.tutorials(user(db, "boss@x.com"))}
-    assert everyone == {"tour", "find-a-prospect", "log-a-call", "console", "invite-a-teammate", "back-up-workflows"}
+    assert everyone == {"tour", "find-a-prospect", "log-a-call", "console", "invite-a-teammate", "back-up-workflows",
+                        "build-a-sellable-lead", "save-a-list", "sell-a-package", "your-data-royalties",
+                        "pay-reps", "buy-a-package"}
     caller = {t["slug"] for t in workflows.tutorials(user(db, "caller@x.com"))}
     assert {"tour", "find-a-prospect", "log-a-call"} <= caller
-    assert not {"console", "invite-a-teammate"} & caller  # no cli.use, not an owner
+    assert {"save-a-list", "your-data-royalties"} <= caller
+    assert not {"console", "invite-a-teammate", "build-a-sellable-lead", "sell-a-package", "pay-reps",
+                "buy-a-package"} & caller  # no cli.use, prospects.edit or packages.*, not an owner
     assert {t["slug"] for t in workflows.tutorials(user(db, "nobody@x.com"))} == {"back-up-workflows"}
 
 

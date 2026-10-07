@@ -1,0 +1,13 @@
+name: Buy a lead package
+description: Browse other owners' lead packages and how the 90% guarantee protects you. Nothing is bought.
+requires: packages.view
+steps:
+  - goto: /lead-packages
+    say: Lead packages are lists other agency-os owners sell. The server admin chooses which providers appear here.
+  - highlight: '.campaign-section .campaign-header'
+    say: Each provider shows its seller rating, the share of its leads buyers have verified.
+  - highlight: table.data-table
+    say: Each package lists its unlock price, the royalty per lead you contact, and its guarantee. 90% of the leads must be at least that deep.
+  - say: Unlocking imports the leads into a campaign you choose. You pay the royalty the first time you contact each lead, and leads you already have are never overwritten.
+  - say: Your calls, bounces and returned mail on those leads are the evidence. If too many fail inside the verification window, file a claim from the package page for replacements or a refund.
+  - pause: Your turn. Look through the packages for one that fits a campaign.
