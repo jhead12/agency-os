@@ -366,6 +366,7 @@ templates.env.globals["nav_active"] = nav_active
 templates.env.globals["CALL_OUTCOMES"] = contact_depth.CALL_OUTCOMES
 templates.env.globals["chat_personas"] = lambda: list(agents.load_personas().values())
 templates.env.globals["ai_model"] = llm.describe
+templates.env.globals["super_admin_channels"] = access.SUPER_ADMIN_CHANNELS
 
 
 # ── Routes ──────────────────────────────────────────────────────────
@@ -3079,6 +3080,9 @@ async def admin_create_campaign(
         return _back("/admin/campaigns", error="Select at least one prospect source.")
     if not channels:
         return _back("/admin/campaigns", error="Select at least one channel.")
+    problem = access.channel_change_problem(current_user(request), [], channels)
+    if problem:
+        return _back("/admin/campaigns", error=problem)
 
     # Build filters
     filters = {}
@@ -3379,7 +3383,11 @@ async def admin_campaign_update(
     raw["prospect_sources"] = prospect_sources if prospect_sources else raw.get("prospect_sources", [])
     if product:
         raw["product"] = product
-    raw["channels"] = channels if channels else raw.get("channels", [])
+    new_channels = channels if channels else raw.get("channels", [])
+    problem = access.channel_change_problem(current_user(request), raw.get("channels", []), new_channels)
+    if problem:
+        return _back("/admin/campaigns", error=problem)
+    raw["channels"] = new_channels
     raw["enrichers"] = enrichers if enrichers else raw.get("enrichers", [])
     if scheduler:
         raw["scheduler"] = scheduler

@@ -72,6 +72,23 @@ def describe_channel(source: str) -> str:
         return f"AI connector ({source.removeprefix('mcp:')})"
     return {"webmcp": "in-page AI assistant", "cli": "CLI key"}.get(source, source)
 
+# ── Outreach channels ──────────────────────────────────────────────────
+
+# Channels that spend money on the one shared provider account (Lob: physical
+# mail). Only a Super Admin turns them on or off for a campaign, until the
+# costs and liabilities are worked out for anyone else.
+SUPER_ADMIN_CHANNELS = frozenset({"lob_direct_mail"})
+
+
+def channel_change_problem(user: "CurrentUser", before, after) -> str | None:
+    """Why `user` can't change a campaign's channels from `before` to `after`, or None."""
+    if user.is_super_admin:
+        return None
+    changed = sorted((set(before) ^ set(after)) & SUPER_ADMIN_CHANNELS)
+    if changed:
+        return f"Only a Super Admin can turn {', '.join(changed)} on or off for a campaign."
+    return None
+
 # ── Permission catalog ─────────────────────────────────────────────────
 
 CATALOG: dict[str, str] = {
