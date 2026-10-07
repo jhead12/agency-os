@@ -142,10 +142,13 @@ async def lifespan(_app: FastAPI):
     bootstrap_access()
     # Background jobs (core/jobs.py): on for the deployed service only.
     task = asyncio.create_task(get_job_runner().loop()) if jobs_enabled() else None
+    # Paid account searches (core/searches.py): checked every few seconds, not on the job schedule.
+    search_task = asyncio.create_task(searches.SearchRunner(DB_URL).loop()) if searches.runs_enabled() else None
     async with mcp_mount.running():  # the MCP server (/mcp) and its OAuth endpoints
         yield
-    if task:
-        task.cancel()
+    for running in (task, search_task):
+        if running:
+            running.cancel()
 
 
 app = FastAPI(title="agency-os", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
@@ -2302,7 +2305,8 @@ async def api_create_search(request: Request):
         return refusal
     try:
         body = await _json_body(request)
-        search, created = await run_in_threadpool(searches.create, get_db(), account["id"], body)
+        search, created = await run_in_threadpool(searches.create, get_db(), account["id"], body,
+                                                  searches.plugins())
     except searches.SearchConflict as e:
         return _api_error(409, "conflict", str(e))
     except (searches.SearchError, accounts.AccountError) as e:

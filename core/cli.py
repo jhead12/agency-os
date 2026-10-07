@@ -28,6 +28,7 @@ Usage:
     agency-os spend pending
     agency-os accounts platform-key
     agency-os accounts create --ref org_42 --name "Acme Realty"
+    agency-os searches run
     agency-os spend resolve --id 12 --status settled --tx 0x...
     agency-os connect --url https://your-app.up.railway.app --key aos_cli_...
     agency-os remote users invite --email rep@example.com --role Caller
@@ -897,6 +898,26 @@ def accounts_set_status(ctx, external_ref, status):
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
     click.echo(f"{external_ref} is now {status}.")
+
+
+@cli.group("searches")
+def searches_group():
+    """Paid account searches (docs/U9ITUS_BILLING.md)."""
+
+
+@searches_group.command("run")
+@click.option("--limit", default=20, show_default=True, help="Most searches to run")
+@click.pass_context
+def searches_run(ctx, limit):
+    """Run queued searches now (the web app does this itself with AGENCY_OS_RUN_SEARCHES=1)."""
+    from core import searches
+
+    finished = searches.SearchRunner(ctx.obj["db_url"] or None).run_pending(limit=limit)
+    if not finished:
+        click.echo("No queued searches.")
+    for s in finished:
+        click.echo(f"  #{s['id']:<6} {s['type']:<7} {s['status']:<9} delivered {s['delivered']}/{s['max_results']}"
+                   + (f"  ({s['error']})" if s["error"] else ""))
 
 
 # ── Lead packages (x402) ───────────────────────────────────────────

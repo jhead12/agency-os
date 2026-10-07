@@ -29,9 +29,10 @@ class PluginRegistry:
         self.pages: dict[str, Any] = {}  # web pages (core/plugin_pages.py); not in list_plugins()
         self.jobs: dict[str, Any] = {}  # scheduled jobs (core/jobs.py); not in list_plugins()
         self.panels: dict[str, Any] = {}  # cards on core pages (core/plugin_panels.py); not in list_plugins()
+        self.searches: dict[str, Any] = {}  # paid account searches (core/searches.py); not in list_plugins()
 
     def discover(self, base_dir: str = "plugins", categories: tuple[str, ...] | None = None) -> None:
-        """Scan plugin categories (all but pages, jobs and panels, unless named) and register found plugins."""
+        """Scan plugin categories (all but pages, jobs, panels and searches, unless named) and register them."""
         all_categories = [
             ("prospect_sources", self.sources),
             ("products", self.products),
@@ -41,10 +42,11 @@ class PluginRegistry:
             ("pages", self.pages),
             ("jobs", self.jobs),
             ("panels", self.panels),
+            ("searches", self.searches),
         ]
 
         for category, registry in all_categories:
-            if (category not in categories) if categories else category in ("pages", "jobs", "panels"):
+            if (category not in categories) if categories else category in ("pages", "jobs", "panels", "searches"):
                 continue
             cat_dir = Path(base_dir) / category
             if not cat_dir.exists():

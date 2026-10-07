@@ -13,8 +13,11 @@ Status (2026-10-07):
   platform and account keys, the account endpoints, and keeping account
   prospects out of house views. Tests: `tests/test_accounts.py` (11).
 - **B2 built** on the same branch: the `searches` and `search_results` tables,
-  create / get / cancel, and `?search=` on `/api/v1/prospects`. Searches stay
-  `queued` until the runner (B3) exists. Tests: `tests/test_searches.py` (19).
+  create / get / cancel, and `?search=` on `/api/v1/prospects`.
+  Tests: `tests/test_searches.py` (18).
+- **B3 and B5 built** on the same branch: the search runner and the `city` search
+  (OpenStreetMap through Overpass, until decision 8.1 is made). Tests:
+  `tests/test_search_runner.py` (15).
 - Everything else is planned. Decisions still open for the owner are in section 8.
 
 ## Goal
@@ -189,7 +192,7 @@ so a plugin can't over-deliver.
 
 | Type | Params | Where the data comes from | Notes |
 |---|---|---|---|
-| `city` | `city`, `state`, `query` (e.g. "dentist"), optional `radius_km` | A places API. **Owner decision (8.1):** Google Places (paid per request, good coverage) or OpenStreetMap Overpass (free, sparse for small businesses) | Use `external_ref` = the place id, so repeat searches dedupe. Our API spend goes in `usage.cost_cents`. |
+| `city` ✅ | `city`, `state` (two-letter US code), `query` (e.g. "dentist") | **Built on OpenStreetMap through Overpass** (free, no key; one request per search). `query` matches OSM category tags (amenity, shop, office, craft, healthcare), plus names containing it. Google Places is still open (8.1) | `external_ref` = the OSM element (`node/123`), so repeat searches dedupe. Only letters, digits and a few punctuation marks reach the Overpass query. US cities only for now. |
 | `rss` | `feed_url`, optional `keywords`, `since` | The feed's items: each item's link and title, plus organization names and sites found in the item | Optional AI extraction through `core/llm.py` counts toward `usage`. A recurring "watch this feed" mode is a later version. |
 | `scrape` | `url`, `item_selector`, `fields` (`name`, `website`, `city`, … → CSS selector), optional `next_selector`, `max_pages` ≤ 20 | One list page and its "next" pages on the **same host** | Uses the selectolax parser already used by `plugins/enrichers/local_scraper.py`. Checks robots.txt and fetches at most 1 request/s per host. |
 
@@ -236,9 +239,9 @@ show the real cost per type so margins can be checked.
 |---|---|---|---|
 | **B1 ✅** | Accounts, platform and account keys, account endpoints, account prospects kept out of house views | `core/accounts.py`, `core/db.py` (schema, `hidden_clause`, `upsert_prospect(account_id=)`), `core/access.py`, `web/app.py`, `core/cli.py` (`agency-os accounts …`) | `tests/test_accounts.py`: keys, idempotent create, rotate, suspend, paging, isolation between accounts, house never sees account prospects, an account never overwrites a house prospect |
 | **B2 ✅** | `searches` and `search_results` tables and endpoints: create (idempotent per account), get, cancel; `?search=` on `/prospects` | `core/searches.py`, `core/db.py`, `web/app.py`, `core/access.py` | `tests/test_searches.py`: same `idempotency_key` twice gives one search; different settings → 409; another account's search is 404; `searches.save_result` bills only prospects new to the account and never passes `max_results` |
-| B3 | Runner: picks up `queued` searches on the `core/jobs.py` loop, runs the plugin, saves through `searches.save_result`, stops at `max_results`, honors cancel, records `delivered` and `usage` | `core/searches.py`, `core/jobs.py` | A fake plugin yielding 1000 → `delivered == max_results`; a crash marks `failed` with what was delivered; a restart doesn't run a search twice (`job_runs` pattern) |
+| **B3 ✅** | Runner: claims `queued` searches (`FOR UPDATE SKIP LOCKED`, at most 2 running per account, active accounts only), runs the plugin, saves through `searches.save_result`, stops at `max_results`, honors cancel, records `delivered` and `usage`. Its own loop every 5 s (`AGENCY_OS_RUN_SEARCHES=1`), not the 5-minute job schedule; `agency-os searches run` runs the queue once. Create validates params with the type's plugin, and refuses types with no plugin (422). | `core/searches.py`, `core/registry.py` (`plugins/searches/`), `web/app.py` (lifespan), `core/cli.py` | `tests/test_search_runner.py`: stops at `max_results`; a plugin `ValueError` fails the search with its message, anything else with a plain one (details in the log); cancel mid-run; a search with no heartbeat for 10 minutes is failed, never run twice |
 | B4 | `account_usage` per account per day, `GET /api/v1/usage`, per-account caps (section 5) | `core/searches.py`, `core/db.py` | Usage totals equal the sum of searches; the cap returns 429 and doesn't create the search |
-| B5 | `city` search | `plugins/searches/city.py` | Recorded API responses in tests, with no network calls; dedupes by place id |
+| **B5 ✅** | `city` search (Overpass) | `plugins/searches/city.py` | Faked Overpass responses, no network; unnamed places skipped; found again → not billed again; busy (429), empty and broken answers each fail with a clear message |
 | B6 | `rss` search | `plugins/searches/rss.py` | RSS 2.0 and Atom fixtures; `keywords` filter; malformed feed → `failed` with a clear message |
 | B7 | `scrape` search and the guarded fetcher | `plugins/searches/scrape.py`, `core/safe_fetch.py` | Refuses private, loopback, link-local and metadata IPs, **including after redirects and DNS changes**; honors robots.txt; stays on the start host; ≤ 1 request/s per host; 2 MB and 15 s limits per page |
 | B8 | Team → Accounts page for Owners: accounts, usage, suspend, rotate key | `web/templates/admin_accounts.html`, `web/app.py`, `core/access.py` | Owner only; never shows a key except right after it's issued |
@@ -267,6 +270,9 @@ show the real cost per type so margins can be checked.
   limit per host, and keep a blocklist of sites whose terms forbid scraping. The
   customer agrees in u9itus's terms that they have the right to collect from the
   pages they submit.
+- **OpenStreetMap attribution:** city results are ODbL data. u9itus must show
+  "© OpenStreetMap contributors" with them and in CSV exports (each prospect's
+  `source` is `osm_city`).
 - **Organizations, not people:** searches return business details (name, site,
   address, business phone). Don't scrape individuals' personal emails or phone
   numbers (CCPA/GDPR). Customers' outreach must follow CAN-SPAM, and TCPA for calls
@@ -278,8 +284,10 @@ show the real cost per type so margins can be checked.
 
 ## 8. Decisions (owner, open)
 
-1. **City data provider:** Google Places (paid, best coverage), Overpass (free,
-   weaker), or both with Places as an upgrade.
+1. **City data provider:** built on Overpass (free, weaker for small businesses).
+   Still open: add Google Places (paid, best coverage) as an upgrade or replace
+   Overpass with it. Overpass's public servers are shared and have a fair-use
+   policy, so if searches grow, run our own instance (`AGENCY_OS_OVERPASS_URL`).
 2. **Overage:** block at zero credits, or bill overage through Stripe metered usage.
 3. **Data ownership:** built as private: account-only prospects are hidden from the
    house. If the house should be able to use them (for example, to resell), that's a
@@ -297,7 +305,9 @@ show the real cost per type so margins can be checked.
    Until it's set, the account API answers `503 service_not_configured`.
 3. u9itus env: `AGENCY_OS_PLATFORM_KEY=<key>`, `AGENCY_OS_BASE_URL=<agency-os URL>`.
    Share the key through a password manager, never chat or email.
-4. Check: `curl -X POST $AGENCY_OS_BASE_URL/api/v1/accounts -H "Authorization: Bearer $KEY"
+4. agency-os: `AGENCY_OS_RUN_SEARCHES=1` starts the search runner in the web app.
+   Without it, searches stay `queued` (run them by hand with `agency-os searches run`).
+5. Check: `curl -X POST $AGENCY_OS_BASE_URL/api/v1/accounts -H "Authorization: Bearer $KEY"
    -H 'Content-Type: application/json' -d '{"external_ref":"test_1","name":"Test"}'`
    returns 201 and a key, and `agency-os accounts list` shows it.
 

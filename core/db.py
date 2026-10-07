@@ -648,6 +648,9 @@ CREATE TABLE IF NOT EXISTS searches (
     UNIQUE (account_id, idempotency_key)
 );
 CREATE INDEX IF NOT EXISTS idx_searches_queued ON searches(created_at) WHERE status = 'queued';
+-- The runner touches heartbeat_at as it works; a running search whose heartbeat stops
+-- (the app restarted mid-search) is marked failed, never run twice.
+ALTER TABLE searches ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMP;
 -- Every prospect a search found; is_new = 1 when this search first linked it to the account.
 CREATE TABLE IF NOT EXISTS search_results (
     search_id INTEGER NOT NULL REFERENCES searches(id) ON DELETE CASCADE,
