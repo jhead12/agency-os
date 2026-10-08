@@ -174,6 +174,11 @@ ROUTE_RULES: dict[str, str] = {
     "POST /webhooks/lob": PUBLIC,
     "POST /webhooks/smartlead": PUBLIC,
     "POST /webhooks/bounce": PUBLIC,
+    "POST /webhooks/voice/{provider_key}/dial": PUBLIC,    # signed by the provider (core/voice.py)
+    "POST /webhooks/voice/{provider_key}/status": PUBLIC,
+    # Browser calling: Super Admins only until dialing opens to Owners (docs/BROWSER_CALLING.md, V8).
+    "GET /voice/token": SUPER_ADMIN,
+    "POST /voice/calls/{voice_call_id}/disclosure": SUPER_ADMIN,  # and only the rep who placed the call
     # Selling: the x402 provider endpoints are public; payment or a claim token authorizes them.
     "GET /x402/packages": PUBLIC,
     "GET /x402/packages/{slug}/leads": PUBLIC,

@@ -61,7 +61,7 @@ from core.jobs import JobRunner, configured_jobs, jobs_enabled
 from core import (
     accounts, agents, claims, console, contact_depth, evidence, lead_packages, llm, mcp_auth, panels, payments,
     plugin_pages, plugin_panels, royalties, searches, selling,
-    tools, verify, workflows,
+    tools, verify, voice, workflows,
 )
 from core import welcome as welcome_email
 from core.welcome import base_url as public_base_url
@@ -326,15 +326,8 @@ def tel_href(phone) -> str:
     leading + keep their country code. Opening the link hands the call to the
     device: the phone app on mobile, "Call from iPhone" on a Mac, Phone Link on Windows.
     """
-    raw = str(phone or "").strip()
-    digits = "".join(ch for ch in raw if ch.isdigit())
-    if raw.startswith("+") and 8 <= len(digits) <= 15:
-        return f"tel:+{digits}"
-    if len(digits) == 10:
-        return f"tel:+1{digits}"
-    if len(digits) == 11 and digits.startswith("1"):
-        return f"tel:+{digits}"
-    return ""
+    number = voice.e164(phone)
+    return f"tel:{number}" if number else ""
 
 
 def fmt_date(val) -> str:
@@ -2137,6 +2130,78 @@ async def webhook_bounce(request: Request, key: str = Query(default="")):
         return JSONResponse({"ok": False, "error": "bad key"}, status_code=401)
     body, error = await _webhook_body(request)
     return error or await run_in_threadpool(_webhook_result, evidence.handle_generic, body)
+
+
+# ── Browser calling (core/voice.py, docs/BROWSER_CALLING.md) ──────────
+
+
+@app.get("/voice/token")
+async def voice_token(request: Request):
+    """A short-lived token for the browser's calling SDK. Super Admins only, for now."""
+    found = voice.provider("twilio")
+    if found is None:
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+    identity = voice.identity_for(current_user(request))
+    return JSONResponse(
+        {"token": found.access_token(identity, voice.TOKEN_TTL_SECONDS), "identity": identity,
+         "expires_in": voice.TOKEN_TTL_SECONDS},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.post("/voice/calls/{voice_call_id}/disclosure")
+async def voice_disclosure_read(request: Request, voice_call_id: int):
+    """The rep read the recording disclosure (the call bar's "Disclosure read" button)."""
+    if not voice.confirm_disclosure(get_db(), voice_call_id, current_user(request)):
+        return JSONResponse({"detail": "Call not found"}, status_code=404)
+    return JSONResponse({"ok": True})
+
+
+async def _voice_webhook(request: Request, provider_key: str):
+    """(provider, form params) for a correctly signed provider webhook, or the error response."""
+    found = voice.provider(provider_key)
+    if found is None:
+        return JSONResponse({"detail": "Not Found"}, status_code=404), None
+    params = {name: str(value) for name, value in (await request.form()).items()}
+    # Providers sign the public URL they called; behind Railway's proxy that's site_url().
+    url = site_url() + request.url.path + (f"?{request.url.query}" if request.url.query else "")
+    if not found.verify_webhook(url, params, dict(request.headers)):
+        return JSONResponse({"ok": False, "error": "bad signature"}, status_code=401), None
+    return found, params
+
+
+@app.post("/webhooks/voice/{provider_key}/dial")
+async def webhook_voice_dial(request: Request, provider_key: str):
+    """The provider asks what to do with a call the browser started: dial the
+    outreach's number from the campaign's caller ID, or tell the rep why not."""
+    found, params = await _voice_webhook(request, provider_key)
+    if params is None:
+        return found
+    ask = found.parse_dial(params)
+    db = get_db()
+    call, refusal = await run_in_threadpool(voice.place_call, db, get_campaigns(), found.key,
+                                            ask["call_sid"], ask["identity"], ask["outreach_id"])
+    user_id = voice.user_id_from_identity(ask["identity"])
+    actor = db.load_current_user(user_id) if user_id else None
+    if call is None:
+        db.audit(actor, "voice.refused", "outreach", ask["outreach_id"][:20] or None,
+                 {"provider": found.key, "reason": refusal})
+        return Response(found.refuse_response(refusal), media_type=found.media_type)
+    db.audit(actor, "voice.dial", "voice_call", call["id"],
+             {"provider": found.key, "outreach_id": call["outreach_id"]})
+    status_url = f"{site_url()}/webhooks/voice/{found.key}/status"
+    return Response(found.dial_response(call["to_number"], call["caller_id"], status_url),
+                    media_type=found.media_type)
+
+
+@app.post("/webhooks/voice/{provider_key}/status")
+async def webhook_voice_status(request: Request, provider_key: str):
+    """How a call ended (completed, no-answer, busy...) and how long it lasted."""
+    found, params = await _voice_webhook(request, provider_key)
+    if params is None:
+        return found
+    await run_in_threadpool(voice.record_status, get_db(), found.key, found.parse_status(params))
+    return Response(found.end_response(), media_type=found.media_type)
 
 
 # ── Selling our own lists (core/selling.py) ─────────────────────────
