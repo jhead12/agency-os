@@ -263,7 +263,7 @@ show the real cost per type so margins can be checked.
 | **B2 ✅** | `searches` and `search_results` tables and endpoints: create (idempotent per account), get, cancel; `?search=` on `/prospects` | `core/searches.py`, `core/db.py`, `web/app.py`, `core/access.py` | `tests/test_searches.py`: same `idempotency_key` twice gives one search; different settings → 409; another account's search is 404; `searches.save_result` bills only prospects new to the account and never passes `max_results` |
 | **B3 ✅** | Runner: claims `queued` searches (`FOR UPDATE SKIP LOCKED`, at most 2 running per account, active accounts only), runs the plugin, saves through `searches.save_result`, stops at `max_results`, honors cancel, records `delivered` and `usage`. Its own loop every 5 s (`AGENCY_OS_RUN_SEARCHES=1`), not the 5-minute job schedule; `agency-os searches run` runs the queue once. Create validates params with the type's plugin, and refuses types with no plugin (422). | `core/searches.py`, `core/registry.py` (`plugins/searches/`), `web/app.py` (lifespan), `core/cli.py` | `tests/test_search_runner.py`: stops at `max_results`; a plugin `ValueError` fails the search with its message, anything else with a plain one (details in the log); cancel mid-run; a search with no heartbeat for 10 minutes is failed, never run twice |
 | **B9 ✅** | Accounts' own enricher keys: AES-256-GCM under `AGENCY_OS_CREDENTIALS_KEY` (env only), bound to account and provider, write-only API, master key rotation (`agency-os accounts reencrypt-credentials`) | `core/credentials.py`, `core/db.py`, `web/app.py`, `core/access.py`, `core/cli.py` | `tests/test_credentials.py`: ciphertext only in the database and audit log; a row moved to another account or provider fails to decrypt; a wrong master key decrypts nothing; rotation; the API never returns a key and is scoped to the calling account |
-| B10 | Enrich step for account searches: the account's own key when it has one (platform fee), else the house key (full enrichment price); report which in `usage` | `core/searches.py`, `plugins/enrichers/*` (take the key from the caller, not only the env) | Usage says `own_key` or `house_key` per provider; a bad customer key fails that enrichment with a clear message and never falls back to the house key silently |
+| B10 | Enrich step for account searches, only for the enrichers the customer selects on the search (`enrichers: [apollo, hunter, firecrawl, local_scraper]`, none by default): the account's own key when it has one (platform fee), else the house key (full enrichment price); report which in `usage` | `core/searches.py`, `plugins/enrichers/*` (take the key from the caller, not only the env) | Usage says `own_key` or `house_key` per provider; a bad customer key fails that enrichment with a clear message and never falls back to the house key silently |
 | B4 | `account_usage` per account per day, `GET /api/v1/usage`, per-account caps (section 5) | `core/searches.py`, `core/db.py` | Usage totals equal the sum of searches; the cap returns 429 and doesn't create the search |
 | **B5 ✅** | `city` search (Overpass) | `plugins/searches/city.py` | Faked Overpass responses, no network; unnamed places skipped; found again → not billed again; busy (429), empty and broken answers each fail with a clear message |
 | **B6 ✅** | `rss` search | `plugins/searches/rss.py` | RSS 2.0 and Atom fixtures; `keywords` filter; malformed feed → `failed` with a clear message |
@@ -297,10 +297,15 @@ show the real cost per type so margins can be checked.
 - **OpenStreetMap attribution:** city results are ODbL data. u9itus must show
   "© OpenStreetMap contributors" with them and in CSV exports (each prospect's
   `source` is `osm_city`).
-- **Organizations, not people:** searches return business details (name, site,
-  address, business phone). Don't scrape individuals' personal emails or phone
-  numbers (CCPA/GDPR). Customers' outreach must follow CAN-SPAM, and TCPA for calls
-  and texts. Say so in u9itus's terms and in the search UI.
+- **Organizations first, people only by choice:** a search returns business details
+  (name, site, address, business phone). Contacts at those organizations (names,
+  emails, phones) come only from enrichers the customer selects (B10, decided
+  2026-10-08), and the customer is responsible for using them lawfully: CAN-SPAM for
+  email, TCPA for calls and texts, CCPA/GDPR for personal data. Say so in u9itus's
+  terms and next to the enricher choice in the search UI.
+- **No resale of enricher data:** the house seller never sells a contact field Apollo
+  or Hunter supplied (`selling.NO_RESALE_SOURCES`, tracked per field in
+  `outreach.contact_sources`). Their terms forbid redistributing their data.
 - **Fail closed on money:** no hold, no search. agency-os's caps (section 5) hold even
   if u9itus has a bug.
 - **Customers' data is theirs** (decision 8.3): agency-os's house dashboard, campaigns
@@ -313,9 +318,9 @@ show the real cost per type so margins can be checked.
    Overpass with it. Overpass's public servers are shared and have a fair-use
    policy, so if searches grow, run our own instance (`AGENCY_OS_OVERPASS_URL`).
 2. **Overage:** block at zero credits, or bill overage through Stripe metered usage.
-3. **Data ownership:** built as private: account-only prospects are hidden from the
-   house. If the house should be able to use them (for example, to resell), that's a
-   terms-of-service change and a one-line change to `hidden_clause`.
+3. **Data ownership (decided 2026-10-08):** private. Account-only prospects are hidden
+   from the house and are never resold, not even with the customer's consent. Don't
+   change `hidden_clause` to let the house use them.
 4. **Prices and plans:** section 5 is an example only.
 5. **Who sees results first:** whether results stream to the customer while a search
    is still running, or appear only when it's `done` (simpler, and matches charging

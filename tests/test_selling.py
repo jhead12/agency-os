@@ -17,7 +17,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core import access, lead_packages, selling  # noqa: E402
-from core.models import CallLog, Prospect  # noqa: E402
+from core.models import CallLog, EnrichmentResult, Prospect  # noqa: E402
 from core.payments import BASE_SEPOLIA, USDC  # noqa: E402
 from tests.test_access import client_for, db, make_user  # noqa: E402,F401
 
@@ -104,6 +104,25 @@ def test_publish_takes_only_leads_we_can_stand_behind(db, store):
     assert published == set(good)
     assert publish(db, owner, list_id, guarantee_tier="pitched")[1].startswith("None of this list")
     assert publish(db, owner, list_id, unlock_usd="0")[1] == "Set an unlock price"
+
+
+def test_contacts_from_no_resale_enrichers_are_never_sold(db, store):
+    owner, campaign_id, list_id, good, _ = setup_list(db)
+    apollo, hunter_phone, ours = good[0], good[1], good[2]
+    for pid, result in ((apollo, EnrichmentResult(contact_email="ceo@org0.example", source="apollo")),
+                        (hunter_phone, EnrichmentResult(contact_phone="213-555-0199", source="hunter")),
+                        (ours, EnrichmentResult(contact_email="info@org2.example", source="local_scraper"))):
+        oid = db.conn.execute("SELECT id FROM outreach WHERE prospect_id = ?", (pid,)).fetchone()["id"]
+        db.apply_enrichment(oid, result, prospect_id=pid)
+    eligible = {pid for pid, _ in selling.preview(db, {"campaign": "sell-test"}, "phone_verified")["eligible"]}
+    assert eligible == set(good) - {apollo, hunter_phone}
+
+    # A clean contact for the same prospect in another campaign can still be sold
+    other = db.upsert_campaign("sell-test-2", "x")
+    oid = db.upsert_outreach(apollo, other)
+    db.update_outreach(oid, {"contact_name": "Dana 0", "contact_phone": "213-555-0123"})
+    ok, _tier, contact = selling._check_lead(db, apollo, "phone_verified")
+    assert ok and contact["contact_phone"] == "213-555-0123" and "ceo@org0.example" not in contact.values()
 
 
 def test_catalog_is_readable_by_our_own_buyer(db, store):
