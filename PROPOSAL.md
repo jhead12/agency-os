@@ -359,7 +359,7 @@ Custom roles can be created by picking from the 13-permission catalog.
 - **Realistic goal for survival mode**: 560 email + 730 phone → 10–25 responses → 5–10 demos → **2–5 closed deals ($1,000–$7,500)** in the first cycle. This validates the model before scaling.
 - **Timeline**: 60 days from first send
 - **Election calendar**: the November 3, 2026 general is ~4 weeks out and mail ballots are already going out, so any deal closed now gets only a few weeks of use. Treat late-2026 outreach as a low-cost test of messaging and conversion; the real selling window is the run-up to the 2028 statewide primary, plus local special elections in between.
-- **Blocking work before first send**: (1) U9itus branch merged with U1–U10 deployed, (2) payment gating P1–P3+P5 built — otherwise deals close into a product that cannot collect money, and (3) enrichment run completed.
+- **Blocking work before first send**: (1) ~~U9itus branch merged with U1–U10 deployed~~ done (production answers 401, not 404, on 2026-10-08), (2) payment gating P1–P3+P5 built (u9itus branch `feat/portal-payment-gating`, needs merge and deploy) — otherwise deals close into a product that cannot collect money, and (3) enrichment run completed.
 
 ### Phase 2: California Elected Officials
 
@@ -436,7 +436,7 @@ U9itus provisions full account
 | **A9**: Cold cadence fix — stages never move backward | ✅ Built |
 | **A10**: Cancellation doesn't undo a claimed portal | ✅ Built |
 | **U1–U10**: U9itus Laravel API endpoints + claim flow + events | ✅ Built (branch `feature/white-label-portal-builder`, **not deployed** — prod 404s) |
-| **P1–P8**: Payment gating (publish requires subscription; Stripe + manual invoice; tier limits; cycle expiry; subscription.* events) | 🔲 **Next milestone — blocking first send** |
+| **P1–P8**: Payment gating (publish requires subscription; Stripe + manual invoice; tier limits; cycle expiry; subscription.* events) | 🟡 P1–P3 + P5 built (branch `feat/portal-payment-gating`); P4, P6–P8 next |
 | **Flow-review fixes**: claim redirect, county-scoped demo data, org-claim verification, org-type confirmation | 🔲 Land on the same branch before merge and real campaigns |
 
 ### What U1–U10 Already Deliver
@@ -578,6 +578,8 @@ Based on 2,442 prospects, 4-touch cadence, per election cycle:
 | Developer (contract) | U1–U10 milestone | Build U9itus Laravel API endpoints for integration. |
 
 ### Operational Workflow
+
+The full runbook (daily, weekly and monthly routines, stage ownership, after-sale process, targets and compliance) is in [docs/OPERATIONS.md](docs/OPERATIONS.md). The summary:
 
 1. **Weekly / as-campaign-runs**: Operator runs `enqueue` — sends due follow-up emails. **Deliberately manual** (see `doc/AGENCY_OS_INTEGRATION.md` section 9): outbound sends require a human check before they leave the system
 2. **Hourly**: Cron job runs `pull-events` — syncs portal views/claims/subscription events, auto-advances stages
