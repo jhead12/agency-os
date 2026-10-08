@@ -59,7 +59,7 @@ from core.protocols import portal_product
 from plugins.channels.lob_direct_mail import TEMPLATE_ID_RE, lob_template_url
 from core.jobs import JobRunner, configured_jobs, jobs_enabled
 from core import (
-    accounts, agents, claims, compliance, console, contact_depth, evidence, lead_packages, llm, mcp_auth, panels, payments,
+    accounts, agents, claims, compliance, credentials, console, contact_depth, evidence, lead_packages, llm, mcp_auth, panels, payments,
     generator, plugin_pages, plugin_panels, royalties, searches, selling,
     tools, verify, voice, workflows,
 )
@@ -2482,6 +2482,48 @@ async def api_account_status(request: Request, external_ref: str):
 async def api_whoami(request: Request):
     account, refusal = await run_in_threadpool(_account_or_refusal, request)
     return refusal or {"account": accounts.public(account)}
+
+
+def _credentials_refusal() -> Optional[JSONResponse]:
+    if not credentials.configured():
+        return _api_error(503, "service_not_configured", f"{credentials.KEY_ENV} is not set.")
+    return None
+
+
+@app.get("/api/v1/account/credentials")
+async def api_list_credentials(request: Request):
+    """The account's own enricher keys: provider and last 4 characters only, never the key."""
+    account, refusal = await run_in_threadpool(_account_or_refusal, request)
+    if refusal:
+        return refusal
+    rows = await run_in_threadpool(credentials.list_for, get_db(), account["id"])
+    return {"credentials": [credentials.public(r) for r in rows]}
+
+
+@app.put("/api/v1/account/credentials/{provider}")
+async def api_put_credential(request: Request, provider: str):
+    """Save or replace the account's key for an enricher. Body: {"key": "..."}. Write-only."""
+    account, refusal = await run_in_threadpool(_account_or_refusal, request)
+    if refusal or (refusal := _credentials_refusal()):
+        return refusal
+    try:
+        body = await _json_body(request)
+        row = await run_in_threadpool(credentials.put, get_db(), account["id"], provider, str(body.get("key") or ""))
+    except (credentials.CredentialError, accounts.AccountError) as e:
+        return _api_error(422, "invalid", str(e))
+    return {"credential": credentials.public(row)}
+
+
+@app.delete("/api/v1/account/credentials/{provider}")
+async def api_delete_credential(request: Request, provider: str):
+    account, refusal = await run_in_threadpool(_account_or_refusal, request)
+    if refusal:
+        return refusal
+    try:
+        deleted = await run_in_threadpool(credentials.delete, get_db(), account["id"], provider)
+    except credentials.CredentialError as e:
+        return _api_error(422, "invalid", str(e))
+    return Response(status_code=204) if deleted else _api_error(404, "not_found", "No key saved for that provider.")
 
 
 @app.get("/api/v1/prospects")

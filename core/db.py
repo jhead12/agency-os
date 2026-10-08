@@ -665,6 +665,21 @@ CREATE TABLE IF NOT EXISTS search_results (
     PRIMARY KEY (search_id, prospect_id)
 );
 
+-- An account's own enricher API keys (core/credentials.py), AES-256-GCM encrypted
+-- under AGENCY_OS_CREDENTIALS_KEY, which is never stored here. key_id names the
+-- master key that encrypted the row; hint is the key's last 4 characters.
+CREATE TABLE IF NOT EXISTS account_credentials (
+    account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    secret TEXT NOT NULL,
+    key_id TEXT NOT NULL,
+    hint TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_used_at TIMESTAMP,
+    PRIMARY KEY (account_id, provider)
+);
+
 -- Lead package generator runs (core/generator.py): a Super Admin's criteria run
 -- through the search plugins, saved as house prospects in a campaign, then enriched.
 CREATE TABLE IF NOT EXISTS package_runs (

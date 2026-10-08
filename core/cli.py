@@ -909,6 +909,29 @@ def accounts_set_status(ctx, external_ref, status):
     click.echo(f"{external_ref} is now {status}.")
 
 
+@accounts_group.command("credentials-key")
+def accounts_credentials_key():
+    """Print a new master key for AGENCY_OS_CREDENTIALS_KEY (accounts' own enricher keys)."""
+    from core import credentials
+
+    click.echo(f"{credentials.KEY_ENV}={credentials.new_master_key()}")
+    click.echo("Set it as a Railway service variable only; never commit it or store it in the database.")
+
+
+@accounts_group.command("reencrypt-credentials")
+@click.pass_context
+def accounts_reencrypt_credentials(ctx):
+    """Re-encrypt accounts' saved keys under the current master key (after rotating it)."""
+    from core import credentials
+
+    try:
+        count = credentials.reencrypt(Database(ctx.obj["db_url"] or None))
+    except (credentials.NotConfigured, credentials.CredentialError) as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    click.echo(f"Re-encrypted {count} credential(s). {credentials.OLD_KEYS_ENV} can now be removed.")
+
+
 @cli.group("searches")
 def searches_group():
     """Paid account searches (docs/U9ITUS_BILLING.md)."""
