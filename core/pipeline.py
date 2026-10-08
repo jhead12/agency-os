@@ -17,7 +17,7 @@ from core.campaign import CadenceStep, CampaignConfig, discover_campaigns
 from core.db import Database
 from core import compliance, lead_packages
 from core.models import Prospect, SendResult
-from core.protocols import DemoPortalProduct, portal_product
+from core.protocols import DemoPortalProduct, EventEffect, event_effect, portal_product
 from core.registry import PluginRegistry
 
 
@@ -589,13 +589,9 @@ class Pipeline:
 
     # ── Pull Product Events (A4) ──────────────────────────────────────
 
-    # Stage mapping: event type → target stage (only moves forward).
-    # portal.published is listed so it is processed, but never changes the stage.
-    EVENT_STAGE_MAP = {
-        "portal.viewed": "engaged",
-        "portal.claimed": "demo_scheduled",
-        "portal.published": "demo_scheduled",
-    }
+    # What each event does comes from the product (core/protocols.py
+    # event_effect): the shared portal.* vocabulary, plus whatever the
+    # product adds. Stages only move forward.
 
     # Stage order for "never move backward" guard
     STAGE_ORDER = {
@@ -674,16 +670,17 @@ class Pipeline:
                 stats["events_pulled"] += 1
                 continue
 
-            # Record the event
+            # Record the event (an unknown type is kept here, with no other effect)
             self._record_event(campaign.product, event_id, event)
+            effect = event_effect(product, event)
+            if effect is None:
+                stats["events_pulled"] += 1
+                continue
 
-            # Keep the portal's status on the prospect current for the dashboard.
-            status = {"portal.claimed": "claimed", "portal.published": "published",
-                      "portal.expired": "expired"}.get(event_type)
-            if status:
-                self._merge_portal_metadata(product, prospect_id, {"status": status})
-            if event_type == "portal.expired":
-                # The link no longer works; clearing it lets provisioning issue a new one.
+            # Keep the portal's details on the prospect current for the dashboard.
+            if effect.portal:
+                self._merge_portal_metadata(product, prospect_id, effect.portal)
+            if effect.clear_demo_link:
                 self.db.conn.execute(
                     "UPDATE outreach SET demo_link = NULL WHERE prospect_id = ?", (prospect_id,),
                 )
@@ -696,9 +693,9 @@ class Pipeline:
                 (prospect_id,),
             ).fetchall()
             for outreach_row in outreach_rows:
-                if self._apply_portal_event(product, outreach_row, event):
+                if self._apply_portal_event(product, outreach_row, event, effect):
                     print(f"    ✓ Prospect {prospect_id}: {outreach_row['stage']} → "
-                          f"{self.EVENT_STAGE_MAP[event_type]} ({event_type})")
+                          f"{effect.stage} ({event_type})")
                     stats["stage_changes"] += 1
 
             stats["events_pulled"] += 1
@@ -709,18 +706,17 @@ class Pipeline:
 
         return stats
 
-    def _apply_portal_event(self, product: DemoPortalProduct, outreach_row, event: dict) -> bool:
-        """Log one portal event on one outreach row and move its stage forward.
+    def _apply_portal_event(self, product: DemoPortalProduct, outreach_row, event: dict,
+                            effect: EventEffect) -> bool:
+        """Log one event on one outreach row and move its stage forward.
 
-        Viewed and claimed events are always logged (A10 relies on the
-        portal.claimed entry even when the stage doesn't change); published adds
-        the ready_to_close flag and never changes the stage. Returns True when
-        the stage changed.
+        An event with log_as is always logged, even when the stage doesn't
+        change (A10 relies on the portal.claimed entry). Returns True when the
+        stage changed.
         """
-        event_type = event.get("type")
-        target_stage = self.EVENT_STAGE_MAP.get(event_type)
-        if not target_stage:
+        if not effect.log_as:
             return False
+        target_stage = effect.stage
 
         event_ref = f"{product.portal_namespace}:{event.get('id')}"
         activity = json.loads(outreach_row["activity_log"] or "[]")
@@ -731,13 +727,14 @@ class Pipeline:
         # nurture ranks with the closed stages for the email sequence, but a
         # parked prospect who opens or claims their demo is active again.
         current_rank = 1 if current_stage == "nurture" else self.STAGE_ORDER.get(current_stage, 0)
-        moves = event_type != "portal.published" and self.STAGE_ORDER.get(target_stage, 0) > current_rank
+        moves = bool(target_stage) and self.STAGE_ORDER.get(target_stage, 0) > current_rank
 
-        if event_type == "portal.published":
-            entry = {"type": "portal_published", "ref": event_ref, "flag": "ready_to_close"}
-        else:
-            entry = {"type": event_type, "ref": event_ref, "stage": target_stage if moves else current_stage}
-        activity.append({**entry, "timestamp": event.get("occurred_at", "")})
+        entry = {"type": effect.log_as, "ref": event_ref}
+        if target_stage:
+            entry["stage"] = target_stage if moves else current_stage
+        if effect.flag:
+            entry["flag"] = effect.flag
+        activity.append({**entry, **effect.detail, "timestamp": event.get("occurred_at", "")})
 
         updates = {"activity_log": json.dumps(activity)}
         if moves:
