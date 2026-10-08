@@ -150,3 +150,48 @@ class Scheduler(Protocol):
     def fetch_bookings(self, since: datetime) -> Iterator[Booking]:
         """Yield bookings with a start time at or after `since`. Never raise."""
         ...
+
+
+@runtime_checkable
+class VoiceProvider(Protocol):
+    """A calling service that places prospect calls from the dashboard (Twilio, etc.).
+
+    The rules about who may dial and whom (core/voice.py) are the same for every
+    provider; a provider only speaks its service's language: browser tokens, call
+    instructions and webhooks. See docs/BROWSER_CALLING.md.
+    """
+
+    key: str
+    media_type: str  # of the call instructions, e.g. "application/xml" for TwiML
+
+    def is_configured(self) -> bool:
+        """Whether the credentials browser calling needs are set."""
+        ...
+
+    def access_token(self, identity: str, ttl_seconds: int = 3600) -> str:
+        """A short-lived token the browser SDK connects with, for this identity."""
+        ...
+
+    def verify_webhook(self, url: str, params: dict, headers: dict) -> bool:
+        """Whether a webhook request really came from the provider."""
+        ...
+
+    def parse_dial(self, params: dict) -> dict:
+        """{call_sid, identity, outreach_id} from the provider's request to place a call."""
+        ...
+
+    def dial_response(self, to_number: str, caller_id: str, status_url: str) -> str:
+        """Call instructions that dial `to_number` from `caller_id`, reporting the end to `status_url`."""
+        ...
+
+    def refuse_response(self, message: str) -> str:
+        """Call instructions that tell the rep `message` and hang up."""
+        ...
+
+    def parse_status(self, params: dict) -> dict:
+        """{call_sid, status, duration_seconds} from the provider's end-of-call webhook."""
+        ...
+
+    def end_response(self) -> str:
+        """Call instructions that end the call."""
+        ...

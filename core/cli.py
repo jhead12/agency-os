@@ -604,7 +604,7 @@ def campaigns(ctx):
 
 
 @cli.command()
-@click.option("--type", "plugin_type", type=click.Choice(["prospect_sources", "products", "channels", "enrichers", "schedulers", "all"]), default="all")
+@click.option("--type", "plugin_type", type=click.Choice(["prospect_sources", "products", "channels", "enrichers", "schedulers", "voice", "all"]), default="all")
 @click.pass_context
 def plugins(ctx, plugin_type):
     """List all discovered plugins."""
