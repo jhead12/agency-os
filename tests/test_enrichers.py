@@ -197,3 +197,113 @@ def test_scraper_summary_is_clipped():
 def test_scraper_no_summary_without_text():
     scraper = _scraper_with_pages(["<html><body><p>Contact us</p></body></html>"])
     assert "site_summary" not in scraper.enrich(_prospect()).raw
+
+
+# ── Firecrawl ─────────────────────────────────────────────────────────
+
+
+def _make_firecrawl(monkeypatch, key="fc-test"):
+    from plugins.enrichers.firecrawl import FirecrawlEnricher
+    if key:
+        monkeypatch.setenv("FIRECRAWL_API_KEY", key)
+    else:
+        monkeypatch.delenv("FIRECRAWL_API_KEY", raising=False)
+    enricher = FirecrawlEnricher()
+    if key:
+        enricher._key_valid = True
+    return enricher
+
+
+def _resp(payload, status=200):
+    resp = MagicMock()
+    resp.status_code = status
+    resp.json.return_value = payload
+    return resp
+
+
+def _scrape_resp(fields, links=None):
+    return _resp({"success": True, "data": {"json": fields, "links": links or []}})
+
+
+def test_firecrawl_is_configured_false_without_key(monkeypatch):
+    assert _make_firecrawl(monkeypatch, key=None).is_configured() is False
+
+
+def test_firecrawl_is_configured_probes_once(monkeypatch):
+    enricher = _make_firecrawl(monkeypatch)
+    enricher._key_valid = None
+    with patch.object(enricher._client, "get", return_value=_resp({}, 401)) as m:
+        assert enricher.is_configured() is False
+        assert enricher.is_configured() is False
+        assert m.call_count == 1
+
+
+def test_firecrawl_extracts_and_normalizes(monkeypatch):
+    enricher = _make_firecrawl(monkeypatch)
+    fields = {
+        "contact_name": "Jane Smith",
+        "contact_title": "Managing Partner",
+        "contact_email": "Jane@SmithLaw.com",
+        "contact_phone": "+1 213.627.0142",
+        "summary": "A civil litigation firm in Los Angeles.",
+    }
+    with patch.object(enricher._client, "post", return_value=_scrape_resp(fields)) as m:
+        result = enricher.enrich(_prospect(website="smithlaw.com"))
+    assert m.call_count == 1  # email + phone on the homepage: no second scrape
+    assert result.raw["website"] == "https://smithlaw.com"
+    assert result.contact_email == "jane@smithlaw.com"
+    assert result.contact_phone == "(213) 627-0142"
+    assert result.contact_name == "Jane Smith"
+    assert result.contact_title == "Managing Partner"
+    assert result.raw["site_summary"] == "A civil litigation firm in Los Angeles."
+    assert result.confidence == pytest.approx(1.0)
+
+
+def test_firecrawl_scrapes_contact_page_when_missing(monkeypatch):
+    enricher = _make_firecrawl(monkeypatch)
+    home = _scrape_resp(
+        {"contact_name": "Jane Smith"},
+        links=["https://www.example.org/blog", "https://example.org/contact-us",
+               "https://facebook.com/example"],
+    )
+    contact = _scrape_resp({"contact_email": "info@example.org", "contact_name": "Someone Else"})
+    with patch.object(enricher._client, "post", side_effect=[home, contact]) as m:
+        result = enricher.enrich(_prospect())
+    assert m.call_args_list[1].kwargs["json"]["url"] == "https://example.org/contact-us"
+    assert result.contact_email == "info@example.org"
+    assert result.contact_name == "Jane Smith"  # homepage value kept
+
+
+def test_firecrawl_drops_junk_email_and_toll_free(monkeypatch):
+    enricher = _make_firecrawl(monkeypatch)
+    fields = {"contact_email": "someone@gmail.com", "contact_phone": "(800) 555-1212"}
+    with patch.object(enricher._client, "post", return_value=_scrape_resp(fields)):
+        result = enricher.enrich(_prospect())
+    assert result.contact_email is None
+    assert result.contact_phone is None
+
+
+def test_firecrawl_searches_when_no_website(monkeypatch):
+    enricher = _make_firecrawl(monkeypatch)
+    search = _resp({"success": True, "data": {"web": [
+        {"url": "https://www.yelp.com/biz/test-org"},
+        {"url": "https://testorg.com/"},
+    ]}})
+    scrape = _scrape_resp({"contact_email": "info@testorg.com", "contact_phone": "213-627-0100"})
+    with patch.object(enricher._client, "post", side_effect=[search, scrape]):
+        result = enricher.enrich(Prospect(name="Test Org", city="Pasadena", state="CA"))
+    assert result.raw["website"] == "https://testorg.com/"
+    assert result.contact_email == "info@testorg.com"
+
+
+def test_firecrawl_never_raises(monkeypatch):
+    enricher = _make_firecrawl(monkeypatch)
+    with patch.object(enricher._client, "post", side_effect=httpx_error()):
+        result = enricher.enrich(_prospect())
+    assert result.source == "firecrawl"
+    assert result.contact_email is None
+
+
+def httpx_error():
+    import httpx
+    return httpx.ConnectError("boom")
