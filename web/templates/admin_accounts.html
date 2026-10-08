@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Accounts — agency-os{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Accounts</h1>
+    <p class="subtitle">Customer accounts u9itus created for paid prospect searches. What an account's searches find is theirs: it never shows up in the house's prospects, campaigns or packages.</p>
+</div>
+{% set tab = 'accounts' %}{% include "_admin_tabs.html" %}
+
+{% if not platform_configured %}
+<div class="form-error">The platform key isn't set up (AGENCY_OS_PLATFORM_KEY_HASH), so u9itus can't create accounts yet. Run <code>agency-os accounts platform-key</code>.</div>
+{% endif %}
+
+{% if new_key %}
+<div class="save-notice">
+    <strong>New key for {{ new_key.external_ref }}:</strong> <code>{{ new_key.key }}</code><br>
+    Copy it into u9itus now. It isn't stored and won't be shown again.
+</div>
+{% endif %}
+
+<div class="campaign-section">
+    {% if not accounts %}
+    <p class="muted">No accounts yet. u9itus creates one for each paying customer.</p>
+    {% else %}
+    <div class="table-scroll">
+    <table class="data-table">
+        <thead><tr><th>Account</th><th>Status</th><th>Key</th><th>Last 30 days</th><th>Prospects</th><th></th></tr></thead>
+        <tbody>
+        {% for a in accounts %}
+        <tr>
+            <td><strong>{{ a.name }}</strong><br><span class="subtitle">{{ a.external_ref }} · since {{ a.created_at|fmt_date }}</span></td>
+            <td><span class="badge {% if a.status == 'active' %}badge-success{% else %}badge-warning{% endif %}">{{ a.status }}</span></td>
+            <td>{% if a.key_hint %}…{{ a.key_hint }}{% else %}none{% endif %}<br><span class="subtitle">{% if a.last_used_at %}used {{ a.last_used_at|days_ago }}{% else %}never used{% endif %}</span></td>
+            <td>{{ a.searches }} searches<br><span class="subtitle">{{ a.delivered }} prospects delivered</span></td>
+            <td>{{ a.prospects }}</td>
+            <td>
+                <form method="post" action="/admin/accounts/{{ a.external_ref }}/status" style="display: inline;">
+                    <input type="hidden" name="status" value="{{ 'suspended' if a.status == 'active' else 'active' }}">
+                    <button type="submit" class="btn btn-secondary btn-sm">{{ 'Suspend' if a.status == 'active' else 'Make active' }}</button>
+                </form>
+                <form method="post" action="/admin/accounts/{{ a.external_ref }}/key" style="display: inline;"
+                      onsubmit="return confirm('Issue a new key for {{ a.external_ref }}? The current key stops working at once.');">
+                    <button type="submit" class="btn btn-secondary btn-sm">New key</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

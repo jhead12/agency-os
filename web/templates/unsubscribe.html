@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Unsubscribe{% endblock %}
+{% block content %}
+<div class="auth-card detail-card">
+    <h1>Unsubscribe</h1>
+    {% if not valid %}
+    <p class="muted">This unsubscribe link isn't valid. It may have been cut off when it was copied.
+        Reply to the email with "unsubscribe" and we'll remove you by hand.</p>
+    {% elif done %}
+    <p>{{ email }} won't get any more emails from us.</p>
+    {% else %}
+    <p>Stop all emails to <strong>{{ email }}</strong>?</p>
+    <form method="post" action="/unsubscribe?e={{ email | urlencode }}&amp;t={{ token | urlencode }}" class="stack-form">
+        <button type="submit" class="btn">Unsubscribe</button>
+    </form>
+    {% endif %}
+</div>
+{% endblock %}

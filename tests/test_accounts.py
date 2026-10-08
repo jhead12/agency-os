@@ -154,3 +154,50 @@ def test_the_house_finding_an_account_prospect_makes_it_a_house_prospect(db):
     assert db.upsert_prospect(found(1)) == pid
     assert not db.prospect_hidden(pid, ())
     assert [p["id"] for p in accounts.prospects(db, a["id"])] == [pid]
+
+
+# ── Accounts page for Owners (task B8) ─────────────────────────────────
+
+
+def test_the_accounts_page_is_for_owners_and_shows_usage(db, platform):
+    from core import access
+
+    make_user(db, "owner@x.com", access.OWNER_ROLE)
+    make_user(db, "rep@x.com", "Sales Rep")
+    account, key = accounts.create(db, "org_42", "Acme Realty")
+    db.conn.execute("""INSERT INTO searches (account_id, idempotency_key, type, params, max_results, delivered)
+                       VALUES (?, 'k1', 'city', '{}', 10, 7)""", (account["id"],))
+    assert client_for("rep@x.com").get("/admin/accounts").status_code == 403
+    page = client_for("owner@x.com").get("/admin/accounts")
+    assert page.status_code == 200
+    assert "Acme Realty" in page.text and "org_42" in page.text and "7 prospects delivered" in page.text
+    assert key not in page.text and f"…{key[-4:]}" in page.text  # only the hint
+    assert 'href="/admin/accounts"' in client_for("owner@x.com").get("/admin/users").text
+
+
+def test_owners_suspend_reactivate_and_rotate_keys_with_the_new_key_shown_once(db, platform):
+    from core import access
+
+    make_user(db, "owner@x.com", access.OWNER_ROLE)
+    _, old_key = accounts.create(db, "org_42", "Acme Realty")
+    client = client_for("owner@x.com")
+
+    r = client.post("/admin/accounts/org_42/status", data={"status": "suspended"})
+    assert r.status_code == 303 and accounts.get(db, "org_42")["status"] == "suspended"
+    client.post("/admin/accounts/org_42/status", data={"status": "active"})
+    assert accounts.get(db, "org_42")["status"] == "active"
+    assert "status must be" in client.post("/admin/accounts/org_42/status", data={"status": "gone"},
+                                           follow_redirects=True).text
+
+    r = client.post("/admin/accounts/org_42/key")
+    assert r.status_code == 200 and "location" not in r.headers and r.headers["cache-control"] == "no-store"
+    new_key = accounts.get(db, "org_42")["key_hint"]
+    shown = [k for k in r.text.split("<code>") if k.startswith("aos_acct_")]
+    assert len(shown) == 1 and shown[0].split("</code>")[0].endswith(new_key)
+    assert accounts.for_key(db, old_key) is None
+    assert shown[0].split("</code>")[0] not in client.get("/admin/accounts").text  # never shown again
+    actions = [r["action"] for r in db.conn.execute(
+        "SELECT action FROM audit_log a JOIN users u ON u.id = a.actor_id WHERE u.email = 'owner@x.com' "
+        "AND action LIKE 'account.%' ORDER BY a.id").fetchall()]
+    assert actions == ["account.suspended", "account.active", "account.rotate_key"]
+    assert client.post("/admin/accounts/nope/key", follow_redirects=True).text.count("No such account") == 1

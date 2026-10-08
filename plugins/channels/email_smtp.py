@@ -44,6 +44,10 @@ class EmailSmtpChannel:
             msg["Subject"] = subject
             msg["From"] = self._from
             msg["To"] = recipient["email"]
+            if metadata.get("unsubscribe_url"):
+                # One-click unsubscribe in the mail client (RFC 8058); core/compliance.py
+                msg["List-Unsubscribe"] = f"<{metadata['unsubscribe_url']}>"
+                msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
             msg.set_content(body)
 
             with smtplib.SMTP(self._host, self._port, timeout=30) as server:

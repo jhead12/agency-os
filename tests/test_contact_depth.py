@@ -39,6 +39,9 @@ def call(outcome, **extra):
     ([call("completed", decision_maker=True)], "", "pitched"),
     ([call("scheduled", pitched=True)], "", "pitched"),
     ([{"channel": "mail", "outcome": "delivered"}], "demo_scheduled", "pitched"),
+    ([{"channel": "enrich", "outcome": "email_found"}], "", "enriched"),
+    ([{"channel": "enrich", "outcome": "phone_found"}, {"channel": "email", "outcome": "sent"}], "", "emailed"),
+    ([{"channel": "enrich", "outcome": "guessed"}], "", "unworked"),
 ])
 def test_tier_is_the_deepest_step_proven(history, stage, tier):
     assert tier_of(history, stage) == tier
@@ -57,6 +60,45 @@ def test_seller_history_is_whitelisted():
     assert history[1]["at"] == ""
     assert tier_of(history) == "connected"
     assert parse_history("nope") == [] and len(parse_history([{"channel": "mail", "outcome": "sent"}] * 500)) == 50
+
+
+def test_enrich_touches_survive_the_whitelist_and_prove_the_enriched_tier():
+    history = parse_history([{"channel": "enrich", "outcome": "email_found", "at": "2026-10-01"},
+                             {"channel": "enrich", "outcome": "made_up"}])
+    assert [h["outcome"] for h in history] == ["email_found"] and tier_of(history) == "enriched"
+    lead = lead_packages.parse_lead({"lead_id": "L1", "name": "Org", "tier": "enriched",
+                                     "contact_history": history})
+    assert lead["tier"] == "enriched"
+
+
+def test_a_buyer_scores_an_enriched_lead_against_an_enriched_promise():
+    from core import verify
+
+    ok = verify.score_lead(calls=[], events=[], email_statuses=["delivered"], seller_tier="enriched",
+                           promised_tier="enriched")
+    assert ok.status == "verified"
+    short = verify.score_lead(calls=[], events=[], email_statuses=[], seller_tier="unworked",
+                              promised_tier="enriched")
+    assert short.status == "failed"  # a history that doesn't prove the promise fails on its own
+    dead = verify.score_lead(calls=[{"outcome": "disconnected"}], events=[], email_statuses=[],
+                             seller_tier="enriched", promised_tier="enriched")
+    assert dead.status == "failed"
+
+
+def test_our_own_found_contact_makes_a_prospect_enriched_until_it_bounces(db):
+    from core import verify
+
+    campaign_id = db.upsert_campaign("depth", "x")
+    prospect_id = db.upsert_prospect(Prospect(name="Org", state="CA"))
+    outreach_id = db.upsert_outreach(prospect_id, campaign_id)
+    db.update_outreach(outreach_id, {"contact_email": "info@org.test"})
+    history, tier = contact_depth.history_for_prospect(db, prospect_id)
+    assert tier == "enriched" and [(h["channel"], h["outcome"]) for h in history] == [("enrich", "email_found")]
+
+    verify.record_event(db, prospect_id, "email_bounced", "info@org.test")
+    assert contact_depth.history_for_prospect(db, prospect_id) == ([], "unworked")
+    db.update_outreach(outreach_id, {"contact_phone": "512-555-0100"})
+    assert contact_depth.history_for_prospect(db, prospect_id)[0][0]["outcome"] == "phone_found"
 
 
 def test_seller_cannot_claim_a_deeper_tier_than_its_history():

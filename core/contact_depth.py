@@ -4,7 +4,11 @@ Contact depth: how far a lead has really been worked.
 A lead's value is the contact that has actually happened, so every lead
 carries a contact history and a tier, the deepest step that history proves:
 
-    mailed (1) < emailed (2) < phone_verified (3) < connected (4) < pitched (5)
+    enriched (1) < mailed (2) < emailed (3) < phone_verified (4) < connected (5) < pitched (6)
+
+`enriched` is the one tier that isn't a contact: an enricher found the
+organization's email or phone, and nothing has proved it wrong yet. Freshly
+generated leads (core/generator.py) start there.
 
 Package leads bring their history from the seller (parse_history). For our
 own prospects it's built from call_log, email_log and the pipeline stage
@@ -17,10 +21,10 @@ from __future__ import annotations
 import re
 from typing import Any, Optional
 
-TIERS = ["unworked", "mailed", "emailed", "phone_verified", "connected", "pitched"]
+TIERS = ["unworked", "enriched", "mailed", "emailed", "phone_verified", "connected", "pitched"]
 RANK = {t: i for i, t in enumerate(TIERS)}
 
-CHANNELS = {"mail", "email", "call", "sms"}
+CHANNELS = {"enrich", "mail", "email", "call", "sms"}
 
 # Call dispositions. The first group are today's call-log outcomes; the
 # second are the detailed codes the guarantee needs.
@@ -42,6 +46,7 @@ SPOKE_TO_PERSON = {"completed", "gatekeeper", "scheduled"}
 REACHED_MACHINE = {"voicemail", "answering_machine"}
 MAIL_OK = {"sent", "delivered", "in_transit"}
 EMAIL_OK = {"sent", "delivered", "opened", "clicked", "replied"}
+ENRICH_FOUND = {"email_found", "phone_found"}
 PITCHED_STAGES = {"engaged", "demo_scheduled", "proposal_sent", "closed_won"}
 
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}([T ][0-9:.]+)?$")
@@ -51,6 +56,8 @@ MAX_HISTORY = 50
 def touch_rank(touch: dict) -> int:
     """The deepest tier one contact proves."""
     channel, outcome = touch.get("channel"), touch.get("outcome")
+    if channel == "enrich" and outcome in ENRICH_FOUND:
+        return RANK["enriched"]
     if channel == "mail" and outcome in MAIL_OK:
         return RANK["mailed"]
     if channel == "email" and outcome in EMAIL_OK:
@@ -85,7 +92,9 @@ def parse_history(items: Any) -> list[dict]:
             continue
         if channel == "call" and outcome not in CALL_OUTCOMES:
             continue
-        if channel != "call" and outcome not in MAIL_OK | EMAIL_OK | {"returned", "bounced"}:
+        if channel == "enrich" and outcome not in ENRICH_FOUND:
+            continue
+        if channel not in ("call", "enrich") and outcome not in MAIL_OK | EMAIL_OK | {"returned", "bounced"}:
             continue
         at = str(item.get("at", ""))[:26]
         history.append({
@@ -132,6 +141,21 @@ def history_for_prospect(db, prospect_id: int) -> tuple[list[dict], str]:
         channel = _email_log_channel(sent["provider_message_id"])
         if channel:
             history.append({"channel": channel, "outcome": sent["status"] or "", "at": sent["sent_at"] or "",
+                            "decision_maker": False, "org_confirmed": False, "pitched": False})
+    # Contacts found but not yet used (the `enriched` tier) go after the real contacts.
+    bounced = {r["value"] for r in c.execute(
+        "SELECT value FROM contact_events WHERE prospect_id = ? AND kind = 'email_bounced'", (prospect_id,),
+    ).fetchall() if r["value"]}
+    for found in c.execute(
+        """SELECT contact_email, contact_phone, updated_at FROM outreach
+           WHERE prospect_id = ? AND (contact_email IS NOT NULL OR contact_phone IS NOT NULL)
+           ORDER BY updated_at""", (prospect_id,),
+    ).fetchall():
+        email = (found["contact_email"] or "").strip().lower()
+        outcome = "email_found" if email and email not in bounced else (
+            "phone_found" if (found["contact_phone"] or "").strip() else "")
+        if outcome:
+            history.append({"channel": "enrich", "outcome": outcome, "at": found["updated_at"] or "",
                             "decision_maker": False, "org_confirmed": False, "pitched": False})
     stages = [r["stage"] for r in c.execute(
         "SELECT stage FROM outreach WHERE prospect_id = ?", (prospect_id,)).fetchall()]

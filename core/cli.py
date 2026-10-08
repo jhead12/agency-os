@@ -29,6 +29,7 @@ Usage:
     agency-os accounts platform-key
     agency-os accounts create --ref org_42 --name "Acme Realty"
     agency-os searches run
+    agency-os generator run [--id 4]
     agency-os spend resolve --id 12 --status settled --tx 0x...
     agency-os connect --url https://your-app.up.railway.app --key aos_cli_...
     agency-os remote users invite --email rep@example.com --role Caller
@@ -44,7 +45,7 @@ from pathlib import Path
 
 import click
 
-from core import access
+from core import access, compliance
 from core.access import AccessError, OWNER_ROLE, SUPER_ADMIN_ROLE
 from core.campaign import discover_campaigns, sync_campaign_files
 from core.db import Database, redact_url
@@ -412,12 +413,20 @@ def test_send(ctx, campaign_name, to_email, script_name, prospect_id):
         channel = registry.get_channel(ch_key)
         if not channel or not channel.is_configured():
             continue
+        extra, sent_body = {}, body
+        if ch_key.startswith("email"):
+            if compliance.problem():
+                click.echo(f"  · {ch_key} skipped: {compliance.problem()}")
+                continue
+            sent_body = compliance.with_footer(body, to_email)
+            extra = {"unsubscribe_url": compliance.unsubscribe_url(to_email)}
         try:
             result = channel.send(
                 recipient={"email": to_email, "phone": "", "name": outreach.contact_name or ""},
                 subject=subject,
-                body=body,
+                body=sent_body,
                 metadata={
+                    **extra,
                     "campaign": campaign.db_name,
                     "outreach_id": 0,
                     "template_key": script.get("key", script_name),
@@ -918,6 +927,28 @@ def searches_run(ctx, limit):
     for s in finished:
         click.echo(f"  #{s['id']:<6} {s['type']:<7} {s['status']:<9} delivered {s['delivered']}/{s['max_results']}"
                    + (f"  ({s['error']})" if s["error"] else ""))
+
+
+@cli.group("generator")
+def generator_group():
+    """Lead package generator runs (core/generator.py). Super Admins start them at /admin/generator."""
+
+
+@generator_group.command("run")
+@click.option("--id", "run_id", type=int, default=None, help="Run this queued run (default: every queued run)")
+@click.pass_context
+def generator_run(ctx, run_id):
+    """Run queued generator runs now, e.g. one left queued by a restart."""
+    from core import generator
+
+    runner = generator.Runner(ctx.obj["db_url"] or None)
+    finished = [r for r in [runner.run(run_id)] if r] if run_id else runner.run_pending()
+    if not finished:
+        click.echo("No queued generator runs.")
+    for r in finished:
+        click.echo(f"  #{r['id']:<6} {r['status']:<9} found {r['found']}/{r['max_leads']}, "
+                   f"{r['enriched']} with a contact, {r['eligible']} sellable"
+                   + (f"  ({r['error']})" if r["error"] else ""))
 
 
 # ── Lead packages (x402) ───────────────────────────────────────────
