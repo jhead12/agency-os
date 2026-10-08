@@ -17,6 +17,6 @@ steps:
   - highlight: '#contributor_pool_pct'
     say: This share goes to the reps who built the leads, split by who found the contact, who qualified it and who sourced it.
   - highlight: 'button[value="preview"]'
-    say: Check the list first. It shows how many prospects qualify and their contact depth before anything is published.
+    say: Check the list first. It shows how many prospects qualify and their contact depth before anything is published. Leads whose contact came from Apollo or Hunter don't count; their terms forbid reselling it.
   - say: After you publish, packages and their income appear below, along with any buyers' claims. Replacements are automatic; refunds are always reviewed by hand.
   - pause: Your turn. Check one of your saved lists to see how many leads qualify.

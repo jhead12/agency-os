@@ -9,6 +9,7 @@ steps:
   - wait: {for: .contact-form}
   - highlight: 'form.contact-form[action$="/contact"]'
     say: Step 1, a contact on file. Leads without an email or phone are never sold. Whoever saves the current email or phone gets "found the contact" credit, worth 50% of the reps' share.
+  - say: Where the contact came from matters. Contacts found by Apollo or Hunter are fine for our own outreach, but their terms forbid reselling them, so those leads are never sold. Contacts from the prospect's own website, a call, or our scraper can be.
   - highlight: 'form[action$="/contact-event"]'
     say: If an email bounces, mark it here (or it's recorded automatically from webhooks). A bounced email keeps a lead out of every package until someone finds a new one.
   - highlight: .call-log-form
