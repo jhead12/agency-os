@@ -378,6 +378,9 @@ CREATE INDEX IF NOT EXISTS idx_package_claims_package ON package_claims(lead_pac
 -- do_not_sell: a person asked not to have their data sold (California Delete
 -- Act); they're never published, sold or sent as a replacement.
 ALTER TABLE prospects ADD COLUMN IF NOT EXISTS do_not_sell INTEGER NOT NULL DEFAULT 0;
+-- contact_sources: which enricher supplied each contact field ({"contact_email": "apollo", ...}).
+-- Fields from an enricher whose terms forbid resale (selling.NO_RESALE_SOURCES) are never sold.
+ALTER TABLE outreach ADD COLUMN IF NOT EXISTS contact_sources TEXT NOT NULL DEFAULT '{}';
 -- do_not_call: a person asked us not to phone or text them. Logging the
 -- do_not_call call outcome sets it; texts skip it and the call form warns.
 ALTER TABLE prospects ADD COLUMN IF NOT EXISTS do_not_call INTEGER NOT NULL DEFAULT 0;
@@ -663,6 +666,21 @@ CREATE TABLE IF NOT EXISTS search_results (
     is_new INTEGER NOT NULL DEFAULT 0,
     added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (search_id, prospect_id)
+);
+
+-- An account's own enricher API keys (core/credentials.py), AES-256-GCM encrypted
+-- under AGENCY_OS_CREDENTIALS_KEY, which is never stored here. key_id names the
+-- master key that encrypted the row; hint is the key's last 4 characters.
+CREATE TABLE IF NOT EXISTS account_credentials (
+    account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    secret TEXT NOT NULL,
+    key_id TEXT NOT NULL,
+    hint TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_used_at TIMESTAMP,
+    PRIMARY KEY (account_id, provider)
 );
 
 -- Lead package generator runs (core/generator.py): a Super Admin's criteria run
@@ -1309,6 +1327,13 @@ class Database:
             updates["contact_title"] = result.contact_title
         if updates:
             self.update_outreach(outreach_id, updates)
+            if result.source:
+                # Remember who supplied each field, so the seller can leave out what we may not resell
+                c.execute(
+                    "UPDATE outreach SET contact_sources = (COALESCE(contact_sources, '{}')::jsonb || ?::jsonb)::text "
+                    "WHERE id = ?",
+                    (json.dumps({field: result.source for field in updates}), outreach_id),
+                )
 
         # If the enricher discovered a website, save it back to the prospect
         if prospect_id and result.raw.get("website"):

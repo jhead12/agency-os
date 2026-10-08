@@ -16,8 +16,9 @@ What we sell, and the rules:
 - A package is published from a saved prospect list. Only leads we can stand
   behind go in: a contact on file, no bounced email, and our own contact
   history (calls, mail, email; the evidence a buyer can check) at or above
-  the promised tier. Leads marked do-not-sell, and leads we bought from
-  someone else, are never sold.
+  the promised tier. Leads marked do-not-sell, leads we bought from
+  someone else, and contacts supplied by an enricher whose terms forbid
+  resale (NO_RESALE_SOURCES: Apollo, Hunter) are never sold.
 - Leads are re-checked at each sale, so one that went bad since publishing
   isn't sold.
 - A royalty is only charged for a lead sold to that buyer, once per lead.
@@ -205,17 +206,33 @@ def _slug(title: str) -> str:
     return f"{base}-{secrets.token_hex(3)}"
 
 
+# Enrichers whose terms forbid reselling their data. A contact with any field they
+# supplied (outreach.contact_sources) is never published, sold or sent as a replacement.
+NO_RESALE_SOURCES = frozenset({"apollo", "hunter"})
+CONTACT_FIELDS = ("contact_name", "contact_email", "contact_phone", "contact_title")
+
+
+def _resellable(row) -> bool:
+    try:
+        sources = json.loads(row["contact_sources"] or "{}")
+    except ValueError:
+        return False
+    return not any(row[f] and sources.get(f) in NO_RESALE_SOURCES for f in CONTACT_FIELDS)
+
+
 def _check_lead(db, prospect_id: int, promised: str) -> tuple[bool, str, dict]:
-    """(eligible, our tier, contact) for one prospect, from evidence a buyer can verify."""
+    """(eligible, our tier, contact) for one prospect, from evidence a buyer can verify.
+    The contact is the most recent one we may resell."""
     history, _ = contact_depth.history_for_prospect(db, prospect_id)
     tier = contact_depth.tier_of(history)  # no stage: buyers can only check what's in the history
-    contact = db.conn.execute(
-        """SELECT contact_name, contact_email, contact_phone, contact_title FROM outreach
+    rows = db.conn.execute(
+        """SELECT contact_name, contact_email, contact_phone, contact_title, contact_sources FROM outreach
            WHERE prospect_id = ? AND (contact_email IS NOT NULL OR contact_phone IS NOT NULL)
-           ORDER BY updated_at DESC LIMIT 1""", (prospect_id,)).fetchone()
+           ORDER BY updated_at DESC""", (prospect_id,)).fetchall()
+    contact = next((r for r in rows if _resellable(r)), None)
     if contact is None or contact_depth.RANK[tier] < contact_depth.RANK.get(promised, 0):
         return False, tier, {}
-    contact = dict(contact)
+    contact = {f: contact[f] for f in CONTACT_FIELDS}
     if contact["contact_email"] and contact["contact_email"].lower() in verify.bounced_emails(db, prospect_id):
         return False, tier, {}
     return True, tier, contact
