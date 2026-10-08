@@ -209,6 +209,9 @@ ROUTE_RULES: dict[str, str] = {
     "POST /admin/payouts/{user_id}": OWNER,
     "GET /welcome/{token}": PUBLIC,   # one-time link; the token is the credential
     "POST /welcome/{token}": PUBLIC,
+    # CAN-SPAM opt-out (core/compliance.py): the signed token in the link is the credential.
+    "GET /unsubscribe": PUBLIC,
+    "POST /unsubscribe": PUBLIC,
     "GET /forgot-password": PUBLIC,
     "POST /forgot-password": PUBLIC,  # rate-limited; same answer whether or not the email exists
     "GET /reset-password/{token}": PUBLIC,  # one-time link; the token is the credential
