@@ -13,12 +13,23 @@ account already had is listed in the search's results but not billed again.
 - Cancelling a queued search ends it at once; a running one is asked to stop
   and the runner ends it after the current page.
 
-Search types are plugins in plugins/searches/<name>.py (task B3):
+Search types are plugins in plugins/searches/<name>.py (task B3). Adding a
+file there is all a new type needs: u9itus lists the types and builds its
+form from GET /api/v1/search-types.
 
     class CitySearch:
         key = "city"                       # the search's `type`
+        label = "Businesses in a city"     # shown to the customer
+        description = "..."
+        fields = [{"name": "city", "label": "City", "type": "text", "required": True, ...}]
+        attribution = "© OpenStreetMap contributors, ODbL"   # or None
         def validate(self, params: dict) -> dict: ...   # cleaned params, or ValueError (→ 422)
         def run(self, params: dict, ctx: SearchContext) -> Iterator[Prospect]: ...
+
+Usage (task B4) is read straight from the searches table, so its totals
+always equal the sum of the searches. An account may have at most
+AGENCY_OS_ACCOUNT_DAILY_PROSPECTS (default 2000) prospects delivered or
+reserved per day; a search past that is refused with SearchLimit (429).
 
 run() yields prospects and reports what it used with ctx.count(); the runner
 saves them, stops at max_results or when cancelled, and records the usage.
@@ -33,6 +44,7 @@ import json
 import os
 import re
 import traceback
+from datetime import date, timedelta
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -45,8 +57,9 @@ from core.db import Database
 from core.models import Prospect
 from core.registry import PluginRegistry
 
+# Without plugins (tests, and callers that don't pass any) these are the known
+# types and the settings each must have; with plugins, each plugin's `fields` say.
 TYPES = ("city", "rss", "scrape")
-# The settings each type must have. Each search plugin checks the rest (B5-B7).
 REQUIRED_PARAMS = {
     "city": ("city", "state", "query"),
     "rss": ("feed_url",),
@@ -56,6 +69,8 @@ MAX_RESULTS = 500
 MAX_PARAMS_BYTES = 4096
 FINISHED = ("done", "failed", "canceled")
 MAX_RUNNING_PER_ACCOUNT = 2
+DEFAULT_DAILY_PROSPECTS = 2000
+MAX_USAGE_DAYS = 366
 STALE_MINUTES = 10           # a running search with no heartbeat for this long was interrupted
 PLUGINS_DIR = Path(__file__).resolve().parent.parent / "plugins"
 USER_AGENT = "agency-os prospect search (+https://u9itus.com)"
@@ -70,21 +85,42 @@ class SearchConflict(SearchError):
     """The idempotency_key was already used for a search with different settings."""
 
 
+class SearchLimit(SearchError):
+    """The account's daily cap would be passed (section 5 of docs/U9ITUS_BILLING.md)."""
+
+
+def daily_cap() -> int:
+    try:
+        return max(1, int(os.environ.get("AGENCY_OS_ACCOUNT_DAILY_PROSPECTS", DEFAULT_DAILY_PROSPECTS)))
+    except ValueError:
+        return DEFAULT_DAILY_PROSPECTS
+
+
+def required_params(kind: str, available: Optional[dict] = None) -> tuple[str, ...]:
+    plugin = (available or {}).get(kind)
+    if plugin is not None and getattr(plugin, "fields", None) is not None:
+        return tuple(f["name"] for f in plugin.fields if f.get("required"))
+    return REQUIRED_PARAMS.get(kind, ())
+
+
 def _canonical(params: dict) -> str:
     return json.dumps(params, sort_keys=True, separators=(",", ":"))
 
 
-def validate(body: dict) -> tuple[str, dict, int, str]:
+def validate(body: dict, available: Optional[dict] = None) -> tuple[str, dict, int, str]:
     """(type, params, max_results, idempotency_key) from a create request, or SearchError."""
     kind = str(body.get("type") or "")
-    if kind not in TYPES:
-        raise SearchError(f"type must be one of: {', '.join(TYPES)}.")
+    known = sorted(available) if available is not None else TYPES
+    if kind not in known:
+        if kind in TYPES:
+            raise SearchError(f"{kind} searches aren't available yet.")
+        raise SearchError(f"type must be one of: {', '.join(known)}.")
     params = body.get("params")
     if not isinstance(params, dict):
         raise SearchError("params must be a JSON object.")
     if len(_canonical(params).encode()) > MAX_PARAMS_BYTES:
         raise SearchError(f"params must be at most {MAX_PARAMS_BYTES} bytes.")
-    missing = [k for k in REQUIRED_PARAMS[kind] if params.get(k) in (None, "", [], {})]
+    missing = [k for k in required_params(kind, available) if params.get(k) in (None, "", [], {})]
     if missing:
         raise SearchError(f"A {kind} search needs params: {', '.join(missing)}.")
     max_results = body.get("max_results")
@@ -106,15 +142,33 @@ def plugins() -> dict[str, Any]:
         registry = PluginRegistry()
         registry.discover(str(PLUGINS_DIR), categories=("searches",))
         _plugins = {k: v for k, v in registry.searches.items()
-                    if k in TYPES and callable(getattr(v, "validate", None)) and callable(getattr(v, "run", None))}
+                    if callable(getattr(v, "validate", None)) and callable(getattr(v, "run", None))}
     return _plugins
+
+
+def describe(kind: str, plugin) -> dict:
+    """One search type as GET /api/v1/search-types shows it."""
+    return {
+        "type": kind,
+        "label": getattr(plugin, "label", kind),
+        "description": getattr(plugin, "description", ""),
+        "fields": getattr(plugin, "fields", None)
+        or [{"name": n, "label": n, "type": "text", "required": True} for n in REQUIRED_PARAMS.get(kind, ())],
+        "attribution": getattr(plugin, "attribution", None),
+        "max_results": MAX_RESULTS,
+    }
+
+
+def types(available: Optional[dict] = None) -> list[dict]:
+    available = plugins() if available is None else available
+    return [describe(kind, available[kind]) for kind in sorted(available)]
 
 
 def create(db, account_id: int, body: dict, available: Optional[dict] = None) -> tuple[dict, bool]:
     """Queue a search for an account. Returns (search, created); created is False
     when this idempotency_key already made the same search. With `available`
     (search type → plugin), the type must have a plugin and its validate() runs."""
-    kind, params, max_results, key = validate(body)
+    kind, params, max_results, key = validate(body, available)
     if available is not None:
         plugin = available.get(kind)
         if plugin is None:
@@ -124,18 +178,66 @@ def create(db, account_id: int, body: dict, available: Optional[dict] = None) ->
         except ValueError as e:
             raise SearchError(str(e)) from None
     c = db.conn
-    row = c.execute(
-        """INSERT INTO searches (account_id, idempotency_key, type, params, max_results)
-           VALUES (?, ?, ?, ?, ?) ON CONFLICT (account_id, idempotency_key) DO NOTHING RETURNING *""",
-        (account_id, key, kind, _canonical(params), max_results),
+    with c.raw.transaction():
+        # One create at a time per account, so two can't both slip under the daily cap.
+        c.execute("SELECT pg_advisory_xact_lock(?, ?)", (_CAP_LOCK, account_id))
+        existing = c.execute("SELECT * FROM searches WHERE account_id = ? AND idempotency_key = ?",
+                             (account_id, key)).fetchone()
+        if existing is not None:
+            existing = dict(existing)
+            if (existing["type"], existing["params"], existing["max_results"]) != (kind, _canonical(params), max_results):
+                raise SearchConflict("This idempotency_key was already used for a different search.")
+            return existing, False  # a retry is never refused by the cap
+        used = committed_today(db, account_id)
+        if used + max_results > daily_cap():
+            raise SearchLimit(f"This account can get {daily_cap()} prospects a day and has "
+                              f"{max(0, daily_cap() - used)} left today. Lower max_results or try tomorrow.")
+        row = c.execute(
+            """INSERT INTO searches (account_id, idempotency_key, type, params, max_results)
+               VALUES (?, ?, ?, ?, ?) RETURNING *""",
+            (account_id, key, kind, _canonical(params), max_results),
+        ).fetchone()
+    return dict(row), True
+
+
+_CAP_LOCK = 7_402_004  # advisory lock namespace for the daily cap
+
+
+def committed_today(db, account_id: int) -> int:
+    """Prospects delivered today by finished searches, plus max_results of the
+    ones still queued or running (they may deliver up to that)."""
+    row = db.conn.execute(
+        """SELECT COALESCE(SUM(CASE WHEN status IN ('queued', 'running') THEN max_results
+                                   ELSE delivered END), 0) AS n
+           FROM searches WHERE account_id = ? AND created_at >= CURRENT_DATE""",
+        (account_id,),
     ).fetchone()
-    if row is not None:
-        return dict(row), True
-    existing = dict(c.execute("SELECT * FROM searches WHERE account_id = ? AND idempotency_key = ?",
-                              (account_id, key)).fetchone())
-    if (existing["type"], existing["params"], existing["max_results"]) != (kind, _canonical(params), max_results):
-        raise SearchConflict("This idempotency_key was already used for a different search.")
-    return existing, False
+    return int(row["n"])
+
+
+def usage(db, start: date, end: date, account_id: Optional[int] = None) -> list[dict]:
+    """Per account per day (the day a search was created), start..end inclusive."""
+    if end < start:
+        raise SearchError("from must be on or before to.")
+    if (end - start).days >= MAX_USAGE_DAYS:
+        raise SearchError(f"Ask for at most {MAX_USAGE_DAYS} days at a time.")
+    where, args = "s.created_at >= ? AND s.created_at < ?", [start, end + timedelta(days=1)]
+    if account_id is not None:
+        where += " AND s.account_id = ?"
+        args.append(account_id)
+    rows = db.conn.execute(
+        f"""SELECT a.external_ref, CAST(s.created_at AS DATE) AS day, COUNT(*) AS searches,
+                   SUM(s.delivered) AS delivered, SUM(s.pages_fetched) AS pages_fetched,
+                   SUM(s.api_requests) AS api_requests, SUM(s.cost_cents) AS cost_cents
+            FROM searches s JOIN accounts a ON a.id = s.account_id
+            WHERE {where}
+            GROUP BY a.external_ref, CAST(s.created_at AS DATE)
+            ORDER BY day, a.external_ref""",
+        args,
+    ).fetchall()
+    return [{"external_ref": r["external_ref"], "day": r["day"].isoformat(), "searches": int(r["searches"]),
+             "delivered": int(r["delivered"]), "pages_fetched": int(r["pages_fetched"]),
+             "api_requests": int(r["api_requests"]), "cost_cents": int(r["cost_cents"])} for r in rows]
 
 
 def get(db, account_id: int, search_id: int) -> Optional[dict]:

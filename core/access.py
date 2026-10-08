@@ -194,6 +194,8 @@ ROUTE_RULES: dict[str, str] = {
     "POST /api/v1/searches": PUBLIC,
     "GET /api/v1/searches/{search_id}": PUBLIC,
     "POST /api/v1/searches/{search_id}/cancel": PUBLIC,
+    "GET /api/v1/search-types": PUBLIC,
+    "GET /api/v1/usage": PUBLIC,
     "GET /admin/selling": "packages.sell",
     "POST /admin/selling/publish": "packages.sell",
     "POST /admin/selling/{package_id}/active": "packages.sell",
