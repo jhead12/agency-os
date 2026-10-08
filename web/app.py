@@ -707,7 +707,7 @@ async def calendar_page(
         "this_week": sum(1 for e in events if e["date"].date() <= (today + timedelta(days=7))),
     }
 
-    feed_url = f"http://localhost:8000/calendar.ics?days={days}"
+    feed_url = f"{site_url()}/calendar.ics?days={days}"
 
     return templates.TemplateResponse(request, "calendar.html", {
         "events": events,
