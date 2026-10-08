@@ -566,6 +566,7 @@ SMTP_FROM=
 # Contact enrichment
 APOLLO_API_KEY=
 HUNTER_API_KEY=
+FIRECRAWL_API_KEY=
 
 # u9itus portal integration
 U9ITUS_BASE_URL=https://www.u9itus.com
