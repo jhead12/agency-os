@@ -144,6 +144,37 @@ def can_dial(user, campaign) -> bool:
                 and user.sees_campaign(campaign))
 
 
+# How a call ended → the Log call form's pre-selected outcome (core/contact_depth.CALL_OUTCOMES).
+# Only a guess: the rep can change it.
+OUTCOME_GUESS = {"completed": "completed", "no-answer": "no_answer", "busy": "busy",
+                 "failed": "disconnected", "canceled": "disconnected"}
+
+
+def call_button(user, campaign, contact_phone, prospect, do_not_call: bool) -> Optional[dict]:
+    """What the softphone Call button needs for one outreach, or None to keep the tel: link.
+    Carries no phone number: the server looks it up when the call is placed."""
+    if not e164(contact_phone) or not can_dial(user, campaign):
+        return None
+    return {
+        "disclosure": disclosure_text(campaign.voice.company_name, user.name),
+        "state_label": state_label(prospect.state),
+        "blocked": DO_NOT_CALL if do_not_call else "",
+    }
+
+
+def log_prefill(call) -> dict:
+    """Log call form values from a finished dashboard call."""
+    seconds = call["duration_seconds"] or 0
+    return {
+        "voice_call_id": call["id"],
+        "outreach_id": call["outreach_id"],
+        "outcome": OUTCOME_GUESS.get(call["status"], ""),
+        "duration_minutes": max(1, -(-seconds // 60)) if seconds else "",
+        "seconds": seconds,
+        "status": call["status"],
+    }
+
+
 # ── Calls ──────────────────────────────────────────────────────────────
 
 

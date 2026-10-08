@@ -1185,13 +1185,19 @@ async def record_call(
     next_step_date: str = Form(default=""),
     voicemail_left: str = Form(default=""),
     notes: str = Form(default=""),
+    voice_call_id: int = Form(default=0),
 ):
-    """Record a completed phone call."""
+    """Record a completed phone call (and link it to the dashboard call it came from, if any)."""
     from core.models import CallLog
     require_visible_prospect(request, prospect_id)
     if outcome not in contact_depth.CALL_OUTCOMES:
         return _back(f"/prospects/{prospect_id}", error="Pick a call outcome from the list.")
     db = get_db()
+    if voice_call_id:
+        placed = db.get_voice_call(voice_call_id)
+        if (not placed or placed["user_id"] != current_user(request).id
+                or placed["outreach_id"] != outreach_id or placed["call_log_id"]):
+            return _back(f"/prospects/{prospect_id}", error="That dashboard call isn't yours, or it's already logged.")
 
     from datetime import datetime as _dt
     nsd = None
@@ -1220,7 +1226,9 @@ async def record_call(
         called_by=current_user(request).name,
         called_by_user_id=current_user(request).id,
     )
-    db.log_call(call)
+    call_id = db.log_call(call)
+    if voice_call_id:
+        db.link_voice_call(voice_call_id, call_id, current_user(request).id)
     return RedirectResponse(url=f"/prospects/{prospect_id}", status_code=303)
 
 
@@ -1338,6 +1346,11 @@ async def call_scripts(
                ORDER BY p.name LIMIT 100""", hidden_params,
         ).fetchall()
 
+    voice_button = None
+    if prospect and outreach_rows and not print:
+        voice_button = _voice_buttons(request, outreach_rows[:1], prospect,
+                                      db.do_not_call(prospect.id)).get(outreach_rows[0]["id"])
+
     template_name = "call_scripts_print.html" if print else "call_scripts.html"
 
     return templates.TemplateResponse(request, template_name, {
@@ -1346,6 +1359,7 @@ async def call_scripts(
         "prospect_options": prospect_options,
         "stage_filter": stage,
         "now": _dt.now().strftime("%B %d, %Y at %I:%M %p"),
+        "voice_button": voice_button,
     })
 
 
@@ -1431,6 +1445,15 @@ async def prospect_detail(request: Request, prospect_id: int):
         key=lambda e: e.get("timestamp", ""), reverse=True,
     )
 
+    do_not_call = db.do_not_call(prospect_id)
+    voice_buttons = _voice_buttons(request, outreach_rows, prospect, do_not_call)
+    voice_prefill = None
+    if request.query_params.get("voice_call", "").isdigit():
+        placed = db.get_voice_call(int(request.query_params["voice_call"]))
+        if (placed and placed["user_id"] == current_user(request).id
+                and placed["prospect_id"] == prospect_id and not placed["call_log_id"]):
+            voice_prefill = {**voice.log_prefill(placed), "script_key": request.query_params.get("script", "")}
+
     lead_package = lead_packages.package_info(prospect)
     if lead_package:
         row = db.get_lead_package(int(lead_package["lead_package_id"]))
@@ -1447,7 +1470,9 @@ async def prospect_detail(request: Request, prospect_id: int):
         "team": [u for u in db.list_users() if u.get("is_active")] if current_user(request).can("packages.sell") else [],
         "do_not_sell": bool(db.conn.execute("SELECT do_not_sell FROM prospects WHERE id = ?",
                                             (prospect_id,)).fetchone()["do_not_sell"]),
-        "do_not_call": db.do_not_call(prospect_id),
+        "do_not_call": do_not_call,
+        "voice_buttons": voice_buttons,
+        "voice_prefill": voice_prefill,
         "agent_panel": {"personas": list(agents.load_personas().values()),
                         "tasks": agents.all_tasks(agents.load_personas().values()),
                         "model": llm.describe()} if current_user(request).uses_ai("agents.use") else None,
@@ -1467,6 +1492,20 @@ async def prospect_detail(request: Request, prospect_id: int):
         "call_history": call_history,
         "activity_logs": activity_logs,
     })
+
+
+def _voice_buttons(request: Request, outreach_rows, prospect, do_not_call: bool) -> dict[int, dict]:
+    """Outreach id → the softphone Call button, for rows this user dials from the
+    dashboard (core/voice.py). Rows not in it keep their tel: link."""
+    user = current_user(request)
+    campaigns = {c.db_name: c for c in get_campaigns()}
+    buttons = {}
+    for o in outreach_rows:
+        campaign = campaigns.get(o["campaign_name"])
+        button = campaign and voice.call_button(user, campaign, o["contact_phone"], prospect, do_not_call)
+        if button:
+            buttons[o["id"]] = {**button, "outreach_id": o["id"], "prospect_id": prospect.id}
+    return buttons
 
 
 def _plugin_registry() -> PluginRegistry:
@@ -2155,6 +2194,19 @@ async def voice_disclosure_read(request: Request, voice_call_id: int):
     if not voice.confirm_disclosure(get_db(), voice_call_id, current_user(request)):
         return JSONResponse({"detail": "Call not found"}, status_code=404)
     return JSONResponse({"ok": True})
+
+
+@app.get("/voice/calls/{provider_key}/{call_sid}")
+async def voice_call_status(request: Request, provider_key: str, call_sid: str):
+    """The rep's own call, by the provider's call ID: the browser knows only that.
+    Used for the Disclosure read button and to open the Log call form after hang-up."""
+    call = get_db().get_voice_call_by_sid(provider_key, call_sid)
+    if not call or call["user_id"] != current_user(request).id:
+        return JSONResponse({"detail": "Call not found"}, status_code=404)
+    return JSONResponse({"id": call["id"], "status": call["status"], "duration_seconds": call["duration_seconds"],
+                         "outreach_id": call["outreach_id"], "prospect_id": call["prospect_id"],
+                         "disclosure_read": bool(call["disclosure_read_at"])},
+                        headers={"Cache-Control": "no-store"})
 
 
 async def _voice_webhook(request: Request, provider_key: str):

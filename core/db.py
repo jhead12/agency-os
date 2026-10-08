@@ -1502,6 +1502,16 @@ class Database:
             ).fetchone()
         return row is not None
 
+    def link_voice_call(self, voice_call_id: int, call_log_id: int, user_id: int) -> bool:
+        """Attach the rep's call log to their dashboard call, once."""
+        with self.transaction() as c:
+            row = c.execute(
+                """UPDATE voice_calls SET call_log_id = ?
+                   WHERE id = ? AND user_id = ? AND call_log_id IS NULL RETURNING id""",
+                (call_log_id, voice_call_id, user_id),
+            ).fetchone()
+        return row is not None
+
     def mark_disclosure_read(self, voice_call_id: int, user_id: int) -> bool:
         """Set disclosure_read_at (the first time only) on a call this user placed."""
         with self.transaction() as c:

@@ -296,3 +296,102 @@ def test_disclosure_read_only_by_the_rep_who_placed_the_call(setup):
     assert first
     boss.post(f"/voice/calls/{row['id']}/disclosure", headers=origin)
     assert call_rows(db)[0]["disclosure_read_at"] == first  # the first confirmation stands
+
+
+# ── V2: Call button, call lookup, and the Log call form ───────────────
+
+ORIGIN = {"origin": "http://testserver"}
+
+
+def test_super_admin_gets_the_softphone_button_without_the_number(setup):
+    pid, oid = setup["outreach"]()
+    page = client_for("boss@x.com").get(f"/prospects/{pid}").text
+    assert f'data-outreach-id="{oid}"' in page and 'class="btn btn-sm call-link voice-call"' in page
+    contact_form = page[page.index('name="contact_phone"'):page.index("</form>", page.index('name="contact_phone"'))]
+    assert "voice-call" in contact_form and "tel:" not in contact_form  # the button replaces the tel: link
+    button = page[page.index("voice-call"):page.index("</button>", page.index("voice-call"))]
+    assert "555" not in button and "CA: all-party consent" in button and "Acme Outreach" in button
+    assert "/static/dialer.js" in page and "twilio-voice-2.18.5.min.js" in page
+
+    scripts = client_for("boss@x.com").get(f"/call-scripts?prospect_id={pid}").text
+    assert f'data-outreach-id="{oid}"' in scripts and "tel:" not in scripts.split("info-bar-right")[1][:600]
+
+
+def test_everyone_else_keeps_the_tel_link(setup, monkeypatch):
+    pid, _ = setup["outreach"]()
+    page = client_for("owner@x.com").get(f"/prospects/{pid}").text
+    assert 'href="tel:+12135550100"' in page and "voice-call" not in page and "dialer.js" not in page
+
+    monkeypatch.delenv("TWILIO_API_KEY_SID")  # voice not set up: even a Super Admin gets tel:
+    page = client_for("boss@x.com").get(f"/prospects/{pid}").text
+    assert 'href="tel:+12135550100"' in page and "voice-call" not in page
+
+
+def test_do_not_call_disables_the_button(setup):
+    pid, _ = setup["outreach"]()
+    setup["db"].set_do_not_call(None, pid, True)
+    page = client_for("boss@x.com").get(f"/prospects/{pid}").text
+    assert f'disabled title="{voice.DO_NOT_CALL}"' in page and "(do not call)" in page
+
+
+def test_lookup_returns_only_the_reps_own_call(setup):
+    db = setup["db"]
+    pid, oid = setup["outreach"]()
+    dial(client_for(), setup["boss"], oid)
+    post_signed(client_for(), "/webhooks/voice/twilio/status",
+                {"CallSid": "CA1", "DialCallStatus": "no-answer", "DialCallDuration": "0"})
+    body = client_for("boss@x.com").get("/voice/calls/twilio/CA1").json()
+    assert body["status"] == "no-answer" and body["outreach_id"] == oid and body["prospect_id"] == pid
+    assert body["disclosure_read"] is False
+    make_user(db, "boss2@x.com", access.SUPER_ADMIN_ROLE)
+    assert client_for("boss2@x.com").get("/voice/calls/twilio/CA1").status_code == 404
+    assert client_for("boss@x.com").get("/voice/calls/twilio/CA404").status_code == 404
+    assert client_for("owner@x.com").get("/voice/calls/twilio/CA1").status_code == 403
+
+
+def test_log_form_is_prefilled_and_the_call_is_linked_once(setup):
+    db = setup["db"]
+    pid, oid = setup["outreach"]()
+    dial(client_for(), setup["boss"], oid)
+    post_signed(client_for(), "/webhooks/voice/twilio/status",
+                {"CallSid": "CA1", "DialCallStatus": "completed", "DialCallDuration": "184"})
+    [row] = call_rows(db)
+    boss = client_for("boss@x.com")
+
+    page = boss.get(f"/prospects/{pid}?voice_call={row['id']}&script=phone_cold_call").text
+    form = page[page.index(f'id="log-call-{oid}"'):page.index("</form>", page.index(f'id="log-call-{oid}"'))]
+    assert f'name="voice_call_id" value="{row["id"]}"' in form
+    assert 'value="completed" selected' in form and 'value="4"' in form  # 184 s rounds up to 4 min
+    assert 'value="phone_cold_call" selected' in form and "3 min 4 s" in form
+
+    # Another rep can't see it pre-filled or log against it
+    make_user(db, "boss2@x.com", access.SUPER_ADMIN_ROLE)
+    other = client_for("boss2@x.com")
+    assert "voice_call_id" not in other.get(f"/prospects/{pid}?voice_call={row['id']}").text
+    log = {"prospect_id": pid, "outreach_id": oid, "campaign_id": setup["campaign_id"],
+           "outcome": "completed", "voice_call_id": row["id"]}
+    r = other.post("/call-log/record", data=log, headers=ORIGIN)
+    assert "already%20logged" in r.headers["location"] or "isn" in r.headers["location"]
+    assert db.conn.execute("SELECT COUNT(*) FROM call_log").fetchone()[0] == 0
+
+    # The rep who placed it logs it once; a second log against the same call is refused
+    boss.post("/call-log/record", data=log, headers=ORIGIN)
+    call_log_id = db.conn.execute("SELECT id FROM call_log").fetchone()["id"]
+    assert call_rows(db)[0]["call_log_id"] == call_log_id
+    r = boss.post("/call-log/record", data=log, headers=ORIGIN)
+    assert "error=" in r.headers["location"]
+    assert db.conn.execute("SELECT COUNT(*) FROM call_log").fetchone()[0] == 1
+    assert "voice_call_id" not in boss.get(f"/prospects/{pid}?voice_call={row['id']}").text
+
+
+def test_log_against_a_call_for_another_outreach_is_refused(setup):
+    db = setup["db"]
+    pid, oid = setup["outreach"]()
+    _, other_oid = setup["outreach"](name="Other Org")
+    dial(client_for(), setup["boss"], other_oid)
+    [row] = call_rows(db)
+    r = client_for("boss@x.com").post("/call-log/record", headers=ORIGIN, data={
+        "prospect_id": pid, "outreach_id": oid, "campaign_id": setup["campaign_id"],
+        "outcome": "completed", "voice_call_id": row["id"]})
+    assert "error=" in r.headers["location"]
+    assert db.conn.execute("SELECT COUNT(*) FROM call_log").fetchone()[0] == 0

@@ -1182,6 +1182,21 @@ table.sortable th {
 a.call-link:not(.btn) { color: var(--accent); }
 .call-log-highlight { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 8px; transition: outline-color 0.5s; }
 
+/* Softphone call bar (web/static/dialer.js) */
+.call-bar {
+    position: fixed; right: 16px; bottom: 16px; z-index: 1000;
+    width: min(380px, calc(100vw - 32px));
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45); padding: 14px; display: grid; gap: 12px;
+}
+.call-bar-top { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.call-bar-timer { margin-left: auto; font-variant-numeric: tabular-nums; }
+.call-bar-disclosure { border-left: 3px solid var(--yellow); padding-left: 10px; display: grid; gap: 8px; justify-items: start; }
+.call-bar-disclosure p { font-size: 16px; line-height: 1.45; margin: 0; }
+.call-bar-state { font-size: 12px; color: var(--yellow); }
+.call-bar-controls { display: flex; gap: 8px; }
+.call-bar .btn-danger { background: var(--red); color: #fff; border: 1px solid var(--red); }
+
 /* ── Command console (/console) ── */
 .console {
     background: #0a0c11;

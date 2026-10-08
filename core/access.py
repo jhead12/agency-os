@@ -179,6 +179,7 @@ ROUTE_RULES: dict[str, str] = {
     # Browser calling: Super Admins only until dialing opens to Owners (docs/BROWSER_CALLING.md, V8).
     "GET /voice/token": SUPER_ADMIN,
     "POST /voice/calls/{voice_call_id}/disclosure": SUPER_ADMIN,  # and only the rep who placed the call
+    "GET /voice/calls/{provider_key}/{call_sid}": SUPER_ADMIN,   # the rep's own call: status after hang-up
     # Selling: the x402 provider endpoints are public; payment or a claim token authorizes them.
     "GET /x402/packages": PUBLIC,
     "GET /x402/packages/{slug}/leads": PUBLIC,
