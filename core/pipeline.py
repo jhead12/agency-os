@@ -15,7 +15,7 @@ from typing import Optional
 
 from core.campaign import CadenceStep, CampaignConfig, discover_campaigns
 from core.db import Database
-from core import lead_packages
+from core import compliance, lead_packages
 from core.models import Prospect, SendResult
 from core.protocols import DemoPortalProduct, portal_product
 from core.registry import PluginRegistry
@@ -125,13 +125,17 @@ class Pipeline:
         instead of the prospect's real email. This lets you test the full pipeline
         (scripts, personalization, sending) without emailing real prospects.
         """
-        stats = {"sent": 0, "skipped": 0, "failed": 0, "no_contact": 0, "royalty_blocked": 0}
+        stats = {"sent": 0, "skipped": 0, "failed": 0, "no_contact": 0, "royalty_blocked": 0, "suppressed": 0}
         campaign_id = self.db.get_campaign_id(campaign.db_name)
         if not campaign_id:
             return {**stats, "error": "campaign not found"}
 
         due = self.db.get_due_outreach(campaign.db_name, limit, stages=campaign.sequence_stages)
         print(f"  → {len(due)} prospects due for outreach")
+        # Email channels don't send without an unsubscribe link and postal address
+        email_blocked = compliance.problem()
+        if email_blocked and not dry_run:
+            print(f"  ! Email channels off: {email_blocked}")
 
         for outreach in due:
             # Need some way to reach them — if not, skip (or enrich)
@@ -195,12 +199,25 @@ class Pipeline:
             # Send via the first configured channel that can reach them
             # (a channel returns "skipped" when e.g. there's no phone number)
             result = None
+            suppressed = False
+            sent_body = body
             for ch_key in step.channels or campaign.channels:
                 if ch_key.startswith("sms") and (not gate.sms_allowed or self.db.do_not_call(prospect.id)):
                     continue
                 channel = self.registry.get_channel(ch_key)
                 if not channel or not channel.is_configured():
                     continue
+                extra = {}
+                sent_body = body
+                if ch_key.startswith("email"):
+                    if email_blocked:
+                        continue
+                    # The real contact's opt-out counts even when test mode redirects the send
+                    if self.db.email_suppressed(send_email) or self.db.email_suppressed(outreach.contact_email):
+                        suppressed = True
+                        continue
+                    sent_body = compliance.with_footer(body, send_email)
+                    extra = {"unsubscribe_url": compliance.unsubscribe_url(send_email)}
                 try:
                     result = channel.send(
                         recipient={
@@ -218,8 +235,9 @@ class Pipeline:
                             }),
                         },
                         subject=subject,
-                        body=body,
+                        body=sent_body,
                         metadata={
+                            **extra,
                             "campaign": campaign.db_name,
                             "outreach_id": outreach.id,
                             "template_key": script.get("key", step.script),
@@ -237,6 +255,10 @@ class Pipeline:
                 if result.status != "skipped":
                     break
 
+            if suppressed and (result is None or result.status == "skipped"):
+                print(f"  · {outreach.contact_email} unsubscribed; not emailed")
+                stats["suppressed"] += 1
+                continue
             if result is None:
                 print(f"  ! No configured channel for {outreach.id}")
                 stats["failed"] += 1
@@ -252,7 +274,7 @@ class Pipeline:
                 campaign_id=campaign_id,
                 template_key=script.get("key", step.script),
                 subject=subject,
-                body=body,
+                body=sent_body,
                 result=result,
             )
 

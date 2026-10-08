@@ -694,6 +694,16 @@ CREATE TABLE IF NOT EXISTS package_run_leads (
     added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (run_id, prospect_id)
 );
+
+-- Addresses that must never get outreach email again (core/compliance.py).
+-- email is stored lowercased. The listmonk sync (docs/LISTMONK_INTEGRATION.md)
+-- will write here too.
+CREATE TABLE IF NOT EXISTS email_suppressions (
+    email TEXT PRIMARY KEY,
+    reason TEXT NOT NULL,          -- unsubscribed | blocklisted | bounced | complaint | manual
+    source TEXT NOT NULL,          -- link | listmonk | smartlead | manual
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 
@@ -1451,6 +1461,29 @@ class Database:
         with c.raw.transaction():
             c.execute("UPDATE prospects SET do_not_call = ? WHERE id = ?", (int(flag), prospect_id))
             self._audit(c, user, "prospect.do_not_call", "prospect", prospect_id, {"do_not_call": flag})
+
+    def suppress_email(self, email: str, reason: str, source: str) -> bool:
+        """Stop all outreach email to an address. True if it's newly suppressed."""
+        email = (email or "").strip().lower()
+        if not email:
+            return False
+        c = self.conn
+        with c.raw.transaction():
+            row = c.execute(
+                """INSERT INTO email_suppressions (email, reason, source) VALUES (?, ?, ?)
+                   ON CONFLICT (email) DO NOTHING RETURNING email""",
+                (email, reason, source),
+            ).fetchone()
+            if row:
+                self._audit(c, None, "email.suppressed", "email", None,
+                            {"email": email, "reason": reason, "source": source})
+        return bool(row)
+
+    def email_suppressed(self, email: str) -> bool:
+        email = (email or "").strip().lower()
+        return bool(email) and self.conn.execute(
+            "SELECT 1 FROM email_suppressions WHERE email = ?", (email,)
+        ).fetchone() is not None
 
     def do_not_call(self, prospect_id: int) -> bool:
         row = self.conn.execute("SELECT do_not_call FROM prospects WHERE id = ?", (prospect_id,)).fetchone()

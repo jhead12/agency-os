@@ -59,7 +59,7 @@ from core.protocols import portal_product
 from plugins.channels.lob_direct_mail import TEMPLATE_ID_RE, lob_template_url
 from core.jobs import JobRunner, configured_jobs, jobs_enabled
 from core import (
-    accounts, agents, claims, console, contact_depth, evidence, lead_packages, llm, mcp_auth, panels, payments,
+    accounts, agents, claims, compliance, console, contact_depth, evidence, lead_packages, llm, mcp_auth, panels, payments,
     generator, plugin_pages, plugin_panels, royalties, searches, selling,
     tools, verify, workflows,
 )
@@ -2898,6 +2898,31 @@ async def accept_welcome(
     confirm_password: str = Form(...),
 ):
     return _accept_set_password(request, token, new_password, confirm_password, reset=False)
+
+
+# ── Unsubscribe (core/compliance.py): no login; the link's token authorizes ─
+
+
+@app.get("/unsubscribe", response_class=HTMLResponse)
+async def unsubscribe_page(request: Request, e: str = Query(default=""), t: str = Query(default="")):
+    """Asks before unsubscribing, so link scanners that open every URL don't opt people out."""
+    ok = compliance.token_ok(e, t)
+    return templates.TemplateResponse(request, "unsubscribe.html", {
+        "email": compliance.normalize(e), "token": t, "valid": ok, "done": False,
+    }, status_code=200 if ok else 400)
+
+
+@app.post("/unsubscribe", response_class=HTMLResponse)
+async def unsubscribe(request: Request, e: str = Query(default=""), t: str = Query(default="")):
+    """The page's button and mail clients' one-click List-Unsubscribe POST both land here."""
+    if not compliance.token_ok(e, t):
+        return templates.TemplateResponse(request, "unsubscribe.html", {
+            "email": "", "token": "", "valid": False, "done": False,
+        }, status_code=400)
+    await run_in_threadpool(get_db().suppress_email, e, "unsubscribed", "link")
+    return templates.TemplateResponse(request, "unsubscribe.html", {
+        "email": compliance.normalize(e), "token": "", "valid": True, "done": True,
+    })
 
 
 @app.get("/forgot-password", response_class=HTMLResponse)

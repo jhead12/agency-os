@@ -45,7 +45,7 @@ from pathlib import Path
 
 import click
 
-from core import access
+from core import access, compliance
 from core.access import AccessError, OWNER_ROLE, SUPER_ADMIN_ROLE
 from core.campaign import discover_campaigns, sync_campaign_files
 from core.db import Database, redact_url
@@ -413,12 +413,20 @@ def test_send(ctx, campaign_name, to_email, script_name, prospect_id):
         channel = registry.get_channel(ch_key)
         if not channel or not channel.is_configured():
             continue
+        extra, sent_body = {}, body
+        if ch_key.startswith("email"):
+            if compliance.problem():
+                click.echo(f"  · {ch_key} skipped: {compliance.problem()}")
+                continue
+            sent_body = compliance.with_footer(body, to_email)
+            extra = {"unsubscribe_url": compliance.unsubscribe_url(to_email)}
         try:
             result = channel.send(
                 recipient={"email": to_email, "phone": "", "name": outreach.contact_name or ""},
                 subject=subject,
-                body=body,
+                body=sent_body,
                 metadata={
+                    **extra,
                     "campaign": campaign.db_name,
                     "outreach_id": 0,
                     "template_key": script.get("key", script_name),
