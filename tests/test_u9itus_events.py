@@ -237,3 +237,120 @@ def test_emails_use_the_provisioned_demo_link(world):
     variables = pipeline._build_variables(campaign, pipeline.db.get_prospect(pid), pipeline.db.get_outreach(oid))
 
     assert variables["demo_link"] == "https://u9.example/portal/org-x?t=abc"
+
+
+# ── Product-defined event effects (core/protocols.py event_effect) ──────
+
+from core.protocols import EventEffect  # noqa: E402
+from plugins.products.u9itus_voter_guide import U9itusVoterGuideProduct  # noqa: E402
+
+
+def paid(event_id, prospect_id, plan="pro"):
+    return {**event(event_id, "subscription.activated", prospect_id),
+            "data": {"plan": plan, "amount_cents": 150000, "cycle": "2026-general"}}
+
+
+def test_a_paid_plan_flags_the_deal_and_records_plan_and_amount(world):
+    pipeline, campaign, product, add_prospect, row = world
+    product.event_effect = U9itusVoterGuideProduct().event_effect
+    pid, oid = add_prospect("demo_scheduled")
+    product.events = [paid(1, pid)]
+
+    pipeline.pull_product_events(campaign)
+
+    stage, log = row(oid)
+    assert stage == "demo_scheduled"  # the rep closes the deal, not the event
+    assert [{k: a.get(k) for k in ("type", "flag", "plan", "amount_cents", "cycle")} for a in log] == [
+        {"type": "subscription.activated", "flag": "ready_to_close", "plan": "pro",
+         "amount_cents": 150000, "cycle": "2026-general"}]
+    meta = pipeline.db.get_prospect(pid).metadata["u9itus"]
+    assert (meta["subscription_status"], meta["plan"], meta["cycle"]) == ("active", "pro", "2026-general")
+
+
+def test_expiry_and_cancel_are_noted_but_never_move_a_closed_deal(world):
+    pipeline, campaign, product, add_prospect, row = world
+    product.event_effect = U9itusVoterGuideProduct().event_effect
+    pid, oid = add_prospect("closed_won")
+    product.events = [
+        {**event(1, "subscription.expired", pid), "data": {"cycle": "2026-general"}},
+        {**event(2, "subscription.canceled", pid), "data": {}},
+    ]
+
+    stats = pipeline.pull_product_events(campaign)
+
+    stage, log = row(oid)
+    assert stage == "closed_won" and stats["stage_changes"] == 0
+    assert [(a["type"], a.get("cycle")) for a in log] == [
+        ("subscription.expired", "2026-general"), ("subscription.canceled", None)]
+    assert pipeline.db.get_prospect(pid).metadata["u9itus"]["subscription_status"] == "canceled"
+
+
+def test_the_u9itus_plugin_keeps_the_shared_portal_events():
+    plugin = U9itusVoterGuideProduct()
+    assert plugin.event_effect({"type": "portal.claimed"}).stage == "demo_scheduled"
+    assert plugin.event_effect({"type": "portal.expired"}).clear_demo_link
+    assert plugin.event_effect({"type": "something.new"}) is None
+
+
+def test_an_unknown_event_is_recorded_and_changes_nothing(world):
+    pipeline, campaign, product, add_prospect, row = world
+    pid, oid = add_prospect("contacted")
+    product.events = [event(1, "subscription.activated", pid)]  # FakeU9itus has no event_effect
+
+    stats = pipeline.pull_product_events(campaign)
+
+    assert row(oid) == ("contacted", [])
+    assert stats["events_pulled"] == 1
+    recorded = pipeline.db.conn.execute("SELECT event_type FROM product_events").fetchall()
+    assert [r["event_type"] for r in recorded] == ["subscription.activated"]
+
+
+def test_any_product_can_bring_its_own_events_without_core_changes(world):
+    pipeline, campaign, product, add_prospect, row = world
+    product.event_effect = lambda e: (EventEffect(stage="engaged", log_as="guide.shared", detail={"via": "sms"})
+                                      if e["type"] == "guide.shared" else None)
+    pid, oid = add_prospect("contacted")
+    product.events = [event(1, "guide.shared", pid)]
+
+    assert pipeline.pull_product_events(campaign)["stage_changes"] == 1
+    stage, log = row(oid)
+    assert stage == "engaged" and log[0]["via"] == "sms" and log[0]["stage"] == "engaged"
+
+
+# ── Prices come from u9itus ──────────────────────────────────────────
+
+
+class PlansClient:
+    def __init__(self, result):
+        self.result, self.calls = result, 0
+
+    def is_configured(self):
+        return True
+
+    def get_plans(self):
+        self.calls += 1
+        return self.result
+
+
+def test_pricing_tiers_use_u9itus_prices_and_cache_them():
+    plugin = U9itusVoterGuideProduct()
+    plugin._client = PlansClient({"plans": [
+        {"key": "starter", "label": "Starter", "amount_cents": 60000},
+        {"key": "pro", "label": "Pro", "amount_cents": 175050},
+    ]})
+
+    tiers = plugin.pricing_tiers()
+    plugin.pricing_tiers()
+
+    assert [(t["key"], t["name"], t["price"]) for t in tiers] == [("starter", "Starter", 600), ("pro", "Pro", 1750.5)]
+    assert tiers[0]["features"][0] == "Co-branded voter guide with your logo"
+    assert plugin._client.calls == 1
+
+
+def test_pricing_tiers_fall_back_when_u9itus_is_unreachable():
+    plugin = U9itusVoterGuideProduct()
+    plugin._client = PlansClient({"error": True, "status": 404, "detail": "not found"})
+
+    assert [t["price"] for t in plugin.pricing_tiers()] == [500, 1500, 4000]
+    plugin.pricing_tiers()
+    assert plugin._client.calls == 2  # a failure isn't cached; the next call tries again

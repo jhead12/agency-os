@@ -14,11 +14,13 @@ Provisioning happens in provision_demo(), called by the CLI's
 from __future__ import annotations
 
 import secrets
+import time
 from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import urlencode
 
 from core.models import Prospect
+from core.protocols import EventEffect, shared_event_effect
 from plugins.products import u9itus_client
 from plugins.products.u9itus_client import U9itusClient
 
@@ -192,45 +194,91 @@ class U9itusVoterGuideProduct:
             result = {**result, "detail": self.ERROR_HINTS[result["status"]]}
         return result
 
+    # ── Pricing (u9itus is the source of truth for prices) ───────────
+
+    # Sales copy per plan. Prices and plan names come from u9itus
+    # (GET /api/v1/agency/plans); FALLBACK_PRICES is used only when u9itus
+    # can't be reached, so a proposal never shows no price at all.
+    PLAN_FEATURES = {
+        "starter": [
+            "Co-branded voter guide with your logo",
+            "Up to 1,000 constituents reached",
+            "Candidate comparisons side-by-side",
+            "Ballot measures in plain language",
+            "Email support",
+        ],
+        "pro": [
+            "Everything in Starter",
+            "Unlimited constituents",
+            "Multilingual support (Spanish, Korean, Chinese, Tagalog)",
+            "Embed the voter guide on your own website",
+            "Printable PDF voter guides",
+            "Priority support",
+        ],
+        "coalition": [
+            "Everything in Pro",
+            "Up to 10 partner CBOs under one umbrella",
+            "Custom branding per partner",
+            "Analytics dashboard — track engagement",
+            "Dedicated account manager",
+            "QR code generation for print materials",
+        ],
+    }
+    FALLBACK_PRICES = [("starter", "Starter", 50000), ("pro", "Pro", 150000), ("coalition", "Coalition", 400000)]
+    PLANS_TTL_SECONDS = 600
+
+    _plans_cache: Optional[tuple[float, list[tuple[str, str, int]]]] = None
+
+    def _plans(self) -> list[tuple[str, str, int]]:
+        """(key, label, amount_cents) per plan, from u9itus, cached for 10 minutes."""
+        now = time.monotonic()
+        if self._plans_cache and now - self._plans_cache[0] < self.PLANS_TTL_SECONDS:
+            return self._plans_cache[1]
+        plans = self.FALLBACK_PRICES
+        if self.client.is_configured():
+            result = self.client.get_plans()
+            fetched = [(p["key"], p["label"], int(p["amount_cents"]))
+                       for p in result.get("plans", []) if p.get("key") and "amount_cents" in p]
+            if fetched and not result.get("error"):
+                plans = fetched
+                self._plans_cache = (now, plans)
+        return plans
+
     def pricing_tiers(self) -> list[dict]:
         """Available pricing tiers for the voter guide product."""
         return [
             {
-                "name": "Starter",
-                "price": 500,
+                "key": key,
+                "name": label,
+                "price": cents / 100 if cents % 100 else cents // 100,
                 "period": "per election cycle",
-                "features": [
-                    "Co-branded voter guide with your logo",
-                    "Up to 1,000 constituents reached",
-                    "Candidate comparisons side-by-side",
-                    "Ballot measures in plain language",
-                    "Email support",
-                ],
-            },
-            {
-                "name": "Pro",
-                "price": 1500,
-                "period": "per election cycle",
-                "features": [
-                    "Everything in Starter",
-                    "Unlimited constituents",
-                    "Multilingual support (Spanish, Korean, Chinese, Tagalog)",
-                    "Embed the voter guide on your own website",
-                    "Printable PDF voter guides",
-                    "Priority support",
-                ],
-            },
-            {
-                "name": "Coalition",
-                "price": 4000,
-                "period": "per election cycle",
-                "features": [
-                    "Everything in Pro",
-                    "Up to 10 partner CBOs under one umbrella",
-                    "Custom branding per partner",
-                    "Analytics dashboard — track engagement",
-                    "Dedicated account manager",
-                    "QR code generation for print materials",
-                ],
-            },
+                "features": self.PLAN_FEATURES.get(key, []),
+            }
+            for key, label, cents in self._plans()
         ]
+
+    # ── Event effects (core/protocols.py) ─────────────────────────────
+
+    def event_effect(self, event: dict) -> Optional[EventEffect]:
+        """The shared portal.* events, plus u9itus's subscription.* events.
+
+        A paid plan flags the deal ready to close with the plan and amount on
+        the activity entry; the rep moves it to closed_won. Expiry and
+        cancellation are only noted: they never move a stage, backward or
+        out of closed_won/closed_lost.
+        """
+        data = event.get("data") or {}
+        event_type = event.get("type")
+        if event_type == "subscription.activated":
+            return EventEffect(
+                log_as=event_type, flag="ready_to_close",
+                detail={k: data[k] for k in ("plan", "amount_cents", "cycle") if k in data},
+                portal={"subscription_status": "active", "plan": data.get("plan"), "cycle": data.get("cycle")},
+            )
+        if event_type in ("subscription.expired", "subscription.canceled"):
+            return EventEffect(
+                log_as=event_type,
+                detail={"cycle": data["cycle"]} if "cycle" in data else {},
+                portal={"subscription_status": event_type.split(".")[1]},
+            )
+        return shared_event_effect(event)

@@ -8,6 +8,7 @@ and methods satisfies the protocol.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Iterator, Protocol, Optional, runtime_checkable
 
@@ -59,6 +60,12 @@ class DemoPortalProduct(Protocol):
 
     Optional extras the Plugins page uses when present:
     check_connection() -> dict and create_test_portal() -> dict.
+
+    Optional: event_effect(event) -> EventEffect | None says what one of the
+    product's events does to the pipeline. Without it, or when it returns
+    shared_event_effect(event), the shared portal.* vocabulary applies. A
+    product adds its own event types there (u9itus: subscription.*) without
+    any change to core.
     """
 
     key: str
@@ -90,6 +97,44 @@ class DemoPortalProduct(Protocol):
     def pull_events(self, after: int = 0, limit: int = 100) -> dict:
         """Events after the cursor: {events: [...], next_cursor: int}."""
         ...
+
+
+@dataclass(frozen=True)
+class EventEffect:
+    """What one product event does (Pipeline.pull_product_events). Every
+    event is recorded in product_events whatever its effect."""
+
+    # Move each of the prospect's outreach rows forward to this stage; never backward.
+    stage: Optional[str] = None
+    # Add an activity-log entry of this type to each outreach row (None = no entry).
+    log_as: Optional[str] = None
+    # Flag carried on the activity entry, e.g. "ready_to_close".
+    flag: Optional[str] = None
+    # Extra fields on the activity entry, e.g. {"plan": "pro"}.
+    detail: dict = field(default_factory=dict)
+    # Merged into prospect.metadata[portal_namespace], e.g. {"status": "claimed"}.
+    portal: dict = field(default_factory=dict)
+    # The demo link no longer works; clearing it lets provisioning issue a new one.
+    clear_demo_link: bool = False
+
+
+def shared_event_effect(event: dict) -> Optional[EventEffect]:
+    """The portal.* events every demo-portal product shares. None for any other type."""
+    return {
+        "portal.viewed": EventEffect(stage="engaged", log_as="portal.viewed"),
+        "portal.claimed": EventEffect(stage="demo_scheduled", log_as="portal.claimed",
+                                      portal={"status": "claimed"}),
+        # Publishing is the buying signal: flag it, but leave the stage to the rep.
+        "portal.published": EventEffect(log_as="portal_published", flag="ready_to_close",
+                                        portal={"status": "published"}),
+        "portal.expired": EventEffect(portal={"status": "expired"}, clear_demo_link=True),
+    }.get(event.get("type"))
+
+
+def event_effect(product, event: dict) -> Optional[EventEffect]:
+    """The product's effect for an event, or the shared one when it doesn't define any."""
+    custom = getattr(product, "event_effect", None)
+    return custom(event) if callable(custom) else shared_event_effect(event)
 
 
 def portal_product(product) -> Optional[DemoPortalProduct]:

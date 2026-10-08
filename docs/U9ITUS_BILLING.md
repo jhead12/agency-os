@@ -8,8 +8,10 @@ an RSS feed**, and **by scraping a list page**. Like
 coding agent: diagrams are Mermaid, the contract is YAML, and tasks have file
 paths and acceptance checks.
 
-Status (2026-10-07):
-- **B1 built** on agency-os branch `feat/u9itus-billing-accounts`: accounts, the
+Status (2026-10-08): B1–B8 are built. B1–B3 and B5–B8 are merged to `main`
+(PRs #15, #16, #17, #18); B4 and the search-types endpoint are on
+`feat/search-types-and-usage`. The u9itus side (V1–V6) isn't started.
+- **B1 built**: accounts, the
   platform and account keys, the account endpoints, and keeping account
   prospects out of house views. Tests: `tests/test_accounts.py` (11).
 - **B2 built** on the same branch: the `searches` and `search_results` tables,
@@ -25,11 +27,15 @@ Status (2026-10-07):
 - The same search plugins also power the Super Admins' **lead package generator**
   (`/admin/generator`, `core/generator.py`). It saves what it finds as *house*
   prospects, never touches an account's, and feeds the `enriched` guarantee tier.
-- **B9 built (storage only)**: accounts' own enricher keys, encrypted at rest
-  (`core/credentials.py`, `account_credentials`, `/api/v1/account/credentials`).
-  Tests: `tests/test_credentials.py` (8). Searches don't enrich yet, so nothing
-  reads the keys until the enrich step is built.
-- B4 (usage table, `GET /api/v1/usage`, per-account caps) is still planned.
+- **B4 built**: `GET /api/v1/usage` and the daily cap. Usage is read straight
+  from the `searches` table instead of a separate `account_usage` table, so the
+  totals can't drift from the searches. The cap counts prospects delivered today
+  plus `max_results` of searches still queued or running; a retry of an accepted
+  search is never refused. Tests: `tests/test_search_types_usage.py` (7).
+- **Search types come from the plugins**: each plugin in `plugins/searches/`
+  declares `label`, `description`, `fields` and `attribution`, served at
+  `GET /api/v1/search-types`. u9itus builds its search form (V4) from that, so a
+  new search plugin needs no change in core or in u9itus.
   Decisions still open for the owner are in section 8.
 
 ## Goal
@@ -127,7 +133,7 @@ errors:                                  # every error body: {error: <code>, mes
   404: not_found
   409: conflict                          # idempotency_key reused with different settings
   422: invalid
-  429: limit_reached                     # planned: an account cap (section 5)
+  429: limit_reached                     # the account's daily cap (section 5)
   503: service_not_configured            # platform key hash not set
 
 endpoints:
@@ -151,7 +157,7 @@ endpoints:
   # ── Built (B2) ──────────────────────────────────────────────
   - POST /api/v1/searches:               # account key
       body:
-        type: city | rss | scrape
+        type: city | rss | scrape        # any type GET /api/v1/search-types lists
         params: {}                       # per type, section 4
         max_results: 1..500              # hard ceiling on delivered prospects
         idempotency_key: "u9-search-8812"  # unique per account; a retry returns the same search
@@ -175,7 +181,16 @@ endpoints:
 
   # ── Planned (B4) ────────────────────────────────────────────
   - GET /api/v1/usage?from=2026-10-01&to=2026-10-31:  # platform key, all accounts; or account key, own
-      200: {usage: [{external_ref, day, searches, delivered, pages_fetched, cost_cents}]}
+      # default: the last 30 days; at most 366 days; day = the day the search was created
+      200: {from, to, usage: [{external_ref, day, searches, delivered, pages_fetched, api_requests, cost_cents}]}
+  - POST /api/v1/searches → 429 limit_reached       # delivered today + reserved by queued/running
+                                                    # + this max_results > AGENCY_OS_ACCOUNT_DAILY_PROSPECTS
+
+  # ── Built: search types from the plugins ────────────────────
+  - GET /api/v1/search-types:            # platform key, or any account key (also suspended)
+      200: {search_types: [{type, label, description, attribution: string | null, max_results,
+                            fields: [{name, label, type, required, example?, help?, options?, min?, max?, default?}]}]}
+      # field type: text | state | url | list | date | integer | selector | selectors
 
 types:
   Account: {external_ref, name, status, key_hint, created_at, last_used_at}

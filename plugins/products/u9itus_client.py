@@ -119,6 +119,15 @@ class U9itusClient:
             params={"after": after, "limit": limit},
         )
 
+    # ── Plans ─────────────────────────────────────────────────────────
+
+    def get_plans(self) -> dict:
+        """GET /api/v1/agency/plans — the prices u9itus charges.
+
+        Returns: {currency, cycle, cycle_ends_at, plans: [{key, label, amount_cents}]}
+        """
+        return self._request("GET", "/api/v1/agency/plans")
+
     # ── Internal request with retry ───────────────────────────────────
 
     def _request(self, method: str, path: str, **kwargs) -> dict:

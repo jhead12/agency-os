@@ -30,7 +30,7 @@ from collections import defaultdict
 from contextlib import asynccontextmanager
 from typing import Optional
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from urllib.parse import quote, urlsplit, urlencode
 
 import yaml
@@ -2555,9 +2555,45 @@ async def api_create_search(request: Request):
                                                   searches.plugins())
     except searches.SearchConflict as e:
         return _api_error(409, "conflict", str(e))
+    except searches.SearchLimit as e:
+        return _api_error(429, "limit_reached", str(e))
     except (searches.SearchError, accounts.AccountError) as e:
         return _api_error(422, "invalid", str(e))
     return JSONResponse({"search": searches.public(search)}, status_code=202 if created else 200)
+
+
+@app.get("/api/v1/search-types")
+async def api_search_types(request: Request):
+    """The search types the plugins in plugins/searches/ provide, with the fields
+    each needs, so u9itus builds its search form without knowing the types.
+    Platform key or any account key (also a suspended one)."""
+    if accounts.platform_key_ok(_bearer(request)):
+        pass
+    elif await run_in_threadpool(accounts.for_key, get_db(), _bearer(request)) is None:
+        return _api_error(401, "unauthorized", "A valid platform or account key is required.")
+    return {"search_types": await run_in_threadpool(searches.types)}
+
+
+@app.get("/api/v1/usage")
+async def api_usage(request: Request, from_: Optional[str] = Query(default=None, alias="from"),
+                    to: Optional[str] = Query(default=None)):
+    """Searches, delivered prospects and our cost per account per day (task B4).
+    The platform key sees every account; an account key, even a suspended one, sees its own.
+    Defaults to the last 30 days."""
+    account = None
+    if not accounts.platform_key_ok(_bearer(request)):
+        account = await run_in_threadpool(accounts.for_key, get_db(), _bearer(request))
+        if account is None:
+            return _api_error(401, "unauthorized", "A valid platform or account key is required.")
+    try:
+        end = date.fromisoformat(to) if to else datetime.now(timezone.utc).date()
+        start = date.fromisoformat(from_) if from_ else end - timedelta(days=29)
+        rows = await run_in_threadpool(searches.usage, get_db(), start, end,
+                                       account["id"] if account else None)
+    except ValueError as e:
+        message = str(e) if isinstance(e, searches.SearchError) else "from and to must be dates like 2026-10-01."
+        return _api_error(422, "invalid", message)
+    return {"from": start.isoformat(), "to": end.isoformat(), "usage": rows}
 
 
 @app.get("/api/v1/searches/{search_id}")

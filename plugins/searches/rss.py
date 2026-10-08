@@ -92,6 +92,16 @@ def parse_feed(content: bytes) -> list[dict]:
 
 class RssSearch:
     key = "rss"
+    label = "Organizations in a news feed"
+    description = "The organizations behind a feed's stories: the publisher, or the site each story links to."
+    fields = [
+        {"name": "feed_url", "label": "Feed address", "type": "url", "required": True,
+         "example": "https://news.example.org/feed.xml", "help": "An RSS or Atom feed."},
+        {"name": "keywords", "label": "Keywords", "type": "list", "required": False,
+         "example": ["clinic", "dental"], "help": f"Only stories mentioning any of these; at most {MAX_KEYWORDS}."},
+        {"name": "since", "label": "Stories since", "type": "date", "required": False, "example": "2026-09-01"},
+    ]
+    attribution = None
 
     def validate(self, params: dict) -> dict:
         feed_url = str(params.get("feed_url") or "").strip()
