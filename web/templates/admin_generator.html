@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Lead Package Generator — agency-os{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Lead package generator</h1>
+    <p class="subtitle">Describe the prospects you want. agency-os runs the searches, adds what it finds to a campaign, runs the enrichers, and makes a saved list you can publish as a lead package with the <strong>enriched</strong> guarantee: 90% of leads have a working email or phone.</p>
+</div>
+
+{% if msg %}<div class="save-notice">{{ msg }}</div>{% endif %}
+{% if error %}<div class="form-error">{{ error }}</div>{% endif %}
+
+<div class="campaign-section">
+    <div class="campaign-header"><h2>New run</h2></div>
+    <form method="post" action="/admin/generator" class="stack-form">
+        <div class="form-grid">
+            <div class="form-field"><label for="title">Title</label>
+                <input type="text" id="title" name="title" maxlength="120" required value="{{ form.title or '' }}" placeholder="Austin dentists"></div>
+            <div class="form-field"><label for="campaign">Campaign the leads go into</label>
+                <select id="campaign" name="campaign" class="filter-select" required>
+                    {% for c in campaigns %}<option value="{{ c.db_name }}" {% if form.campaign == c.db_name %}selected{% endif %}>{{ c.name }}</option>{% endfor %}
+                </select></div>
+            <div class="form-field"><label for="max_leads">Max leads (up to {{ max_leads }})</label>
+                <input type="number" id="max_leads" name="max_leads" min="1" max="{{ max_leads }}" required value="{{ form.max_leads or 100 }}"></div>
+        </div>
+
+        {% if 'city' in search_types %}
+        <h3>Businesses in cities <span class="subtitle">(OpenStreetMap)</span></h3>
+        <div class="form-grid">
+            <div class="form-field"><label for="query">Kind of organization</label>
+                <input type="text" id="query" name="query" maxlength="60" value="{{ form.query or '' }}" placeholder="dentist"></div>
+            <div class="form-field"><label for="state">State</label>
+                <input type="text" id="state" name="state" maxlength="2" value="{{ form.state or '' }}" placeholder="TX"></div>
+            <div class="form-field"><label for="cities">Cities (comma separated)</label>
+                <input type="text" id="cities" name="cities" maxlength="1000" value="{{ form.cities or '' }}" placeholder="Austin, Round Rock"></div>
+        </div>
+        {% endif %}
+
+        {% if 'rss' in search_types %}
+        <h3>News and RSS feeds <span class="subtitle">(optional)</span></h3>
+        <div class="form-grid">
+            <div class="form-field"><label for="feed_urls">Feed addresses, one per line</label>
+                <textarea id="feed_urls" name="feed_urls" rows="3" class="filter-input">{{ form.feed_urls or '' }}</textarea></div>
+            <div class="form-field"><label for="keywords">Keywords (comma separated; any one must match)</label>
+                <input type="text" id="keywords" name="keywords" maxlength="600" value="{{ form.keywords or '' }}"></div>
+            <div class="form-field"><label for="since">Items since</label>
+                <input type="date" id="since" name="since" value="{{ form.since or '' }}"></div>
+        </div>
+        {% endif %}
+
+        {% if 'scrape' in search_types %}
+        <h3>A directory page <span class="subtitle">(optional)</span></h3>
+        <p class="muted">A member list or directory on one site. Give CSS selectors: one for each listing, and one per field inside it. Add <code>@href</code> to read a link, e.g. <code>a.site@href</code>.</p>
+        <div class="form-grid">
+            <div class="form-field"><label for="scrape_url">Page address</label>
+                <input type="url" id="scrape_url" name="scrape_url" maxlength="2000" value="{{ form.scrape_url or '' }}"></div>
+            <div class="form-field"><label for="item_selector">Each listing</label>
+                <input type="text" id="item_selector" name="item_selector" maxlength="200" value="{{ form.item_selector or '' }}" placeholder=".member"></div>
+            {% for f in fields %}
+            <div class="form-field"><label for="field_{{ f }}">{{ f|replace('_', ' ')|capitalize }}{% if f == 'name' %} (required){% endif %}</label>
+                <input type="text" id="field_{{ f }}" name="field_{{ f }}" maxlength="200" value="{{ form['field_' ~ f] or '' }}"></div>
+            {% endfor %}
+            <div class="form-field"><label for="next_selector">Next page link</label>
+                <input type="text" id="next_selector" name="next_selector" maxlength="200" value="{{ form.next_selector or '' }}" placeholder="a.next@href"></div>
+            <div class="form-field"><label for="max_pages">Max pages (1-20)</label>
+                <input type="number" id="max_pages" name="max_pages" min="1" max="20" value="{{ form.max_pages or 5 }}"></div>
+        </div>
+        {% endif %}
+
+        <h3>Enrichers</h3>
+        <p class="muted">Run in this order; the first that finds a contact wins. Leave all unticked to use the campaign's own enrichers. Paid enrichers spend on every lead.</p>
+        <div class="form-grid">
+            {% for e in enrichers %}
+            <label class="check-label"><input type="checkbox" name="enrichers" value="{{ e.key }}" {% if e.key in (form.enrichers or []) %}checked{% endif %} {% if not e.configured %}disabled{% endif %}> {{ e.key }}{% if not e.configured %} <span class="subtitle">(not set up)</span>{% endif %}</label>
+            {% endfor %}
+        </div>
+
+        <p class="muted">Searches return organizations, not people: business names, sites, addresses and business phones. Sites' robots.txt is honored. Selling or contacting these leads still has to follow CAN-SPAM and the TCPA.</p>
+        <div><button type="submit" class="btn">Start the run</button></div>
+    </form>
+</div>
+
+{% if runs %}
+<div class="campaign-section">
+    <div class="campaign-header"><h2>Recent runs</h2></div>
+    <div class="table-scroll">
+    <table class="data-table">
+        <thead><tr><th>Run</th><th>Status</th><th>Found</th><th>With contact</th><th>Sellable</th></tr></thead>
+        <tbody>
+        {% for r in runs %}
+        <tr>
+            <td><a href="/admin/generator/{{ r.id }}"><strong>{{ r.title }}</strong></a><br><span class="subtitle">#{{ r.id }} · {{ r.campaign_name }} · {{ r.created_at|fmt_date }}</span></td>
+            <td><span class="badge {% if r.status == 'done' %}badge-success{% elif r.status in ['running', 'queued'] %}badge-warning{% endif %}">{{ r.status }}</span></td>
+            <td>{{ r.found }} / {{ r.max_leads }}</td>
+            <td>{{ r.enriched }}</td>
+            <td>{{ r.eligible }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

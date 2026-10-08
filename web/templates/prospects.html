@@ -25,13 +25,14 @@
 {% if stage_filter %}{% set _ = qs_parts.append('stage=' ~ stage_filter) %}{% endif %}
 {% if cities_filter %}{% set _ = qs_parts.append('cities=' ~ cities_filter) %}{% endif %}
 {% if campaign_filter %}{% set _ = qs_parts.append('campaign=' ~ campaign_filter) %}{% endif %}
+{% if generator_run_filter %}{% set _ = qs_parts.append('generator_run=' ~ generator_run_filter) %}{% endif %}
 {% set qs = qs_parts | join('&') %}
 
 <div class="page-header">
     <div class="page-header-row">
         <div>
             <h1>Prospects</h1>
-            <p class="subtitle">{{ total }} organizations{% if q %} matching "{{ q }}"{% endif %}{% if cities_filter %} in {{ cities_filter }}{% endif %}</p>
+            <p class="subtitle">{{ total }} organizations{% if q %} matching "{{ q }}"{% endif %}{% if cities_filter %} in {{ cities_filter }}{% endif %}{% if generator_run_filter %} found by generator run #{{ generator_run_filter }} (<a href="/prospects">show all</a>){% endif %}</p>
         </div>
         <div class="page-header-actions">
             {% if request.state.user.can('prospects.export') %}<a href="/prospects?{{ print_qs }}" class="btn btn-sm btn-print" target="_blank">🖨 Print View</a>{% endif %}
@@ -41,6 +42,7 @@
 
 <div class="filters">
     <form method="get" action="/prospects" id="filter-form">
+        {% if generator_run_filter %}<input type="hidden" name="generator_run" value="{{ generator_run_filter }}">{% endif %}
         <input type="text" name="q" value="{{ q }}" placeholder="Search name, city, EIN, zip, focus area, website..." class="filter-input">
         <select name="source" class="filter-select">
             <option value="">All sources</option>

@@ -105,7 +105,11 @@ class CitySearch:
         if response.status_code in (429, 504):
             raise ValueError("The map data service is busy. Try the search again in a few minutes.")
         response.raise_for_status()
-        elements = response.json().get("elements") or []
+        answer = response.json()
+        elements = answer.get("elements") or []
+        # An overloaded server answers 200 with a "runtime error" remark and no elements.
+        if not elements and "runtime error" in str(answer.get("remark") or "").lower():
+            raise ValueError("The map data service is busy. Try the search again in a few minutes.")
         if not elements:
             raise ValueError(f"Nothing found for {params['query']!r} in {params['city']}, {params['state']}. "
                              "Check the city's spelling or try a broader query.")

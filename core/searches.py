@@ -35,11 +35,12 @@ import re
 import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import httpx
 
 from core import accounts
+from core.safe_fetch import SafeFetcher
 from core.db import Database
 from core.models import Prospect
 from core.registry import PluginRegistry
@@ -204,6 +205,20 @@ class SearchContext:
     http: httpx.Client
     delivered: int = 0
     usage: dict = field(default_factory=lambda: {"pages_fetched": 0, "api_requests": 0, "cost_cents": 0})
+    transport: Optional[httpx.BaseTransport] = None   # for the guarded fetcher; tests fake it
+    is_cancelled: Optional[Callable[[], bool]] = None  # other callers (core/generator.py) bring their own
+    _fetch: Optional[SafeFetcher] = None
+
+    @property
+    def fetch(self) -> SafeFetcher:
+        """The only way a search may fetch a URL the customer gave (core/safe_fetch.py)."""
+        if self._fetch is None:
+            self._fetch = SafeFetcher(transport=self.transport, user_agent=USER_AGENT)
+        return self._fetch
+
+    def close(self) -> None:
+        if self._fetch is not None:
+            self._fetch.close()
 
     @property
     def remaining(self) -> int:
@@ -217,6 +232,8 @@ class SearchContext:
         self.usage["cost_cents"] += cost_cents
 
     def cancelled(self) -> bool:
+        if self.is_cancelled is not None:
+            return self.is_cancelled()
         row = self.db.conn.execute("SELECT cancel_requested_at FROM searches WHERE id = ?",
                                    (self.search["id"],)).fetchone()
         return row is None or row["cancel_requested_at"] is not None
@@ -270,7 +287,7 @@ class SearchRunner:
         status, error = "done", None
         with httpx.Client(timeout=90, transport=self.transport, follow_redirects=True,
                           headers={"User-Agent": USER_AGENT}) as http:
-            ctx = SearchContext(search, db, http)
+            ctx = SearchContext(search, db, http, transport=self.transport)
             try:
                 if plugin is None:
                     raise ValueError(f"{search['type']} searches aren't available.")
@@ -298,6 +315,8 @@ class SearchRunner:
                 print(f"agency-os: search {search['id']} failed: {type(e).__name__}: {e}\n"
                       f"{traceback.format_exc(limit=5)}")
                 status, error = "failed", "The search failed. Results found before then are kept."
+            finally:
+                ctx.close()
         row = db.conn.execute(
             """UPDATE searches SET status = ?, error = ?, finished_at = CURRENT_TIMESTAMP,
                       heartbeat_at = CURRENT_TIMESTAMP, pages_fetched = ?, api_requests = ?, cost_cents = ?

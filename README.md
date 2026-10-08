@@ -89,7 +89,7 @@ agency-os/
 │   ├── prospect_sources/   # WHO to sell to (IRS, SOS, OIA, MIV scrapers)
 │   ├── products/           # WHAT you're selling (u9itus voter guide, etc.)
 │   ├── channels/           # HOW you reach them (Smartlead, SMTP, Twilio SMS, manual)
-│   ├── enrichers/          # Contact enrichment (Apollo, Hunter)
+│   ├── enrichers/          # Contact enrichment (Apollo, Hunter, Firecrawl)
 │   ├── schedulers/         # Meeting booking (Calendly)
 │   ├── pages/              # Web pages at /p/<key> (the UI kit is at /p/ui-kit)
 │   ├── panels/             # Cards on the dashboard and prospect pages
@@ -587,6 +587,7 @@ Set via environment variables:
 export SMARTLEAD_API_KEY=...
 export APOLLO_API_KEY=...
 export HUNTER_API_KEY=...
+export FIRECRAWL_API_KEY=...
 export SMTP_HOST=smtp.gmail.com
 export SMTP_PORT=587
 export SMTP_USER=...
@@ -620,6 +621,7 @@ export CALENDLY_API_TOKEN=...
 | enricher | `local_scraper` | Local web scraper — finds websites, phones, emails (no API key needed) |
 | enricher | `apollo` | Apollo.io contact enrichment (paid plan required) |
 | enricher | `hunter` | Hunter.io email finder + verifier |
+| enricher | `firecrawl` | Firecrawl scrape + LLM extraction — handles JS-heavy sites (paid credits) |
 | scheduler | `calendly` | Calendly booking links + booking sync |
 
 ## License

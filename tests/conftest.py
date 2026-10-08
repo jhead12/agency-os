@@ -33,3 +33,12 @@ def pg_url(monkeypatch):
     reset_schema_cache()
     monkeypatch.setenv("DATABASE_URL", url)
     return url
+
+
+@pytest.fixture(autouse=True)
+def compliance_env(monkeypatch):
+    """Email channels refuse to send without the CAN-SPAM settings (core/compliance.py).
+    Tests about that unset them."""
+    monkeypatch.setenv("AGENCY_OS_POSTAL_ADDRESS", "PO Box 1, Albany, CA 94706")
+    monkeypatch.setenv("AGENCY_OS_UNSUBSCRIBE_SECRET", "test-unsubscribe-secret")
+    monkeypatch.setenv("AGENCY_OS_BASE_URL", "https://agency.test")

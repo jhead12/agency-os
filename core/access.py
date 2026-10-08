@@ -196,10 +196,22 @@ ROUTE_RULES: dict[str, str] = {
     "POST /prospects/{prospect_id}/do-not-call": "prospects.edit",
     "POST /prospects/{prospect_id}/credit": "packages.sell",
     "POST /account/payout-address": "royalties.view_own",
+    # Lead package generator (core/generator.py): runs searches and enrichers on the house's dime.
+    "GET /admin/generator": SUPER_ADMIN,
+    "POST /admin/generator": SUPER_ADMIN,
+    "GET /admin/generator/{run_id}": SUPER_ADMIN,
+    "POST /admin/generator/{run_id}/cancel": SUPER_ADMIN,
+    # Customer accounts (core/accounts.py, docs/U9ITUS_BILLING.md task B8).
+    "GET /admin/accounts": OWNER,
+    "POST /admin/accounts/{external_ref}/status": OWNER,
+    "POST /admin/accounts/{external_ref}/key": OWNER,
     "GET /admin/payouts": OWNER,
     "POST /admin/payouts/{user_id}": OWNER,
     "GET /welcome/{token}": PUBLIC,   # one-time link; the token is the credential
     "POST /welcome/{token}": PUBLIC,
+    # CAN-SPAM opt-out (core/compliance.py): the signed token in the link is the credential.
+    "GET /unsubscribe": PUBLIC,
+    "POST /unsubscribe": PUBLIC,
     "GET /forgot-password": PUBLIC,
     "POST /forgot-password": PUBLIC,  # rate-limited; same answer whether or not the email exists
     "GET /reset-password/{token}": PUBLIC,  # one-time link; the token is the credential

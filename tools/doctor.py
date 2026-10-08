@@ -27,6 +27,7 @@ _CHECKS = [
     ("TWILIO_FROM_NUMBER", "sms_twilio channel (or TWILIO_MESSAGING_SERVICE_SID)", "sms"),
     ("APOLLO_API_KEY", "apollo enricher (optional)", "enrich"),
     ("HUNTER_API_KEY", "hunter enricher (optional)", "enrich"),
+    ("FIRECRAWL_API_KEY", "firecrawl enricher (optional)", "enrich"),
     ("CALENDLY_SCHEDULING_URL", "calendly booking links", "scheduler"),
     ("CALENDLY_API_TOKEN", "calendly booking sync", "scheduler"),
     ("ANTHROPIC_API_KEY", "Claude AI drafting", "ai"),

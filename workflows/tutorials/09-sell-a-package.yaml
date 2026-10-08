@@ -11,7 +11,7 @@ steps:
   - highlight: '#saved_list_id'
     say: Pick a saved list to publish.
   - highlight: '#guarantee_tier'
-    say: Choose the guarantee. 90% of the leads must be at least this deep. Only leads that meet it go in, and they're checked again at every sale.
+    say: Choose the guarantee. 90% of the leads must be at least this deep. Only leads that meet it go in, and they're checked again at every sale. "Enriched" is the lightest promise, a working email or phone that nobody has contacted yet; lists from the lead package generator start there.
   - highlight: '#unlock_usd'
     say: Set the unlock price and a royalty per contact for each contact depth. Deeper leads earn more.
   - highlight: '#contributor_pool_pct'

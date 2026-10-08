@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}{{ run.title }} — Lead Package Generator{% endblock %}
+{% block head %}{% if run.status in ['queued', 'running'] %}<meta http-equiv="refresh" content="5">{% endif %}{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>{{ run.title }}</h1>
+    <p class="subtitle"><a href="/admin/generator">Lead package generator</a> · run #{{ run.id }} · {{ run.campaign_name }} · started by {{ run.created_by_email or 'the CLI' }}</p>
+</div>
+
+{% if msg %}<div class="save-notice">{{ msg }}</div>{% endif %}
+{% if run.error %}<div class="form-error">{{ run.error }}</div>{% endif %}
+
+<div class="detail-grid">
+    <div class="detail-card">
+        <h3>Progress</h3>
+        <div class="detail-row"><span>Status</span><span><span class="badge {% if run.status == 'done' %}badge-success{% elif run.status in ['running', 'queued'] %}badge-warning{% endif %}">{{ run.status }}</span>{% if run.step %} · {{ {'find': 'finding organizations', 'enrich': 'running enrichers', 'check': 'checking leads'}[run.step] }}{% endif %}</span></div>
+        <div class="detail-row"><span>Found</span><span>{{ run.found }} of up to {{ run.max_leads }}</span></div>
+        <div class="detail-row"><span>With an email or phone</span><span>{{ run.enriched }}</span></div>
+        <div class="detail-row"><span>Sellable at "enriched"</span><span>{{ run.eligible }}</span></div>
+        {% if run.status in ['queued', 'running'] %}
+        <p class="muted">This page refreshes every 5 seconds.</p>
+        <form method="post" action="/admin/generator/{{ run.id }}/cancel"><button type="submit" class="btn btn-secondary btn-sm">Cancel the run</button></form>
+        {% endif %}
+    </div>
+
+    <div class="detail-card">
+        <h3>Criteria</h3>
+        {% for s in run.params.searches %}
+        <div class="detail-row"><span>{{ s.type }}</span><span>
+            {% if s.type == 'city' %}{{ s.params.query }} in {{ s.params.city }}, {{ s.params.state }}
+            {% elif s.type == 'rss' %}{{ s.params.feed_url }}{% if s.params.keywords %} · {{ s.params.keywords|join(', ') }}{% endif %}
+            {% else %}{{ s.params.url }}{% endif %}</span></div>
+        {% endfor %}
+        <div class="detail-row"><span>Enrichers</span><span>{{ run.params.enrichers|join(', ') or 'none' }}</span></div>
+    </div>
+</div>
+
+{% if run.found %}
+<div class="campaign-section">
+    <div class="campaign-header"><h2>Next</h2></div>
+    <p><a href="{{ prospects_url }}" class="btn btn-secondary">See the leads</a>
+    {% if publish_url %}<a href="{{ publish_url }}" class="btn">Publish as package</a>{% endif %}</p>
+    {% if run.status == 'done' and not run.eligible %}<p class="muted">No lead has an email or phone yet, so there's nothing to sell. Try other enrichers, or work the leads first.</p>{% endif %}
+    {% if publish_url %}<p class="muted">Publishing opens the normal publish form with this run's saved list. You set the prices there, and nothing is sold until you confirm.</p>{% endif %}
+</div>
+{% endif %}
+{% endblock %}
