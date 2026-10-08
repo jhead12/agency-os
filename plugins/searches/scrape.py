@@ -69,6 +69,23 @@ def _value(node, spec: str) -> str:
 
 class ScrapeSearch:
     key = "scrape"
+    label = "Organizations listed on a web page"
+    description = ("Every organization on a directory page (a chamber of commerce member list, say) "
+                   "and its next pages, on the same site. Follows robots.txt.")
+    fields = [
+        {"name": "url", "label": "Page address", "type": "url", "required": True,
+         "example": "https://chamber.example.org/members"},
+        {"name": "item_selector", "label": "Each organization", "type": "selector", "required": True,
+         "example": ".member", "help": "CSS selector matching one element per organization."},
+        {"name": "fields", "label": "Where each detail is", "type": "selectors", "required": True,
+         "options": list(FIELDS), "example": {"name": "h3", "website": "a.site@href"},
+         "help": "CSS selector per detail inside each organization; name is required. Add @attr to read an attribute."},
+        {"name": "next_selector", "label": "Next page link", "type": "selector", "required": False,
+         "example": "a.next@href"},
+        {"name": "max_pages", "label": "Pages to read", "type": "integer", "required": False,
+         "min": 1, "max": MAX_PAGES, "default": DEFAULT_PAGES},
+    ]
+    attribution = None
 
     def validate(self, params: dict) -> dict:
         url = str(params.get("url") or "").strip()
