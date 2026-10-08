@@ -51,7 +51,8 @@
         {% if prospect.voter_engagement %}<span class="tag tag-voter">voter</span>{% endif %}
     </div>
     <div class="info-bar-right">
-        {% if scripts[0].prospect_phone %}{% if scripts[0].prospect_phone|tel %}<a href="{{ scripts[0].prospect_phone|tel }}" class="call-link">📞 {{ scripts[0].prospect_phone }}</a>{% else %}📞 {{ scripts[0].prospect_phone }}{% endif %}{% endif %}
+        {% if voice_button %}{% with b = voice_button, label = 'Call ' ~ prospect.name %}{% include "_voice_call.html" %}{% endwith %}
+        {% elif scripts[0].prospect_phone %}{% if scripts[0].prospect_phone|tel %}<a href="{{ scripts[0].prospect_phone|tel }}" class="call-link">📞 {{ scripts[0].prospect_phone }}</a>{% else %}📞 {{ scripts[0].prospect_phone }}{% endif %}{% endif %}
         {% if scripts[0].prospect_email %}✉ {{ scripts[0].prospect_email }}{% endif %}
         {% if prospect.website_url %}🌐 <a href="{{ prospect.website_url }}" target="_blank">{{ prospect.website_url }}</a>{% endif %}
     </div>
@@ -94,4 +95,5 @@
 <p class="empty-state">No phone scripts found. Add <code>phone_*.yaml</code> files to your campaign's <code>scripts/</code> folder.</p>
 {% endif %}
 
+{% if voice_button %}<script src="/static/vendor/twilio-voice-2.18.5.min.js" defer></script><script src="/static/dialer.js" defer></script>{% endif %}
 {% endblock %}

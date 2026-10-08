@@ -83,6 +83,17 @@ def _prospect(element: dict, city: str, state: str, category: str) -> Prospect |
 
 class CitySearch:
     key = "city"
+    # What GET /api/v1/search-types shows u9itus, which builds its search form from it.
+    label = "Businesses in a city"
+    description = ("Businesses and organizations of one kind in a US city, from OpenStreetMap. "
+                   "Good for chains and city centers, thinner for small businesses.")
+    fields = [
+        {"name": "city", "label": "City", "type": "text", "required": True, "example": "Austin"},
+        {"name": "state", "label": "State", "type": "state", "required": True, "example": "TX"},
+        {"name": "query", "label": "What kind of business", "type": "text", "required": True,
+         "example": "dentist", "help": "One kind, e.g. dentist, cafe, lawyer."},
+    ]
+    attribution = "© OpenStreetMap contributors, ODbL"
 
     def validate(self, params: dict) -> dict:
         city = " ".join(str(params.get("city") or "").split())

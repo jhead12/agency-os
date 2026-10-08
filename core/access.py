@@ -174,6 +174,12 @@ ROUTE_RULES: dict[str, str] = {
     "POST /webhooks/lob": PUBLIC,
     "POST /webhooks/smartlead": PUBLIC,
     "POST /webhooks/bounce": PUBLIC,
+    "POST /webhooks/voice/{provider_key}/dial": PUBLIC,    # signed by the provider (core/voice.py)
+    "POST /webhooks/voice/{provider_key}/status": PUBLIC,
+    # Browser calling: Super Admins only until dialing opens to Owners (docs/BROWSER_CALLING.md, V8).
+    "GET /voice/token": SUPER_ADMIN,
+    "POST /voice/calls/{voice_call_id}/disclosure": SUPER_ADMIN,  # and only the rep who placed the call
+    "GET /voice/calls/{provider_key}/{call_sid}": SUPER_ADMIN,   # the rep's own call: status after hang-up
     # Selling: the x402 provider endpoints are public; payment or a claim token authorizes them.
     "GET /x402/packages": PUBLIC,
     "GET /x402/packages/{slug}/leads": PUBLIC,
@@ -188,6 +194,8 @@ ROUTE_RULES: dict[str, str] = {
     "POST /api/v1/searches": PUBLIC,
     "GET /api/v1/searches/{search_id}": PUBLIC,
     "POST /api/v1/searches/{search_id}/cancel": PUBLIC,
+    "GET /api/v1/search-types": PUBLIC,
+    "GET /api/v1/usage": PUBLIC,
     "GET /admin/selling": "packages.sell",
     "POST /admin/selling/publish": "packages.sell",
     "POST /admin/selling/{package_id}/active": "packages.sell",

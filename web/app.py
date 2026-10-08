@@ -30,7 +30,7 @@ from collections import defaultdict
 from contextlib import asynccontextmanager
 from typing import Optional
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from urllib.parse import quote, urlsplit, urlencode
 
 import yaml
@@ -61,7 +61,7 @@ from core.jobs import JobRunner, configured_jobs, jobs_enabled
 from core import (
     accounts, agents, claims, compliance, console, contact_depth, evidence, lead_packages, llm, mcp_auth, panels, payments,
     generator, plugin_pages, plugin_panels, royalties, searches, selling,
-    tools, verify, workflows,
+    tools, verify, voice, workflows,
 )
 from core import welcome as welcome_email
 from core.welcome import base_url as public_base_url
@@ -326,15 +326,8 @@ def tel_href(phone) -> str:
     leading + keep their country code. Opening the link hands the call to the
     device: the phone app on mobile, "Call from iPhone" on a Mac, Phone Link on Windows.
     """
-    raw = str(phone or "").strip()
-    digits = "".join(ch for ch in raw if ch.isdigit())
-    if raw.startswith("+") and 8 <= len(digits) <= 15:
-        return f"tel:+{digits}"
-    if len(digits) == 10:
-        return f"tel:+1{digits}"
-    if len(digits) == 11 and digits.startswith("1"):
-        return f"tel:+{digits}"
-    return ""
+    number = voice.e164(phone)
+    return f"tel:{number}" if number else ""
 
 
 def fmt_date(val) -> str:
@@ -1199,13 +1192,19 @@ async def record_call(
     next_step_date: str = Form(default=""),
     voicemail_left: str = Form(default=""),
     notes: str = Form(default=""),
+    voice_call_id: int = Form(default=0),
 ):
-    """Record a completed phone call."""
+    """Record a completed phone call (and link it to the dashboard call it came from, if any)."""
     from core.models import CallLog
     require_visible_prospect(request, prospect_id)
     if outcome not in contact_depth.CALL_OUTCOMES:
         return _back(f"/prospects/{prospect_id}", error="Pick a call outcome from the list.")
     db = get_db()
+    if voice_call_id:
+        placed = db.get_voice_call(voice_call_id)
+        if (not placed or placed["user_id"] != current_user(request).id
+                or placed["outreach_id"] != outreach_id or placed["call_log_id"]):
+            return _back(f"/prospects/{prospect_id}", error="That dashboard call isn't yours, or it's already logged.")
 
     from datetime import datetime as _dt
     nsd = None
@@ -1234,7 +1233,9 @@ async def record_call(
         called_by=current_user(request).name,
         called_by_user_id=current_user(request).id,
     )
-    db.log_call(call)
+    call_id = db.log_call(call)
+    if voice_call_id:
+        db.link_voice_call(voice_call_id, call_id, current_user(request).id)
     return RedirectResponse(url=f"/prospects/{prospect_id}", status_code=303)
 
 
@@ -1352,6 +1353,11 @@ async def call_scripts(
                ORDER BY p.name LIMIT 100""", hidden_params,
         ).fetchall()
 
+    voice_button = None
+    if prospect and outreach_rows and not print:
+        voice_button = _voice_buttons(request, outreach_rows[:1], prospect,
+                                      db.do_not_call(prospect.id)).get(outreach_rows[0]["id"])
+
     template_name = "call_scripts_print.html" if print else "call_scripts.html"
 
     return templates.TemplateResponse(request, template_name, {
@@ -1360,6 +1366,7 @@ async def call_scripts(
         "prospect_options": prospect_options,
         "stage_filter": stage,
         "now": _dt.now().strftime("%B %d, %Y at %I:%M %p"),
+        "voice_button": voice_button,
     })
 
 
@@ -1445,6 +1452,15 @@ async def prospect_detail(request: Request, prospect_id: int):
         key=lambda e: e.get("timestamp", ""), reverse=True,
     )
 
+    do_not_call = db.do_not_call(prospect_id)
+    voice_buttons = _voice_buttons(request, outreach_rows, prospect, do_not_call)
+    voice_prefill = None
+    if request.query_params.get("voice_call", "").isdigit():
+        placed = db.get_voice_call(int(request.query_params["voice_call"]))
+        if (placed and placed["user_id"] == current_user(request).id
+                and placed["prospect_id"] == prospect_id and not placed["call_log_id"]):
+            voice_prefill = {**voice.log_prefill(placed), "script_key": request.query_params.get("script", "")}
+
     lead_package = lead_packages.package_info(prospect)
     if lead_package:
         row = db.get_lead_package(int(lead_package["lead_package_id"]))
@@ -1461,7 +1477,9 @@ async def prospect_detail(request: Request, prospect_id: int):
         "team": [u for u in db.list_users() if u.get("is_active")] if current_user(request).can("packages.sell") else [],
         "do_not_sell": bool(db.conn.execute("SELECT do_not_sell FROM prospects WHERE id = ?",
                                             (prospect_id,)).fetchone()["do_not_sell"]),
-        "do_not_call": db.do_not_call(prospect_id),
+        "do_not_call": do_not_call,
+        "voice_buttons": voice_buttons,
+        "voice_prefill": voice_prefill,
         "agent_panel": {"personas": list(agents.load_personas().values()),
                         "tasks": agents.all_tasks(agents.load_personas().values()),
                         "model": llm.describe()} if current_user(request).uses_ai("agents.use") else None,
@@ -1481,6 +1499,20 @@ async def prospect_detail(request: Request, prospect_id: int):
         "call_history": call_history,
         "activity_logs": activity_logs,
     })
+
+
+def _voice_buttons(request: Request, outreach_rows, prospect, do_not_call: bool) -> dict[int, dict]:
+    """Outreach id → the softphone Call button, for rows this user dials from the
+    dashboard (core/voice.py). Rows not in it keep their tel: link."""
+    user = current_user(request)
+    campaigns = {c.db_name: c for c in get_campaigns()}
+    buttons = {}
+    for o in outreach_rows:
+        campaign = campaigns.get(o["campaign_name"])
+        button = campaign and voice.call_button(user, campaign, o["contact_phone"], prospect, do_not_call)
+        if button:
+            buttons[o["id"]] = {**button, "outreach_id": o["id"], "prospect_id": prospect.id}
+    return buttons
 
 
 def _plugin_registry() -> PluginRegistry:
@@ -2146,6 +2178,91 @@ async def webhook_bounce(request: Request, key: str = Query(default="")):
     return error or await run_in_threadpool(_webhook_result, evidence.handle_generic, body)
 
 
+# ── Browser calling (core/voice.py, docs/BROWSER_CALLING.md) ──────────
+
+
+@app.get("/voice/token")
+async def voice_token(request: Request):
+    """A short-lived token for the browser's calling SDK. Super Admins only, for now."""
+    found = voice.provider("twilio")
+    if found is None:
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+    identity = voice.identity_for(current_user(request))
+    return JSONResponse(
+        {"token": found.access_token(identity, voice.TOKEN_TTL_SECONDS), "identity": identity,
+         "expires_in": voice.TOKEN_TTL_SECONDS},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.post("/voice/calls/{voice_call_id}/disclosure")
+async def voice_disclosure_read(request: Request, voice_call_id: int):
+    """The rep read the recording disclosure (the call bar's "Disclosure read" button)."""
+    if not voice.confirm_disclosure(get_db(), voice_call_id, current_user(request)):
+        return JSONResponse({"detail": "Call not found"}, status_code=404)
+    return JSONResponse({"ok": True})
+
+
+@app.get("/voice/calls/{provider_key}/{call_sid}")
+async def voice_call_status(request: Request, provider_key: str, call_sid: str):
+    """The rep's own call, by the provider's call ID: the browser knows only that.
+    Used for the Disclosure read button and to open the Log call form after hang-up."""
+    call = get_db().get_voice_call_by_sid(provider_key, call_sid)
+    if not call or call["user_id"] != current_user(request).id:
+        return JSONResponse({"detail": "Call not found"}, status_code=404)
+    return JSONResponse({"id": call["id"], "status": call["status"], "duration_seconds": call["duration_seconds"],
+                         "outreach_id": call["outreach_id"], "prospect_id": call["prospect_id"],
+                         "disclosure_read": bool(call["disclosure_read_at"])},
+                        headers={"Cache-Control": "no-store"})
+
+
+async def _voice_webhook(request: Request, provider_key: str):
+    """(provider, form params) for a correctly signed provider webhook, or the error response."""
+    found = voice.provider(provider_key)
+    if found is None:
+        return JSONResponse({"detail": "Not Found"}, status_code=404), None
+    params = {name: str(value) for name, value in (await request.form()).items()}
+    # Providers sign the public URL they called; behind Railway's proxy that's site_url().
+    url = site_url() + request.url.path + (f"?{request.url.query}" if request.url.query else "")
+    if not found.verify_webhook(url, params, dict(request.headers)):
+        return JSONResponse({"ok": False, "error": "bad signature"}, status_code=401), None
+    return found, params
+
+
+@app.post("/webhooks/voice/{provider_key}/dial")
+async def webhook_voice_dial(request: Request, provider_key: str):
+    """The provider asks what to do with a call the browser started: dial the
+    outreach's number from the campaign's caller ID, or tell the rep why not."""
+    found, params = await _voice_webhook(request, provider_key)
+    if params is None:
+        return found
+    ask = found.parse_dial(params)
+    db = get_db()
+    call, refusal = await run_in_threadpool(voice.place_call, db, get_campaigns(), found.key,
+                                            ask["call_sid"], ask["identity"], ask["outreach_id"])
+    user_id = voice.user_id_from_identity(ask["identity"])
+    actor = db.load_current_user(user_id) if user_id else None
+    if call is None:
+        db.audit(actor, "voice.refused", "outreach", ask["outreach_id"][:20] or None,
+                 {"provider": found.key, "reason": refusal})
+        return Response(found.refuse_response(refusal), media_type=found.media_type)
+    db.audit(actor, "voice.dial", "voice_call", call["id"],
+             {"provider": found.key, "outreach_id": call["outreach_id"]})
+    status_url = f"{site_url()}/webhooks/voice/{found.key}/status"
+    return Response(found.dial_response(call["to_number"], call["caller_id"], status_url),
+                    media_type=found.media_type)
+
+
+@app.post("/webhooks/voice/{provider_key}/status")
+async def webhook_voice_status(request: Request, provider_key: str):
+    """How a call ended (completed, no-answer, busy...) and how long it lasted."""
+    found, params = await _voice_webhook(request, provider_key)
+    if params is None:
+        return found
+    await run_in_threadpool(voice.record_status, get_db(), found.key, found.parse_status(params))
+    return Response(found.end_response(), media_type=found.media_type)
+
+
 # ── Selling our own lists (core/selling.py) ─────────────────────────
 
 
@@ -2396,9 +2513,45 @@ async def api_create_search(request: Request):
                                                   searches.plugins())
     except searches.SearchConflict as e:
         return _api_error(409, "conflict", str(e))
+    except searches.SearchLimit as e:
+        return _api_error(429, "limit_reached", str(e))
     except (searches.SearchError, accounts.AccountError) as e:
         return _api_error(422, "invalid", str(e))
     return JSONResponse({"search": searches.public(search)}, status_code=202 if created else 200)
+
+
+@app.get("/api/v1/search-types")
+async def api_search_types(request: Request):
+    """The search types the plugins in plugins/searches/ provide, with the fields
+    each needs, so u9itus builds its search form without knowing the types.
+    Platform key or any account key (also a suspended one)."""
+    if accounts.platform_key_ok(_bearer(request)):
+        pass
+    elif await run_in_threadpool(accounts.for_key, get_db(), _bearer(request)) is None:
+        return _api_error(401, "unauthorized", "A valid platform or account key is required.")
+    return {"search_types": await run_in_threadpool(searches.types)}
+
+
+@app.get("/api/v1/usage")
+async def api_usage(request: Request, from_: Optional[str] = Query(default=None, alias="from"),
+                    to: Optional[str] = Query(default=None)):
+    """Searches, delivered prospects and our cost per account per day (task B4).
+    The platform key sees every account; an account key, even a suspended one, sees its own.
+    Defaults to the last 30 days."""
+    account = None
+    if not accounts.platform_key_ok(_bearer(request)):
+        account = await run_in_threadpool(accounts.for_key, get_db(), _bearer(request))
+        if account is None:
+            return _api_error(401, "unauthorized", "A valid platform or account key is required.")
+    try:
+        end = date.fromisoformat(to) if to else datetime.now(timezone.utc).date()
+        start = date.fromisoformat(from_) if from_ else end - timedelta(days=29)
+        rows = await run_in_threadpool(searches.usage, get_db(), start, end,
+                                       account["id"] if account else None)
+    except ValueError as e:
+        message = str(e) if isinstance(e, searches.SearchError) else "from and to must be dates like 2026-10-01."
+        return _api_error(422, "invalid", message)
+    return {"from": start.isoformat(), "to": end.isoformat(), "usage": rows}
 
 
 @app.get("/api/v1/searches/{search_id}")

@@ -30,6 +30,21 @@ class CadenceStep:
 
 
 @dataclass
+class VoiceSettings:
+    """A campaign's `voice:` block: browser calling (docs/BROWSER_CALLING.md)."""
+    caller_id: str = ""     # E.164 number calls are placed from; required for browser calling
+    company_name: str = ""  # spoken in the recording disclosure
+    record: bool = False    # recording stays off until counsel approves the disclosure (V3)
+
+    @classmethod
+    def from_raw(cls, raw) -> "VoiceSettings":
+        raw = raw if isinstance(raw, dict) else {}
+        return cls(caller_id=str(raw.get("caller_id") or "").strip(),
+                   company_name=str(raw.get("company_name") or "").strip(),
+                   record=raw.get("record") is True)
+
+
+@dataclass
 class CampaignConfig:
     name: str
     product: str
@@ -45,6 +60,7 @@ class CampaignConfig:
     sender_email: str = ""
     lead_packages: dict = field(default_factory=dict)  # x402 spend policy, see core/payments.SpendPolicy
     requires_permission: str = ""  # e.g. recruiting.view: only holders see this campaign and its leads
+    voice: VoiceSettings = field(default_factory=VoiceSettings)
     config_dir: Path = None  # type: ignore
 
     @classmethod
@@ -78,6 +94,7 @@ class CampaignConfig:
             sender_email=raw.get("sender_email", ""),
             lead_packages=raw.get("lead_packages") or {},
             requires_permission=str(raw.get("requires_permission") or "").strip(),
+            voice=VoiceSettings.from_raw(raw.get("voice")),
             config_dir=campaign_dir,
         )
 

@@ -8,6 +8,7 @@ and methods satisfies the protocol.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Iterator, Protocol, Optional, runtime_checkable
 
@@ -59,6 +60,12 @@ class DemoPortalProduct(Protocol):
 
     Optional extras the Plugins page uses when present:
     check_connection() -> dict and create_test_portal() -> dict.
+
+    Optional: event_effect(event) -> EventEffect | None says what one of the
+    product's events does to the pipeline. Without it, or when it returns
+    shared_event_effect(event), the shared portal.* vocabulary applies. A
+    product adds its own event types there (u9itus: subscription.*) without
+    any change to core.
     """
 
     key: str
@@ -90,6 +97,44 @@ class DemoPortalProduct(Protocol):
     def pull_events(self, after: int = 0, limit: int = 100) -> dict:
         """Events after the cursor: {events: [...], next_cursor: int}."""
         ...
+
+
+@dataclass(frozen=True)
+class EventEffect:
+    """What one product event does (Pipeline.pull_product_events). Every
+    event is recorded in product_events whatever its effect."""
+
+    # Move each of the prospect's outreach rows forward to this stage; never backward.
+    stage: Optional[str] = None
+    # Add an activity-log entry of this type to each outreach row (None = no entry).
+    log_as: Optional[str] = None
+    # Flag carried on the activity entry, e.g. "ready_to_close".
+    flag: Optional[str] = None
+    # Extra fields on the activity entry, e.g. {"plan": "pro"}.
+    detail: dict = field(default_factory=dict)
+    # Merged into prospect.metadata[portal_namespace], e.g. {"status": "claimed"}.
+    portal: dict = field(default_factory=dict)
+    # The demo link no longer works; clearing it lets provisioning issue a new one.
+    clear_demo_link: bool = False
+
+
+def shared_event_effect(event: dict) -> Optional[EventEffect]:
+    """The portal.* events every demo-portal product shares. None for any other type."""
+    return {
+        "portal.viewed": EventEffect(stage="engaged", log_as="portal.viewed"),
+        "portal.claimed": EventEffect(stage="demo_scheduled", log_as="portal.claimed",
+                                      portal={"status": "claimed"}),
+        # Publishing is the buying signal: flag it, but leave the stage to the rep.
+        "portal.published": EventEffect(log_as="portal_published", flag="ready_to_close",
+                                        portal={"status": "published"}),
+        "portal.expired": EventEffect(portal={"status": "expired"}, clear_demo_link=True),
+    }.get(event.get("type"))
+
+
+def event_effect(product, event: dict) -> Optional[EventEffect]:
+    """The product's effect for an event, or the shared one when it doesn't define any."""
+    custom = getattr(product, "event_effect", None)
+    return custom(event) if callable(custom) else shared_event_effect(event)
 
 
 def portal_product(product) -> Optional[DemoPortalProduct]:
@@ -149,4 +194,49 @@ class Scheduler(Protocol):
 
     def fetch_bookings(self, since: datetime) -> Iterator[Booking]:
         """Yield bookings with a start time at or after `since`. Never raise."""
+        ...
+
+
+@runtime_checkable
+class VoiceProvider(Protocol):
+    """A calling service that places prospect calls from the dashboard (Twilio, etc.).
+
+    The rules about who may dial and whom (core/voice.py) are the same for every
+    provider; a provider only speaks its service's language: browser tokens, call
+    instructions and webhooks. See docs/BROWSER_CALLING.md.
+    """
+
+    key: str
+    media_type: str  # of the call instructions, e.g. "application/xml" for TwiML
+
+    def is_configured(self) -> bool:
+        """Whether the credentials browser calling needs are set."""
+        ...
+
+    def access_token(self, identity: str, ttl_seconds: int = 3600) -> str:
+        """A short-lived token the browser SDK connects with, for this identity."""
+        ...
+
+    def verify_webhook(self, url: str, params: dict, headers: dict) -> bool:
+        """Whether a webhook request really came from the provider."""
+        ...
+
+    def parse_dial(self, params: dict) -> dict:
+        """{call_sid, identity, outreach_id} from the provider's request to place a call."""
+        ...
+
+    def dial_response(self, to_number: str, caller_id: str, status_url: str) -> str:
+        """Call instructions that dial `to_number` from `caller_id`, reporting the end to `status_url`."""
+        ...
+
+    def refuse_response(self, message: str) -> str:
+        """Call instructions that tell the rep `message` and hang up."""
+        ...
+
+    def parse_status(self, params: dict) -> dict:
+        """{call_sid, status, duration_seconds} from the provider's end-of-call webhook."""
+        ...
+
+    def end_response(self) -> str:
+        """Call instructions that end the call."""
         ...

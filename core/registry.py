@@ -26,6 +26,7 @@ class PluginRegistry:
         self.channels: dict[str, Any] = {}
         self.enrichers: dict[str, Any] = {}
         self.schedulers: dict[str, Any] = {}
+        self.voice: dict[str, Any] = {}  # calling services (core/voice.py)
         self.pages: dict[str, Any] = {}  # web pages (core/plugin_pages.py); not in list_plugins()
         self.jobs: dict[str, Any] = {}  # scheduled jobs (core/jobs.py); not in list_plugins()
         self.panels: dict[str, Any] = {}  # cards on core pages (core/plugin_panels.py); not in list_plugins()
@@ -39,6 +40,7 @@ class PluginRegistry:
             ("channels", self.channels),
             ("enrichers", self.enrichers),
             ("schedulers", self.schedulers),
+            ("voice", self.voice),
             ("pages", self.pages),
             ("jobs", self.jobs),
             ("panels", self.panels),
@@ -99,4 +101,5 @@ class PluginRegistry:
             "channels": list(self.channels.keys()),
             "enrichers": list(self.enrichers.keys()),
             "schedulers": list(self.schedulers.keys()),
+            "voice": list(self.voice.keys()),
         }

@@ -6,7 +6,7 @@ S3**, and **turning the recording into a drafted call log**. Written in the same
 format as [MAILER_FOLLOWUP_CALLS.md](MAILER_FOLLOWUP_CALLS.md): diagrams are
 Mermaid, the contract is YAML, and tasks have file paths and acceptance checks.
 
-Status (2026-10-08): **proposed.** Nothing is built. Decided: dialing is Super
+Status (2026-10-08): **V1 and V2 built** (dialing from the dashboard with the consent record, the Call button and call bar, and the pre-filled Log call form). V3 onward is proposed; V3 waits on counsel's review of the disclosure. Decided: dialing is Super
 Admin only, caller ID is set per campaign, recordings are stored in AWS S3. Later
 (V8), Owners connect their own Twilio accounts with Twilio Connect. Calling is a
 plugin category (`plugins/voice/`) with Twilio as the only provider for now, and a
@@ -82,8 +82,8 @@ flowchart LR
 
   subgraph AOS["agency-os"]
     TOK["GET /voice/token (NEW)<br/>Super Admin"]
-    TWIML["POST /webhooks/twilio/voice (NEW)<br/>outreach, DNC, caller ID → &lt;Dial record&gt;"]
-    STAT["POST /webhooks/twilio/status (NEW)<br/>POST /webhooks/twilio/recording (NEW)"]
+    TWIML["POST /webhooks/voice/twilio/dial (NEW)<br/>outreach, DNC, caller ID → &lt;Dial record&gt;"]
+    STAT["POST /webhooks/voice/twilio/status (NEW)<br/>POST /webhooks/voice/twilio/recording (NEW)"]
     CONS["POST /voice/calls/{id}/disclosure (NEW)<br/>POST /voice/calls/{id}/stop-recording (NEW)"]
     VOICE["core/voice.py (NEW)"]
     JOBS["core/jobs.py<br/>+ voice-recordings · voice-transcribe · voice-retention"]
@@ -125,7 +125,7 @@ sequenceDiagram
   Rep->>AOS: GET /voice/token
   AOS-->>Rep: access token (identity = user id, 1 h)
   Rep->>TW: Device.connect({outreach_id})
-  TW->>AOS: POST /webhooks/twilio/voice (signed)
+  TW->>AOS: POST /webhooks/voice/twilio/dial (signed)
   AOS->>AOS: Super Admin? do_not_call? phone dialable? campaign caller ID?
   AOS->>AOS: voice_calls += (call_sid, outreach, caller_id, prospect_state, disclosure_version)
   AOS-->>TW: <Dial callerId=campaign record="record-from-answer-dual"><Number>
@@ -213,7 +213,7 @@ disputed or depend on the kind of call.**
 
 ## 4. Rules
 
-- **Dial only known numbers.** `/webhooks/twilio/voice` takes `outreach_id` and the
+- **Dial only known numbers.** `/webhooks/voice/twilio/dial` takes `outreach_id` and the
   caller's identity from the access token. It dials `tel_href(outreach.contact_phone)`
   only if the user is a Super Admin and the campaign has a `voice.caller_id`.
   Anything else gets `<Say>` and `<Hangup/>` and is written to the audit log.
@@ -249,12 +249,12 @@ voice:
 ```yaml
 twilio_voice:
   twiml_app:                        # Twilio Console → Voice → TwiML Apps
-    voice_url: POST https://<dashboard>/webhooks/twilio/voice
+    voice_url: POST https://<dashboard>/webhooks/voice/twilio/dial
   dial:
     callerId: campaign.voice.caller_id
     record: record-from-answer-dual # one channel per side (talk-time later, V7)
-    recordingStatusCallback: POST /webhooks/twilio/recording
-    action: POST /webhooks/twilio/status   # final DialCallStatus + DialCallDuration
+    recordingStatusCallback: POST /webhooks/voice/twilio/recording
+    action: POST /webhooks/voice/twilio/status   # final DialCallStatus + DialCallDuration
   stop_recording: POST /2010-04-01/Accounts/{sid}/Calls/{call_sid}/Recordings/{rec_sid}.json  Status=stopped
   auth: X-Twilio-Signature          # HMAC-SHA1 of URL + sorted params with TWILIO_AUTH_TOKEN
   access_token:
@@ -325,7 +325,7 @@ routes:
   "POST /voice/calls/{id}/disclosure": "@super_admin"       # and only the user who placed the call
   "POST /voice/calls/{id}/stop-recording": "@super_admin"   # same
   "GET /calls/{id}/recording": calls.view                   # plus sees_campaign on the call's campaign
-  "/webhooks/twilio/*": no login; X-Twilio-Signature required
+  "/webhooks/voice/*": no login; X-Twilio-Signature required
 ```
 
 Voice provider interface (V1, `core/protocols.py`), implemented by
@@ -346,9 +346,8 @@ VoiceProvider:
   bridge_call(call: VoiceCall, rep_number: str) -> str  # V9: ring the rep's phone, then the prospect
 ```
 
-`core/voice.py` calls only these methods. Webhook routes become
-`/webhooks/voice/{provider}/…`; Twilio's are the `/webhooks/twilio/*` paths above,
-kept as aliases.
+`core/voice.py` calls only these methods. Webhook routes are
+`/webhooks/voice/{provider}/…`, so Twilio's are `/webhooks/voice/twilio/…`.
 
 Per-owner Twilio (V8):
 
@@ -480,7 +479,7 @@ routes:
    calls aren't shown as spam, and decide where callbacks to it go (Q6).
 2. **Twilio API key:** Account → API keys. Set `TWILIO_API_KEY_SID` and
    `TWILIO_API_KEY_SECRET`.
-3. **TwiML App:** Voice URL `https://<dashboard>/webhooks/twilio/voice` (POST). Set
+3. **TwiML App:** Voice URL `https://<dashboard>/webhooks/voice/twilio/dial` (POST). Set
    `TWILIO_TWIML_APP_SID`. Until these three are set, the Call button doesn't
    appear and the `tel:` link is used.
 4. **AWS:** create a private S3 bucket with Block Public Access on and default
@@ -506,8 +505,8 @@ routes:
 
 | ID | Task | Files | Acceptance check |
 |---|---|---|---|
-| V1 | **Server side of dialing, with the consent record.** Settings check; access token (`SUPER_ADMIN` route rule); campaign `voice:` block (`caller_id` required, `company_name`, `record`); `voice_calls` table; `/webhooks/twilio/voice` (outreach lookup, Super Admin, `do_not_call`, campaign `callerId`, `<Dial>`); `/webhooks/twilio/status`; Twilio signature check. `DISCLOSURES` (versioned text from section 3) and `ALL_PARTY_CONSENT_STATES`; each call stores `prospect_state`, `all_party_consent` and `disclosure_version`; `POST /voice/calls/{id}/disclosure` sets `disclosure_read_at` | `core/voice.py` (NEW), `core/protocols.py` (`VoiceProvider`), `plugins/voice/__init__.py` (NEW), `plugins/voice/_base.py` (NEW), `plugins/voice/twilio_voice.py` (NEW), `core/db.py`, `core/campaign.py`, `core/access.py`, `web/app.py`, `.env.example`, `tests/test_voice.py` (NEW) | Tests: `core/voice.py` imports nothing from Twilio, and the consent and `do_not_call` tests pass against a fake provider as well as Twilio; unsigned or wrongly signed requests get 401; a non–Super Admin gets 403 on `/voice/token` and `<Hangup/>` from the webhook; a `do_not_call` prospect, an undialable phone or a campaign with no `caller_id` gets `<Hangup/>` and no row; a valid request returns `<Dial callerId="<campaign number>">` to the outreach's E.164 number and records one row with the prospect's state, `all_party_consent` (1 for CA and for a missing state, 0 for TX) and the current `disclosure_version`; the disclosure endpoint works only for the user who placed the call; a status callback sets status and duration once (replays change nothing). |
-| V2 | **Dialer UI.** Vendor the Voice SDK; `dialer.js` turns `.call-link` into a softphone button for Super Admins on campaigns with a caller ID (call bar with timer, Mute, Hang up, the disclosure text with company name and the state label, **Disclosure read**); on hang-up, open the existing Log call form with `voice_call_id`, duration and the outcome guess; `/call-log/record` accepts `voice_call_id` and links it | `web/static/vendor/twilio.min.js` (NEW), `web/static/dialer.js` (NEW), `web/templates/prospect_detail.html`, `web/templates/call_scripts.html`, `web/app.py` | Tests: with voice settings unset, pages render the `tel:` link exactly as in `tests/test_tap_to_call.py`; for a Super Admin on a campaign with a caller ID, the button carries `data-outreach-id` and no phone number; everyone else still gets `tel:`; logging with a `voice_call_id` that belongs to another user or is already linked is refused. |
+| V1 ✓ | **Server side of dialing, with the consent record.** Settings check; access token (`SUPER_ADMIN` route rule); campaign `voice:` block (`caller_id` required, `company_name`, `record`); `voice_calls` table; `/webhooks/voice/twilio/dial` (outreach lookup, Super Admin, `do_not_call`, campaign `callerId`, `<Dial>`); `/webhooks/voice/twilio/status`; Twilio signature check. `DISCLOSURES` (versioned text from section 3) and `ALL_PARTY_CONSENT_STATES`; each call stores `prospect_state`, `all_party_consent` and `disclosure_version`; `POST /voice/calls/{id}/disclosure` sets `disclosure_read_at` | `core/voice.py` (NEW), `core/protocols.py` (`VoiceProvider`), `plugins/voice/__init__.py` (NEW), `plugins/voice/_base.py` (NEW), `plugins/voice/twilio_voice.py` (NEW), `core/db.py`, `core/campaign.py`, `core/access.py`, `web/app.py`, `.env.example`, `tests/test_voice.py` (NEW) | Tests: `core/voice.py` imports nothing from Twilio, and the consent and `do_not_call` tests pass against a fake provider as well as Twilio; unsigned or wrongly signed requests get 401; a non–Super Admin gets 403 on `/voice/token` and `<Hangup/>` from the webhook; a `do_not_call` prospect, an undialable phone or a campaign with no `caller_id` gets `<Hangup/>` and no row; a valid request returns `<Dial callerId="<campaign number>">` to the outreach's E.164 number and records one row with the prospect's state, `all_party_consent` (1 for CA and for a missing state, 0 for TX) and the current `disclosure_version`; the disclosure endpoint works only for the user who placed the call; a status callback sets status and duration once (replays change nothing). |
+| V2 ✓ | **Dialer UI.** Vendor the Voice SDK; `dialer.js` turns `.call-link` into a softphone button for Super Admins on campaigns with a caller ID (call bar with timer, Mute, Hang up, the disclosure text with company name and the state label, **Disclosure read**); on hang-up, open the existing Log call form with `voice_call_id`, duration and the outcome guess; `/call-log/record` accepts `voice_call_id` and links it | `web/static/vendor/twilio.min.js` (NEW), `web/static/dialer.js` (NEW), `web/templates/prospect_detail.html`, `web/templates/call_scripts.html`, `web/app.py` | Tests: with voice settings unset, pages render the `tel:` link exactly as in `tests/test_tap_to_call.py`; for a Super Admin on a campaign with a caller ID, the button carries `data-outreach-id` and no phone number; everyone else still gets `tel:`; logging with a `voice_call_id` that belongs to another user or is already linked is refused. |
 | V3 | **Recording to S3.** `record` on `<Dial>` only when the campaign has `record: true` and S3 is configured; recording callback stores the SID; **Stop recording** (Twilio `Status=stopped`, then delete); `voice-recordings` job: discard recordings with no `disclosure_read_at` or with `recording_stopped_at`, otherwise download, put to S3, verify, delete from Twilio; `GET /calls/{id}/recording` redirects to a 5-minute presigned URL after the permission check | `core/voice.py`, `core/storage.py` (NEW, S3 wrapper), `core/jobs.py` (`Job("voice-recordings", …)`), `requirements-aws.txt` (NEW), `Dockerfile`, `web/app.py`, `web/static/dialer.js`, `web/templates/call_log.html`, `web/templates/prospect_detail.html` | Tests (fake Twilio, fake S3): no S3 settings → unrecorded `<Dial>`; a call with no confirmed disclosure ends with the recording deleted and nothing in S3; Stop recording deletes it; a good call ends with one S3 object, `s3_key` set and the Twilio recording deleted; a failed S3 put leaves the Twilio recording in place and retries; running the job twice uploads once; a Viewer in another campaign gets 403 on the recording. |
 | V4 | **Transcription job.** For calls with an `s3_key` and no transcript, transcribe each channel, labelled Rep / Prospect | `core/voice.py`, `core/jobs.py` (`Job("voice-transcribe", …)`) | Running the job twice transcribes each recording once; with `AGENCY_OS_TRANSCRIBE` off it does nothing; a failed transcription is retried on the next run and logged in `job_runs`. |
 | V5 | **AI draft of the call log.** From the transcript, draft notes, interest level, next step and date, decision maker; the Log call form shows the draft (polling while it's pending) labelled as AI | `core/voice.py`, `core/llm.py` (prompt + JSON schema), `web/app.py`, `web/static/dialer.js` | Tests (fake LLM): the draft only contains allowed `interest_level` values; with `AGENCY_OS_AI=off` or a user without AI, no draft is made; nothing is written to `call_log` until the form is submitted. |
@@ -546,7 +545,7 @@ V13 needs transcripts (V4).
   is deleted there.
 - **The rep owns the call log.** AI drafts are suggestions; stage changes,
   `do_not_call` and royalties still come only from `/call-log/record`.
-- **Webhooks are authenticated.** Every `/webhooks/twilio/*` request must carry a
+- **Webhooks are authenticated.** Every `/webhooks/voice/*` request must carry a
   valid `X-Twilio-Signature`, computed against the public URL (behind Railway's
   proxy, use the forwarded host and scheme).
 - **Spend is controlled.** Only Super Admins can place billed calls; retention and

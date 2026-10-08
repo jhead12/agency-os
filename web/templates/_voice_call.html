@@ -1,0 +1,7 @@
+{# Softphone Call button (web/static/dialer.js, core/voice.py). Needs `b` (from voice.call_button)
+   and `label`; `script_key` is optional. No phone number here: the server looks it up when dialing. #}
+<button type="button" class="btn btn-sm call-link voice-call"
+        data-outreach-id="{{ b.outreach_id }}" data-prospect-id="{{ b.prospect_id }}"
+        data-label="{{ label }}" data-disclosure="{{ b.disclosure }}" data-state-label="{{ b.state_label }}"
+        {% if script_key %}data-script-key="{{ script_key }}"{% endif %}
+        {% if b.blocked %}disabled title="{{ b.blocked }}"{% endif %}>📞 {{ label }}{% if b.blocked %} (do not call){% endif %}</button>
