@@ -1,0 +1,22 @@
+name: Set up a campaign
+description: Create a campaign, choose who works it, test it on your own devices and import leads. Nothing is saved.
+requires: '@owner'
+steps:
+  - goto: /admin/campaigns
+    say: Campaigns is where you create and set up campaigns.
+  - highlight: '.campaign-section details > summary'
+    say: Open Create New Campaign to start one. Choose the product you're selling, where the leads come from, how you reach them, and how contact details are found.
+  - highlight: .campaign-grid
+    say: Each campaign shows its product and plugins. A plugin marked Not configured still needs its keys set on the server.
+  - click: 'a.btn[href^="/admin/campaigns/"]'
+    say: Open a campaign.
+  - wait: {for: '#members'}
+  - highlight: '#members'
+    say: Who works this campaign. With nobody added, everyone whose role allows it sees the campaign. Add people or roles to limit it to them. Owners and Super Admins always see every campaign.
+  - highlight: '#test'
+    say: Test this campaign by sending yourself one of its emails, or by ringing your own phone from its caller ID. Tests never touch a prospect, a stage or a stat.
+  - highlight: '#csv-import-form'
+    say: Import leads from a CSV. Download Template gives you the columns. New prospects start at cold, and ones already here are updated.
+  - highlight: '.yaml-viewer summary'
+    say: The campaign's settings file is here if you want to see exactly what's saved.
+  - pause: That's a campaign. Press Save Campaign after you change its plugins or settings.

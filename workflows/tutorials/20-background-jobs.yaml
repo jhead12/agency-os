@@ -1,0 +1,14 @@
+name: Background jobs
+description: The work this server runs on a schedule, and how to run a job by hand. Nothing is run.
+requires: '@owner'
+steps:
+  - goto: /admin/jobs
+    say: Jobs is the work this server does on its own, on a schedule. Every job is safe to repeat. Sending email always stays manual.
+  - highlight: .data-table
+    say: Each job shows how often it runs, when it last ran, and whether that run was ok or had a problem.
+  - say: If scheduled runs are off, a red note at the top says so. Set AGENCY_OS_RUN_JOBS to 1 on the server to turn them on.
+  - highlight: 'form[action$="/run"] button'
+    say: Run now runs a job straight away, even when the schedule is off. The tutorial won't press it.
+  - highlight: 'h3 + .table-scroll, h3 + .empty-state'
+    say: Recent runs lists each run, what started it, and a summary. When a job reports a problem, the details are here.
+  - pause: That's jobs. If a portal says its API isn't configured, follow the hint at the top before relying on its job.

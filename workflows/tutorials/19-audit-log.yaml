@@ -1,0 +1,11 @@
+name: Read the audit log
+description: Who did what, and when. Nothing is changed.
+requires: '@owner'
+steps:
+  - goto: /admin/audit
+    say: The audit log records sign-ins, team changes, and edits to prospects and templates.
+  - highlight: '.data-table, .empty-state'
+    say: Each row shows when it happened, who did it, what they did, and what it was done to. Details holds the specifics, such as the fields that changed.
+  - say: Anything a tutorial or workflow changes is recorded as the person who confirmed it, so a recording never hides who made a change.
+  - say: If some campaigns are assigned to other Owners, you won't see entries about those campaigns or their prospects.
+  - pause: That's the audit log. Look here first when something changed and nobody remembers doing it.

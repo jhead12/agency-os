@@ -1,0 +1,19 @@
+name: Your campaigns
+description: Read the Campaigns page, with each campaign's plugins, cadence, spend and pipeline. Nothing is changed.
+requires: campaigns.view
+steps:
+  - goto: /campaigns
+    say: Campaigns shows every campaign you work, in one place.
+  - highlight: 'details.nav-group:has(a[href="/campaigns"]) > summary'
+    say: You'll find it in the menu as All Campaigns, next to Plugins.
+  - highlight: .campaign-header
+    say: Each campaign shows its name and the product it sells.
+  - highlight: .campaign-grid
+    say: Below that, where its leads come from, how prospects are reached, and the services that find contact details.
+  - highlight: '.campaign-col:nth-child(4)'
+    say: The cadence is the order of touches. Each touch uses a script, moves the prospect to its next stage, and waits a number of days before the next one.
+  - highlight: .campaign-meta-text
+    say: If the campaign buys lead packages, this line shows the month's spend against its budget, unlocks and royalties, and any payments still waiting to confirm.
+  - highlight: .stage-bars
+    say: The bars show how many prospects sit at each stage, so you can see where the pipeline is thin.
+  - pause: That's campaigns. Owners change a campaign under Campaign Settings; play "Set up a campaign" to see how.

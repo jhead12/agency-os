@@ -1,0 +1,17 @@
+name: Manage the team
+description: Give people roles, deactivate them, reset a password or add someone from the Team page. Nothing is saved.
+requires: '@owner'
+steps:
+  - goto: /admin/users
+    say: Team lists everyone who can sign in. A new person has no access until you give them a role.
+  - highlight: .admin-tabs
+    say: These tabs switch between the team, roles, the audit log, customer accounts and background jobs.
+  - highlight: 'form.admin-row .check-grid'
+    say: Each person has a row. Tick roles to set what they can do. Their access is everything their roles allow, added together.
+  - highlight: 'form.admin-row .admin-row-flags'
+    say: Untick Active to lock someone out without losing their history. Tick AI agent for an account an AI uses. An AI agent can never be an Owner, buy or sell lead packages, or use the console.
+  - highlight: 'form.admin-row input[name="new_password"]'
+    say: Type a new password here to reset theirs, or leave it blank to keep it. Nothing on a row changes until you press its Save button.
+  - highlight: 'form[action="/admin/users"]'
+    say: Add a user at the bottom with a temporary password, and share it with them privately. To email them a link instead, use users invite in the console.
+  - pause: That's the team page. Only a Super Admin can change an Owner or a Super Admin.
