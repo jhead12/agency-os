@@ -95,5 +95,5 @@
 <p class="empty-state">No phone scripts found. Add <code>phone_*.yaml</code> files to your campaign's <code>scripts/</code> folder.</p>
 {% endif %}
 
-{% if voice_button %}<script src="/static/vendor/twilio-voice-2.18.5.min.js" defer></script><script src="/static/dialer.js" defer></script>{% endif %}
+{% if voice_button %}<script src="/static/vendor/twilio-voice-2.18.5.min.js" defer></script><script src="{{ static_url('dialer.js') }}" defer></script>{% endif %}
 {% endblock %}

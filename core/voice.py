@@ -48,6 +48,7 @@ NOT_FOUND = "That contact wasn't found."
 NO_CALLER_ID = "This campaign has no caller ID set."
 DO_NOT_CALL = "This person asked not to be called."
 NO_NUMBER = "There's no dialable number for this contact."
+TEST_EXPIRED = "This test call has expired. Start a new one from the campaign page."
 
 
 # ── Numbers, consent and the disclosure ───────────────────────────────
@@ -219,10 +220,39 @@ def place_call(db, campaigns, provider_key: str, call_sid: str, identity: str,
     return call, ""
 
 
+def place_test_call(db, campaigns, provider_key: str, call_sid: str, identity: str,
+                    test_id, max_age_minutes: int) -> tuple[Optional[dict], str]:
+    """Decide whether to dial an Owner's test call (core/campaign_tests.py).
+
+    Only the Owner who started it, only once, only soon after, and only to the
+    number they entered then, from the campaign's caller ID. Returns
+    (campaign_tests row, "") to dial, or (None, reason) to refuse.
+    """
+    if not call_sid:
+        return None, NOT_FOUND
+    user_id = user_id_from_identity(identity)
+    user = db.load_current_user(user_id) if user_id else None
+    if user is None or not user.is_owner:
+        return None, NOT_FOUND
+    try:
+        test = db.get_campaign_test(int(test_id))
+    except (TypeError, ValueError):
+        test = None
+    if test is None or test["kind"] != "call" or test["user_id"] != user.id:
+        return None, NOT_FOUND
+    campaign = next((c for c in campaigns if c.db_name == test["campaign"]), None)
+    if campaign is None or not user.sees_campaign(campaign):
+        return None, NOT_FOUND
+    if campaign_caller_id(campaign) != test["caller_id"]:
+        return None, NO_CALLER_ID
+    claimed = db.claim_test_call(test["id"], provider_key, call_sid, max_age_minutes)
+    return (claimed, "") if claimed else (None, TEST_EXPIRED)
+
+
 def record_status(db, provider_key: str, status: dict) -> bool:
-    """Store how a call ended. Only the first report counts, so replays change nothing."""
-    return db.finish_voice_call(provider_key, status["call_sid"], status["status"],
-                                status["duration_seconds"])
+    """Store how a call (or a test call) ended. Only the first report counts, so replays change nothing."""
+    args = (provider_key, status["call_sid"], status["status"], status["duration_seconds"])
+    return db.finish_voice_call(*args) or db.finish_test_call(*args)
 
 
 def confirm_disclosure(db, voice_call_id: int, user) -> bool:

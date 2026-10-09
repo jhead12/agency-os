@@ -167,13 +167,14 @@
     {% if cli %}
     <div class="detail-card full-width" id="cli">
         <h3>Command console</h3>
-        <p class="muted">Run agency-os commands such as <code>users invite</code> or <code>search-prospects</code>. Each command runs as you, with your permissions. Type <code>help</code> to see the commands you can run.</p>
+        <p class="muted">Run agency-os commands such as <code>users invite</code> or <code>search-prospects</code>. Each command runs as you, with your permissions. Type <code>help</code>, or see <a href="/console#commands">the list of commands</a>.</p>
         <p class="agent-actions">
             <a href="/console" class="btn" data-workflow-play="tutorial/console">&#9654; Show me how</a>
             <a href="/console" class="btn btn-secondary" data-console-open>Open the console</a>
         </p>
 
-        <h4 class="mcp-step">Use it from your own terminal</h4>
+        <details id="cli-terminal" class="cli-terminal"{% if cli.new_key %} open{% endif %}>
+        <summary>Use it from your own terminal (Railway or the CLI, outside the browser)</summary>
         <p class="muted">Create a key, then in a checkout of agency-os run:</p>
         <pre class="agent-output">python3 agency_os.py connect --url {{ cli.url }} --key aos_cli_...
 python3 agency_os.py remote users list     # one command
@@ -205,6 +206,7 @@ python3 agency_os.py remote                # interactive</pre>
         </table>
         </div>
         {% endif %}
+        </details>
     </div>
     {% endif %}
 

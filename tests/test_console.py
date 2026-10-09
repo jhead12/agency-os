@@ -269,3 +269,34 @@ def test_format_result_tables():
     text = console.format_result({"ok": True, "users": [{"email": "a@x.com", "active": True}], "note": "hi"})
     assert text.splitlines()[:3] == ["users:", "email    active", "-------  ------"]
     assert "note: hi" in text
+
+
+# ── The command list on /console, and the terminal section on /account ─
+
+
+def test_console_page_lists_the_commands_this_user_can_run(db):
+    console_user(db)
+    make_user(db, "owner@x.com", access.OWNER_ROLE)
+    caller = client_for("caller@x.com").get("/console").text
+    assert 'id="commands"' in caller and "<code>search-prospects</code>" in caller
+    assert 'data-console-fill="search-prospects --q' in caller and "<code>whoami</code>" in caller
+    assert "users invite" not in caller  # an Owner command: not in a Caller's list
+    owner = client_for("owner@x.com").get("/console").text
+    assert "<code>users invite</code>" in owner and "changes data" in owner
+    assert "python3 agency_os.py remote help" in owner
+
+
+def test_terminal_setup_is_collapsed_on_the_account_page(db):
+    console_user(db)
+    client = client_for("caller@x.com")
+    page = client.get("/account").text
+    assert '<details id="cli-terminal" class="cli-terminal">' in page and 'href="/console#commands"' in page
+    made = client.post("/account/cli-keys", data={"name": "laptop"}).text
+    assert '<details id="cli-terminal" class="cli-terminal" open>' in made  # the new key is shown, not hidden
+
+
+def test_scripts_and_styles_carry_a_version(db):
+    console_user(db)
+    page = client_for("caller@x.com").get("/console").text
+    assert re.search(r'/static/player\.js\?v=[0-9a-f]{10}"', page)
+    assert re.search(r'/static/style\.css\?v=[0-9a-f]{10}"', page)

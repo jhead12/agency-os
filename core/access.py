@@ -176,8 +176,11 @@ ROUTE_RULES: dict[str, str] = {
     "POST /webhooks/bounce": PUBLIC,
     "POST /webhooks/voice/{provider_key}/dial": PUBLIC,    # signed by the provider (core/voice.py)
     "POST /webhooks/voice/{provider_key}/status": PUBLIC,
-    # Browser calling: Super Admins only until dialing opens to Owners (docs/BROWSER_CALLING.md, V8).
-    "GET /voice/token": SUPER_ADMIN,
+    # Browser calling: prospect calls are Super Admin only until dialing opens to Owners
+    # (docs/BROWSER_CALLING.md, V8). Owners get a token for test calls to their own phone;
+    # the dial webhook still refuses them any prospect call (core/voice.py).
+    "GET /voice/token": OWNER,
+    "GET /voice/test-calls/{test_id}": OWNER,   # the Owner's own test call (core/campaign_tests.py)
     "POST /voice/calls/{voice_call_id}/disclosure": SUPER_ADMIN,  # and only the rep who placed the call
     "GET /voice/calls/{provider_key}/{call_sid}": SUPER_ADMIN,   # the rep's own call: status after hang-up
     # Selling: the x402 provider endpoints are public; payment or a claim token authorizes them.
@@ -266,6 +269,8 @@ ROUTE_RULES: dict[str, str] = {
     "POST /admin/campaigns/{campaign_slug}": OWNER,
     "POST /admin/campaigns/{campaign_slug}/import-csv": OWNER,
     "POST /admin/campaigns/{campaign_slug}/members": OWNER,
+    "POST /admin/campaigns/{campaign_slug}/test-email": OWNER,
+    "POST /admin/campaigns/{campaign_slug}/test-call": OWNER,
     "POST /admin/campaigns/{campaign_slug}/owners": SUPER_ADMIN,
     "POST /admin/campaigns/{campaign_slug}/owners/{owner_id}/delete": SUPER_ADMIN,
     "POST /admin/campaigns/{campaign_slug}/members/{member_id}/delete": OWNER,

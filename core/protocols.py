@@ -234,7 +234,8 @@ class VoiceProvider(Protocol):
         ...
 
     def parse_dial(self, params: dict) -> dict:
-        """{call_sid, identity, outreach_id} from the provider's request to place a call."""
+        """{call_sid, identity, outreach_id, test_call_id} from the provider's request to place a call
+        (test_call_id is set instead of outreach_id for an Owner's test call, core/campaign_tests.py)."""
         ...
 
     def dial_response(self, to_number: str, caller_id: str, status_url: str) -> str:

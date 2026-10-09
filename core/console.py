@@ -309,6 +309,16 @@ def _help(user: CurrentUser, topic: list[str]) -> str:
     return "\n".join(lines)
 
 
+def reference(user: CurrentUser) -> list[dict]:
+    """The commands this user can run, for the list on the console page: the same
+    ones help prints, each with its usage and a ready-to-run example."""
+    rows = [{"command": name, "description": text, "usage": name, "example": name, "changes": False}
+            for name, text in BUILTINS.items()]
+    rows += [{"command": _command(t), "description": t.description, "usage": usage(t), "example": example(t),
+              "changes": t.kind == "write"} for t in sorted(tools.available(user, "console"), key=_command)]
+    return rows
+
+
 # ── Running a line ────────────────────────────────────────────────────
 
 

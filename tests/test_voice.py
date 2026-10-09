@@ -269,13 +269,17 @@ def test_status_is_stored_once(setup):
 # ── Token and disclosure (signed-in routes) ────────────────────────────
 
 
-def test_token_is_for_super_admins_only(setup):
+def test_token_is_for_super_admins_and_owners(setup):
+    """Owners connect only for test calls to their own phone (tests/test_campaign_tests.py);
+    the dial webhook still refuses them prospect calls."""
     r = client_for("boss@x.com").get("/voice/token")
     assert r.status_code == 200 and r.headers["cache-control"] == "no-store"
     body = r.json()
     assert body["identity"] == f"user-{setup['boss']}" and body["expires_in"] == voice.TOKEN_TTL_SECONDS
     assert body["token"].count(".") == 2
-    assert client_for("owner@x.com").get("/voice/token").status_code == 403
+    assert client_for("owner@x.com").get("/voice/token").status_code == 200
+    make_user(setup["db"], "rep@x.com", "Sales Rep")
+    assert client_for("rep@x.com").get("/voice/token").status_code == 403
 
 
 def test_disclosure_read_only_by_the_rep_who_placed_the_call(setup):

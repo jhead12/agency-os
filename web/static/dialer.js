@@ -2,6 +2,9 @@
 // from the browser through Twilio Voice (docs/BROWSER_CALLING.md, V2).
 // The page sends only the outreach id; the server picks the number and caller ID.
 // After hang-up, the prospect page opens with the Log call form filled in.
+// Test calls (a button with data-test-url, on the campaign admin page) ring the Owner's
+// own phone instead: the page first asks the server to record the number it was given,
+// then sends only that test call's id. Nothing is logged afterwards.
 (() => {
     const PROVIDER = 'twilio';
     let device = null;
@@ -27,6 +30,23 @@
         const response = await fetch(`/voice/calls/${PROVIDER}/${encodeURIComponent(sid)}`,
                                      { headers: { Accept: 'application/json' } });
         return response.ok ? response.json() : null;
+    };
+
+    const lookupTest = async (id) => {
+        const response = await fetch(`/voice/test-calls/${encodeURIComponent(id)}`,
+                                     { headers: { Accept: 'application/json' } });
+        return response.ok ? response.json() : null;
+    };
+
+    // Record the test call server-side; returns its id. The number never goes to the provider from here.
+    const startTest = async (button) => {
+        const input = document.querySelector(button.dataset.phoneInput);
+        const body = new FormData();
+        body.set('phone', input ? input.value : '');
+        const response = await fetch(button.dataset.testUrl, { method: 'POST', body, headers: { Accept: 'application/json' } });
+        const reply = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(reply.detail || "Couldn't start the test call.");
+        return reply.test_call_id;
     };
 
     const el = (tag, className, text) => {
@@ -76,6 +96,24 @@
         active.ui.timer.textContent = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
     };
 
+    const duration = (seconds) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+
+    // A test call ends in the call bar: wait briefly for the provider's report, then say how it went.
+    const finishTest = async (message) => {
+        const { ui, testId } = active;
+        setStatus(message || 'Call ended.');
+        let placed = null;
+        for (let attempt = 0; testId && attempt < 10; attempt++) {
+            placed = await lookupTest(testId);
+            if (placed && !['pending', 'initiated'].includes(placed.status)) break;
+            await new Promise((resolve) => setTimeout(resolve, 800));
+        }
+        if (placed && !['pending', 'initiated'].includes(placed.status)) {
+            setStatus(`Test call ended: ${placed.status.replace('-', ' ')}, ${duration(placed.duration_seconds || 0)}.`);
+        }
+        ui.close.hidden = false;
+    };
+
     // Wait briefly for the provider's end-of-call report, then open the Log call form.
     const finish = async (message) => {
         if (!active || active.finished) return;
@@ -85,6 +123,7 @@
         ui.mute.hidden = true;
         ui.hangup.hidden = true;
         ui.read.disabled = true;
+        if (active.test) return finishTest(message);
         setStatus(message || 'Call ended. Opening the call log…');
         let placed = null;
         for (let attempt = 0; sid && attempt < 10; attempt++) {
@@ -105,7 +144,9 @@
     const start = async (button) => {
         if (active) return;
         const ui = buildBar(button);
-        active = { button, ui, sid: null, voiceCallId: null, started: null, timer: null, finished: false };
+        const test = Boolean(button.dataset.testUrl);
+        active = { button, ui, test, testId: null, sid: null, voiceCallId: null, started: null, timer: null, finished: false };
+        if (test) ui.read.hidden = true;  // nothing is recorded on a test call
         ui.close.addEventListener('click', () => { ui.bar.remove(); active = null; });
         ui.hangup.addEventListener('click', () => {
             if (active && active.call) active.call.disconnect(); else finish('Call canceled.');
@@ -125,7 +166,12 @@
         });
 
         try {
-            const call = await (await getDevice()).connect({ params: { outreach_id: button.dataset.outreachId } });
+            let params = { outreach_id: button.dataset.outreachId };
+            if (test) {
+                active.testId = await startTest(button);
+                params = { test_call_id: String(active.testId) };
+            }
+            const call = await (await getDevice()).connect({ params });
             active.call = call;
             setStatus('Ringing…');
             const rememberSid = () => {
@@ -136,6 +182,14 @@
                 rememberSid();
                 active.started = Date.now();
                 active.timer = setInterval(tick, 1000);
+                if (test) {
+                    const placed = await lookupTest(active.testId);
+                    if (!active || active.finished) return;
+                    setStatus(placed && placed.status === 'initiated'
+                        ? 'Connected to your phone. Read the disclosure as you would on a real call.'
+                        : 'The test call was refused. Listen for the reason.');
+                    return;
+                }
                 const placed = active.sid ? await lookup(active.sid) : null;
                 if (!active || active.finished) return;
                 if (!placed) {

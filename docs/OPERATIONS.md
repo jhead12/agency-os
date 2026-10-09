@@ -63,7 +63,9 @@ These run on Railway only when `AGENCY_OS_RUN_JOBS=1` is set. Check
 ### Send day (twice a week, Super Admin)
 
 1. Preview what's due with `enqueue --all --limit 50 --dry-run`, and read a few
-   of the emails with `test-send` (it sends one to you).
+   of the emails with `test-send` (it sends one to you), or from **Test this
+   campaign** on the campaign's admin page, which also rings your phone from the
+   campaign's caller ID.
 2. Check the do-not-call and closed-lost prospects aren't in the batch.
 3. Run `enqueue --all --limit 50` for real.
 4. If Lob is on for a campaign, check the Lob dashboard balance first. Each piece

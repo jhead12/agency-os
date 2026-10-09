@@ -307,6 +307,74 @@
 
 </form>
 
+{# ── Test emails and calls to the Owner's own devices (core/campaign_tests.py) ── #}
+<div class="campaign-section" id="test">
+    <div class="campaign-header">
+        <h2>Test this campaign</h2>
+        <span class="badge badge-product">Your devices only</span>
+    </div>
+    <p class="muted">Send yourself one of this campaign's emails, or ring your own phone from the campaign's caller ID, to see what prospects get. Tests don't touch any prospect, stage or stat.</p>
+    {% if request.query_params.get('test_msg') %}<div class="save-notice">{{ request.query_params.get('test_msg') }}</div>{% endif %}
+    {% if request.query_params.get('test_error') %}<div class="form-error">{{ request.query_params.get('test_error') }}</div>{% endif %}
+
+    <h3>Test email</h3>
+    {% if not test_scripts %}
+    <p class="muted">This campaign has no email scripts yet.</p>
+    {% elif not smtp_ready %}
+    <p class="muted">Test emails go out through SMTP, which isn't set up (SMTP_HOST, SMTP_USER, SMTP_PASS).</p>
+    {% else %}
+    <form method="post" action="/admin/campaigns/{{ campaign.db_name }}/test-email" style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+        <input type="email" name="to_email" value="{{ me.email }}" required aria-label="Send to" placeholder="you@example.com">
+        <select name="script" class="filter-select" aria-label="Email script">
+            {% for stem in test_scripts %}<option value="{{ stem }}">{{ stem }}</option>{% endfor %}
+        </select>
+        <select name="prospect_id" class="filter-select" aria-label="Fill in with">
+            <option value="0">Sample data</option>
+            {% for p in test_prospects %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}
+        </select>
+        <button type="submit" class="btn btn-sm">Send test email</button>
+    </form>
+    {% endif %}
+
+    <h3 style="margin-top: 16px;">Test call</h3>
+    {% if test_call_ready %}
+    <p class="muted">Your browser calls the number you enter from {{ campaign.voice.caller_id }}. Answer on your phone and talk to yourself through the browser (allow the microphone). US and Canadian numbers only.</p>
+    <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+        <input type="tel" id="test-call-phone" placeholder="(213) 555-0100" aria-label="Your phone number" autocomplete="tel">
+        <button type="button" class="btn btn-sm voice-call"
+                data-test-url="/admin/campaigns/{{ campaign.db_name }}/test-call" data-phone-input="#test-call-phone"
+                data-label="Test call: {{ campaign.name }}" data-disclosure="{{ test_disclosure }}"
+                data-state-label="Test call to your phone">📞 Call my phone</button>
+    </div>
+    <script src="/static/vendor/twilio-voice-2.18.5.min.js" defer></script><script src="{{ static_url('dialer.js') }}" defer></script>
+    {% else %}
+    <p class="muted">Test calls need dashboard calling set up (Twilio) and a caller ID for this campaign (<code>voice.caller_id</code> in campaign.yaml, starting with +).</p>
+    {% endif %}
+
+    {% if recent_tests %}
+    <details style="margin-top: 16px;">
+        <summary>Recent tests</summary>
+        <div class="table-scroll">
+        <table class="data-table">
+            <thead><tr><th>When</th><th>Who</th><th>Kind</th><th>To</th><th>Script</th><th>Result</th></tr></thead>
+            <tbody>
+            {% for t in recent_tests %}
+            <tr>
+                <td>{{ t.created_at|fmt_date }}</td>
+                <td>{{ t.user_name }}</td>
+                <td>{{ t.kind }}</td>
+                <td>{{ t.destination }}</td>
+                <td>{{ t.script or '—' }}</td>
+                <td>{{ t.status }}{% if t.duration_seconds %} · {{ t.duration_seconds }} s{% endif %}{% if t.error %} · {{ t.error }}{% endif %}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        </div>
+    </details>
+    {% endif %}
+</div>
+
 {# ── CSV Lead Import ── #}
 <div class="campaign-section">
     <div class="campaign-header">
