@@ -52,6 +52,7 @@ class IrsBmfSource:
         state_filter = filters.get("state", "CA")
         county_filter = filters.get("county")
         ntee_filter = filters.get("ntee_codes")
+        foundation_codes = {str(code).zfill(2) for code in filters.get("foundation_codes") or []}
         min_revenue = filters.get("min_revenue", 0)
 
         la_zips = _load_la_zips()
@@ -82,10 +83,15 @@ class IrsBmfSource:
                     # For other counties, rely on city match or skip
                     continue
 
-            # NTEE filter
+            # NTEE filter. A row whose IRS foundation code is listed in
+            # foundation_codes passes it too: most churches (code 10) have
+            # no NTEE code in the BMF.
             ntee = (row.get("NTEE_CD") or "").strip()
             ntee_prefix = ntee[:1] if ntee else ""
-            if ntee_filter:
+            foundation = (row.get("FOUNDATION") or "").strip()
+            if foundation in foundation_codes:
+                pass
+            elif ntee_filter:
                 if ntee_prefix not in ntee_filter:
                     continue
             elif ntee_prefix and ntee_prefix not in CIVIC_NTEE_PREFIXES:
@@ -118,6 +124,7 @@ class IrsBmfSource:
                     "ntee_full": ntee,
                     "ruling_year": row.get("RULING"),
                     "irs_subsection": (row.get("SUBSECTION") or "").strip(),  # e.g. "03" = 501(c)(3)
+                    "irs_foundation": foundation,  # e.g. "10" = church
                 },
             )
 
@@ -132,5 +139,6 @@ class IrsBmfSource:
             "E": "environment",
             "H": "health",
             "L": "education",
+            "X": "religion",
         }
         return mapping.get(ntee_prefix, "other")

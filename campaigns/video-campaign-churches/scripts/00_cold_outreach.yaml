@@ -1,0 +1,22 @@
+key: video_church_cold_outreach
+stage: cold
+subject: "{{org_name}}'s message, seen by neighbors who haven't visited yet"
+body: |
+  Hi {{contact_first}},
+
+  Many families within a few miles of {{org_name}} have never heard of you,
+  or have never had a reason to walk through the door.
+
+  U9itus pays local residents a small amount to watch short videos from
+  churches and community groups near them. After the video they see your
+  button (plan a visit, give, join a ministry), can ask you a question
+  privately, and answer one question you choose, like "Did you know about us
+  before today?"
+
+  I set up a private preview for {{org_name}} so you can try it, no sign-up
+  needed:
+  {{demo_link}}
+
+  Would it be worth sharing with your outreach team?
+
+  {{your_name}}

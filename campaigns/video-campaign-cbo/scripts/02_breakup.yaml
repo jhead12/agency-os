@@ -1,0 +1,14 @@
+key: video_cbo_breakup
+stage: contacted
+subject: "Closing the loop — {{org_name}}"
+body: |
+  Hi {{contact_first}},
+
+  If reaching new people with video isn't a priority for {{org_name}} right
+  now, no problem. Just reply and I'll close your file.
+
+  If it is, your preview stays live for a while: {{demo_link}}
+
+  Thanks for the work you do in {{city}}.
+
+  {{your_name}}

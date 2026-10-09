@@ -1,0 +1,53 @@
+# Sponsored video campaigns for CBOs: residents are paid to watch the org's
+# video. The demo link in every email is the prospect's sandboxed video demo
+# (u9itus doc/AGENCY_OS_INTEGRATION.md section 13).
+name: "Video Campaigns — CBO Outreach (Los Angeles)"
+product: u9itus_video_campaign
+prospect_sources:
+- irs_bmf
+- sos_partners
+- oia_grantees
+- miv_partners
+enrichers:
+- local_scraper    # also finds the org's YouTube channel for the demo
+- apollo
+- hunter
+channels:
+- email_smartlead
+- email_smtp
+- manual
+filters:
+  state: CA
+  county: Los Angeles
+  ntee_codes:
+  - P
+  - S
+  - O
+  - W
+  min_revenue: 50000
+stages:
+- cold
+- contacted
+- engaged
+- demo_scheduled
+- proposal_sent
+- closed_won
+- closed_lost
+- nurture
+cadence:
+- touch: 0
+  delay_days: 0
+  script: 00_cold_outreach
+  next_stage: contacted
+- touch: 1
+  delay_days: 3
+  script: 01_followup_dashboard
+  next_stage: contacted
+- touch: 2
+  delay_days: 5
+  script: 02_breakup
+  next_stage: nurture
+stale_threshold_days: 14
+sender_name: Joshua
+sender_email: joshua@u9itus.com
+scheduler: calendly

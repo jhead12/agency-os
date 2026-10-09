@@ -122,6 +122,8 @@ def shared_event_effect(event: dict) -> Optional[EventEffect]:
     """The portal.* events every demo-portal product shares. None for any other type."""
     return {
         "portal.viewed": EventEffect(stage="engaged", log_as="portal.viewed"),
+        # The sandboxed video campaign demo (u9itus section 13) counts the same as a view.
+        "portal.video_demo_viewed": EventEffect(stage="engaged", log_as="portal.video_demo_viewed"),
         "portal.claimed": EventEffect(stage="demo_scheduled", log_as="portal.claimed",
                                       portal={"status": "claimed"}),
         # Publishing is the buying signal: flag it, but leave the stage to the rep.
@@ -135,6 +137,16 @@ def event_effect(product, event: dict) -> Optional[EventEffect]:
     """The product's effect for an event, or the shared one when it doesn't define any."""
     custom = getattr(product, "event_effect", None)
     return custom(event) if callable(custom) else shared_event_effect(event)
+
+
+def event_feed(product, product_key: str) -> str:
+    """The key the product's event cursor and processed events are kept under.
+
+    Products that read the same feed (u9itus's voter guide and video campaign
+    products) set the same `event_feed`, so each event is applied once.
+    Defaults to the product's own key.
+    """
+    return getattr(product, "event_feed", None) or product_key
 
 
 def portal_product(product) -> Optional[DemoPortalProduct]:

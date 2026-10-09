@@ -35,6 +35,9 @@ class U9itusVoterGuideProduct:
     # prospect metadata and activity-log refs use, so it must not change.
     portal_namespace = "u9itus"
     portal_label = "u9itus demo page"
+    # Every u9itus product reads the same event feed; this keeps the cursor
+    # this product has always used (core/protocols.py event_feed).
+    event_feed = "u9itus_voter_guide"
 
     # Plain-language reasons for the agency API's error statuses.
     ERROR_HINTS = {401: "token rejected", 404: "agency API not deployed at this URL",
@@ -92,7 +95,8 @@ class U9itusVoterGuideProduct:
         """Map IRS subsection (from prospect.metadata) to a u9itus org_type.
 
         The IRS BMF stores subsection as a 2-digit code ("03" = 501(c)(3)).
-        Falls back to 'cbo' when unknown — cbo refuses candidate endorsements,
+        Churches (IRS foundation code 10, or a religious-congregation NTEE code)
+        map to 'church'. Falls back to 'cbo' when unknown — cbo refuses candidate endorsements,
         which is the safe default. See doc/AGENCY_OS_INTEGRATION.md section 12
         ('Pre-seed org_type from IRS data').
         """
@@ -102,6 +106,8 @@ class U9itusVoterGuideProduct:
         except (ValueError, TypeError):
             metadata = {}
         subsection = (metadata.get("irs_subsection") or "").lower().replace(" ", "").lstrip("0")
+        if self.is_church(prospect, metadata):
+            return "church"
         if subsection in ("3", "501(c)(3)", "501c3", "c3"):
             return "c3_nonprofit"
         if subsection in ("4", "501(c)(4)", "501c4", "c4"):
@@ -109,6 +115,19 @@ class U9itusVoterGuideProduct:
         if subsection in ("5", "501(c)(5)", "501c5", "c5"):
             return "union"
         return "cbo"
+
+    # NTEE X20–X70: congregations by faith (Christian, Jewish, Islamic,
+    # Buddhist, Hindu, other). X80/X90 are religious media and interfaith groups.
+    CHURCH_NTEE_PREFIXES = ("X2", "X3", "X4", "X5", "X6", "X7")
+
+    @classmethod
+    def is_church(cls, prospect: Prospect, metadata: Optional[dict] = None) -> bool:
+        """Whether the IRS data says this prospect is a church or other house of worship."""
+        metadata = metadata if metadata is not None else (prospect.metadata if isinstance(prospect.metadata, dict) else {})
+        if str(metadata.get("irs_foundation") or "").zfill(2) == "10":
+            return True
+        ntee = (metadata.get("ntee_full") or prospect.ntee_code or "").upper()
+        return ntee.startswith(cls.CHURCH_NTEE_PREFIXES)
 
     def provision_demo(
         self,

@@ -1,0 +1,17 @@
+key: video_cbo_followup_dashboard
+stage: contacted
+subject: "What {{org_name}} would see after a video campaign"
+body: |
+  Hi {{contact_first}},
+
+  A quick follow-up. The part organizations like most is the dashboard: how
+  many residents watched, how many said they'd never heard of you, how many
+  clicked your donate or volunteer button, and the questions they asked.
+  You reply from the dashboard, and you get a weekly summary by email.
+
+  You set the budget, the area and the number of views, and campaigns are
+  reviewed before they run.
+
+  Your preview is still live: {{demo_link}}
+
+  {{your_name}}

@@ -1,0 +1,17 @@
+key: video_church_followup_dashboard
+stage: contacted
+subject: "Who {{org_name}} would reach"
+body: |
+  Hi {{contact_first}},
+
+  Following up. After a campaign, your dashboard shows how many neighbors
+  watched, how many were new to {{org_name}}, how many clicked to plan a visit
+  or give, and the questions they asked. You answer from the dashboard, and
+  a weekly summary comes by email.
+
+  You choose the budget, the area and the number of views, and every
+  campaign is reviewed before it runs.
+
+  Your preview: {{demo_link}}
+
+  {{your_name}}

@@ -1,0 +1,15 @@
+key: video_church_breakup
+stage: contacted
+subject: "Closing the loop — {{org_name}}"
+body: |
+  Hi {{contact_first}},
+
+  If this isn't the right season for {{org_name}}, no problem at all. Just
+  reply and I'll close your file.
+
+  If you'd like to try it later, your preview stays live for a while:
+  {{demo_link}}
+
+  Blessings on your work in {{city}}.
+
+  {{your_name}}
