@@ -93,7 +93,7 @@ def test_every_tutorial_is_valid_and_visible_by_role(db):
     assert everyone == {"tour", "find-a-prospect", "log-a-call", "console", "invite-a-teammate", "back-up-workflows",
                         "build-a-sellable-lead", "save-a-list", "sell-a-package", "your-data-royalties",
                         "pay-reps", "buy-a-package", "call-from-the-dashboard", "generate-a-lead-package",
-                        "customer-accounts"}
+                        "customer-accounts", "direct-mail-with-lob"}
     caller = {t["slug"] for t in workflows.tutorials(user(db, "caller@x.com"))}
     assert {"tour", "find-a-prospect", "log-a-call"} <= caller
     assert {"save-a-list", "your-data-royalties"} <= caller

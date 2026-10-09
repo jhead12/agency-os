@@ -1,0 +1,24 @@
+name: Send direct mail with Lob
+description: Edit the postcards and letters Lob prints and mails, and what a mailer does for a lead. Nothing is saved or mailed.
+requires: templates.view
+steps:
+  - goto: /mail-templates
+    say: agency-os can mail real postcards and letters through Lob, which prints, stamps and posts them. These are the templates each campaign mails.
+  - highlight: .var-grid
+    say: Variables like {{org_name}} and {{contact_first}} are filled in for each prospect, so every card is personal.
+  - highlight: '#preview-form select'
+    say: Pick a prospect here to preview a template with their details before anything is mailed.
+  - highlight: '#template-0 .template-meta'
+    say: Each template shows whether it's a postcard or a letter, the stage of the sequence it's sent at, and its campaign.
+  - highlight: '#template-0 input[name$="template_id"]'
+    say: Optional. For a designed card, build it in Lob's template editor and paste its ID (tmpl_…) here. Leave it blank to mail the plain text below.
+  - highlight: '#front-0, #subject-0'
+    say: A postcard has a front headline (up to 100 characters); a letter has a heading.
+  - highlight: '#back-0, #body-0'
+    say: The message. Postcard backs hold up to 500 characters; keep it short and end with one clear next step.
+  - highlight: '#template-0 button[type="submit"]'
+    say: Save to use the new wording for mail sent from now on. It needs permission to edit templates.
+  - say: Mail goes out as part of a campaign's sequence, through the lob_direct_mail channel. Each piece costs real money (about 60 to 90 cents), so only a Super Admin can turn that channel on or off for a campaign.
+  - say: Lob tells us when a piece is delivered or comes back. A delivered mailer counts as the first step of contact depth, "mailed". Returned mail means a bad address and counts against a lead's guarantee.
+  - say: Coming next, mail then call. When a mailer arrives, the prospect goes on the callers' list a couple of days later, with a script that mentions the card.
+  - pause: The tutorial stops before saving. Preview one of your templates with a real prospect.
