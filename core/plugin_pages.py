@@ -17,6 +17,9 @@ Drop plugins/pages/<name>.py with a class like:
         def post(self, page: PageContext, form: dict) -> str:
             return "Saved."
 
+    post() can return a Download instead of a message to send a file
+    (a CSV export, say); the browser stays on the page.
+
 Templates live in plugins/pages/templates/ and are loaded as "plugin/<name>",
 so they can {% extends "base.html" %} and use the core filters, but can never
 replace a core template. Files in plugins/pages/static/ are served at
@@ -62,6 +65,19 @@ class PageContext:
     query: dict[str, str] = field(default_factory=dict)
     campaigns: list = field(default_factory=list)          # campaigns this user sees
     hidden_campaigns: list[str] = field(default_factory=list)  # names they don't
+
+
+@dataclass
+class Download:
+    """What a page's post() returns to send a file instead of a message."""
+    filename: str
+    content: str | bytes
+    media_type: str = "text/csv"
+
+    def safe_filename(self) -> str:
+        """The name for Content-Disposition: letters, digits, '.', '_' and '-' only."""
+        name = re.sub(r"[^A-Za-z0-9._-]+", "_", self.filename).strip("._")[:100]
+        return name or "download"
 
 
 def _valid(page) -> bool:

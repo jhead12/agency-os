@@ -43,6 +43,8 @@ class FormPage:
     def post(self, page, form):
         if form.get("name") == "bad":
             raise ValueError("Name can't be bad.")
+        if form.get("name") == "file":
+            return plugin_pages.Download('../evil"name.csv', "a,b\n")
         FormPage.posts.append((page.user.email, form))
         return f"Saved {form['name']}."
 
@@ -120,6 +122,13 @@ def test_post_needs_the_post_permission_and_shows_its_message(db, pages):
 
     r = client.post("/p/form", data={"name": "bad"})
     assert r.headers["location"] == "/p/form?error=Name%20can%27t%20be%20bad."
+
+
+def test_post_can_send_a_file_with_a_safe_name(db, pages):
+    make_user(db, "editor@x.com", "Template Editor")
+    r = client_for("editor@x.com").post("/p/form", data={"name": "file"})
+    assert r.status_code == 200 and r.text == "a,b\n"
+    assert r.headers["content-disposition"] == 'attachment; filename="evil_name.csv"'
 
 
 def test_page_without_post_refuses_posts(db, pages):

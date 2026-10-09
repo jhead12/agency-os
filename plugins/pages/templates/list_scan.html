@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}{{ plugin_page.title }} — agency-os{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="/plugin-static/list_scan.css">
+
+<div class="page-header">
+    <div>
+        <h1>{{ plugin_page.title }}</h1>
+        <p class="subtitle">Add a list of names and mailing addresses to a campaign from a scan, PDF, photo or text file</p>
+    </div>
+</div>
+
+{% if msg %}<div class="save-notice">{{ msg }}</div>{% endif %}
+{% if error %}<div class="form-error">{{ error }}</div>{% endif %}
+
+{% if not campaigns %}
+<div class="empty-state">There are no campaigns to add leads to yet. Create one under Admin → Campaigns.</div>
+{% elif can_post %}
+<form method="post" action="/p/{{ plugin_page.key }}" class="stack-form" id="list-scan-form">
+    <div class="form-grid">
+        <div class="form-field">
+            <label for="list-scan-file">File</label>
+            <input type="file" id="list-scan-file" accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.webp,.txt,.json">
+        </div>
+        <div class="form-field">
+            <label for="list-scan-campaign">Campaign</label>
+            <select id="list-scan-campaign" name="campaign" class="filter-select">
+                <option value="">Pick a campaign</option>
+                {% for c in campaigns %}<option value="{{ c.db_name }}">{{ c.name }}</option>{% endfor %}
+            </select>
+        </div>
+    </div>
+    <p class="muted" id="list-scan-status" aria-live="polite">The file is read in your browser. Only the text below is sent.</p>
+
+    <div class="form-field">
+        <label for="list-scan-text">Text read from the file. Fix any mistakes before importing.</label>
+        <textarea id="list-scan-text" name="text" rows="16" maxlength="{{ max_text }}" class="list-scan-text"
+                  placeholder="Jane Smith&#10;123 Main St&#10;Springfield, IL 62701&#10;&#10;John Doe, 45 Oak Ave, Peoria, IL 61602"></textarea>
+    </div>
+    <input type="hidden" name="filename" id="list-scan-filename">
+
+    <div class="list-scan-actions">
+        <button type="submit" name="action" value="check" class="btn btn-secondary">Check</button>
+        <button type="submit" name="action" value="csv" class="btn btn-secondary">Download CSV</button>
+        <button type="submit" name="action" value="import" class="btn">Import into campaign</button>
+        <button type="button" class="btn btn-sm btn-secondary" id="list-scan-clear">Clear</button>
+    </div>
+</form>
+
+<h2 class="section-title">How entries are read</h2>
+<p class="muted">Each entry is a name line, one or more street lines, then a "City, ST 12345" line, or all of that on one
+line separated by commas. Leave a blank line between entries. A phone number or email address in an entry is saved as
+the lead's contact. Entries already imported from a list are updated instead of added twice. A JSON list of objects
+with name, address, city, state, zip, phone and email also works. Download CSV saves the entries with the column
+names the campaign CSV import reads.</p>
+
+<script src="/plugin-static/list_scan.js" defer></script>
+{% else %}
+<div class="empty-state">You can't import leads.</div>
+{% endif %}
+{% endblock %}

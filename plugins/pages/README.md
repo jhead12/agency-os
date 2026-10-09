@@ -175,6 +175,9 @@ class NotesPage:
   CSRF token.
 - To use one form for several actions, give the submit buttons a `name`
   (`<button name="action" value="delete">`) and check `form["action"]`.
+- To send a file instead of a message (a CSV export, say), return
+  `core.plugin_pages.Download("export.csv", text)`. The browser downloads it and
+  stays on the page. `media_type` defaults to `text/csv`.
 - To keep an audit trail, call `page.db.audit(page.user, "<what happened>", "<kind>", <id>)`.
 
 ## Static files

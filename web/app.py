@@ -2871,6 +2871,9 @@ async def plugin_page_post(request: Request, page_key: str):
         message = await run_in_threadpool(page.post, _plugin_page_context(request), form)
     except ValueError as exc:
         return _back(f"/p/{page_key}", error=str(exc) or "That didn't work.")
+    if isinstance(message, plugin_pages.Download):
+        return Response(message.content, media_type=message.media_type, headers={
+            "Content-Disposition": f'attachment; filename="{message.safe_filename()}"'})
     return _back(f"/p/{page_key}", msg=message or "Done.")
 
 

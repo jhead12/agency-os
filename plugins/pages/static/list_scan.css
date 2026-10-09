@@ -1,0 +1,11 @@
+.list-scan-text {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--card);
+    color: var(--foreground);
+    font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    resize: vertical;
+}
+.list-scan-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
