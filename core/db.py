@@ -1346,6 +1346,17 @@ class Database:
                     (result.raw["website"], prospect_id),
                 )
 
+        # The org's own YouTube link (u9itus video campaign demo); newer is better
+        if prospect_id and result.raw.get("youtube_url"):
+            row = c.execute("SELECT metadata FROM prospects WHERE id = ?", (prospect_id,)).fetchone()
+            if row:
+                metadata = json.loads(row["metadata"] or "{}")
+                metadata["youtube_url"] = result.raw["youtube_url"]
+                c.execute(
+                    "UPDATE prospects SET metadata = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (json.dumps(metadata), prospect_id),
+                )
+
         # Newer is better: the site may have changed since the last scrape
         if prospect_id and result.raw.get("site_summary"):
             c.execute(

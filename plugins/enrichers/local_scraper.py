@@ -111,6 +111,13 @@ SUMMARY_MAX = 500
 SUMMARY_JUNK = ("cookie", "copyright", "©", "all rights reserved", "javascript")
 
 # Junk phone prefixes (toll-free, info lines)
+# The org's own YouTube channel or video, linked from its site. A channel is
+# preferred: u9itus picks its latest embeddable upload for the video demo.
+YOUTUBE_CHANNEL_RE = re.compile(
+    r"https?://(?:www\.)?youtube\.com/(?:@[\w.-]{3,30}|channel/UC[\w-]{22}|c/[\w.-]+|user/[\w.-]+)", re.I)
+YOUTUBE_VIDEO_RE = re.compile(
+    r"https?://(?:www\.|m\.)?(?:youtube(?:-nocookie)?\.com/(?:watch\?v=|embed/|shorts/)|youtu\.be/)[\w-]{11}", re.I)
+
 JUNK_PHONE_PREFIXES = {"800", "888", "877", "866", "855", "844", "833", "000", "555"}
 
 
@@ -181,6 +188,11 @@ class LocalScraperEnricher:
         summary = self._extract_summary(pages)
         if summary:
             result.raw["site_summary"] = summary
+
+        # Their own video, for the u9itus video campaign demo (no extra requests)
+        youtube = self._extract_youtube(pages)
+        if youtube:
+            result.raw["youtube_url"] = youtube
 
         return result
 
@@ -463,6 +475,15 @@ class LocalScraperEnricher:
         cut = text[:SUMMARY_MAX]
         end = cut.rfind(". ")
         return cut[:end + 1] if end > SUMMARY_MAX // 2 else cut.rsplit(" ", 1)[0] + "…"
+
+    def _extract_youtube(self, pages: list[tuple[str, str]]) -> Optional[str]:
+        """First YouTube channel link on the fetched pages, else the first video link."""
+        html = "\n".join(page_html for _, page_html in pages)
+        for pattern in (YOUTUBE_CHANNEL_RE, YOUTUBE_VIDEO_RE):
+            match = pattern.search(html)
+            if match:
+                return match.group(0).replace("youtube-nocookie.com", "youtube.com")
+        return None
 
     def _extract_phone(self, text: str) -> Optional[str]:
         """Extract the first valid phone number."""

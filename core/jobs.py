@@ -49,7 +49,7 @@ from core import agents
 from core.campaign import CampaignConfig
 from core.db import Database
 from core.pipeline import Pipeline
-from core.protocols import portal_product
+from core.protocols import event_feed, portal_product
 from core.registry import PluginRegistry
 
 
@@ -191,14 +191,16 @@ class JobRunner:
         campaigns = [c for c in self.load_campaigns() if self._campaign_active(db, c)]
 
         if key == "pull-events":
-            # The event cursor is per product, and an event applies to the prospect
-            # in every campaign, so pull once per product.
-            by_product: dict[str, CampaignConfig] = {}
+            # The event cursor is per event feed (shared by products reading the
+            # same API), and an event applies to the prospect in every campaign,
+            # so pull once per feed.
+            by_feed: dict[str, CampaignConfig] = {}
             for campaign in campaigns:
-                if portal_product(registry.get_product(campaign.product)):
-                    by_product.setdefault(campaign.product, campaign)
-            return {product: pipeline.pull_product_events(campaign)
-                    for product, campaign in by_product.items()}
+                product = portal_product(registry.get_product(campaign.product))
+                if product:
+                    by_feed.setdefault(event_feed(product, campaign.product), campaign)
+            return {feed: pipeline.pull_product_events(campaign)
+                    for feed, campaign in by_feed.items()}
 
         if key == "provision":
             return {campaign.db_name: pipeline.provision_demos(campaign)

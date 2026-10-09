@@ -1,0 +1,22 @@
+key: video_cbo_cold_outreach
+stage: cold
+subject: "{{org_name}}'s video, seen by neighbors who don't know you yet"
+body: |
+  Hi {{contact_first}},
+
+  Most people in {{city}} who could use {{org_name}}'s programs, or would
+  donate or volunteer, have never heard of you.
+
+  U9itus pays local residents a small amount to watch short videos from
+  organizations near them. You fund the views; they give you their attention.
+  After the video they see your button (donate, volunteer, sign up), can ask
+  you a question, and answer one question you choose, like "Did you know
+  about us before today?"
+
+  I set up a private preview for {{org_name}} so you can try it from both
+  sides, no sign-up needed:
+  {{demo_link}}
+
+  Worth a look?
+
+  {{your_name}}

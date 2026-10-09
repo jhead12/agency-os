@@ -17,7 +17,7 @@ from core.campaign import CadenceStep, CampaignConfig, discover_campaigns
 from core.db import Database
 from core import compliance, lead_packages
 from core.models import Prospect, SendResult
-from core.protocols import DemoPortalProduct, EventEffect, event_effect, portal_product
+from core.protocols import DemoPortalProduct, EventEffect, event_effect, event_feed, portal_product
 from core.registry import PluginRegistry
 
 
@@ -617,8 +617,12 @@ class Pipeline:
         if not product.is_configured():
             return {**stats, "api_not_configured": True, "setup_hint": product.setup_hint()}
 
+        # Cursor and processed events are kept per event feed, which products
+        # reading the same feed share (core/protocols.py event_feed).
+        feed = event_feed(product, campaign.product)
+
         # Get last cursor from sync_cursors
-        cursor = self._get_cursor(campaign.product)
+        cursor = self._get_cursor(feed)
 
         # Pull events (may need multiple pages)
         all_events = []
@@ -641,7 +645,7 @@ class Pipeline:
             if len(events) < 100:
                 break  # last page
 
-        print(f"  → {len(all_events)} events pulled since cursor {self._get_cursor(campaign.product)}")
+        print(f"  → {len(all_events)} events pulled since cursor {self._get_cursor(feed)}")
 
         for event in all_events:
             event_id = event.get("id")
@@ -661,7 +665,7 @@ class Pipeline:
                 continue
 
             # Check if we already processed this event (idempotent)
-            if self._event_already_processed(campaign.product, event_id):
+            if self._event_already_processed(feed, event_id):
                 stats["already_processed"] += 1
                 continue
 
@@ -671,7 +675,7 @@ class Pipeline:
                 continue
 
             # Record the event (an unknown type is kept here, with no other effect)
-            self._record_event(campaign.product, event_id, event)
+            self._record_event(feed, event_id, event)
             effect = event_effect(product, event)
             if effect is None:
                 stats["events_pulled"] += 1
@@ -702,7 +706,7 @@ class Pipeline:
 
         # Save the cursor
         if not dry_run and all_events:
-            self._save_cursor(campaign.product, cursor)
+            self._save_cursor(feed, cursor)
 
         return stats
 

@@ -69,11 +69,15 @@ class U9itusClient:
         contact_email: str = "",
         refresh: bool = False,
         irs_subsection: str = "",
+        video_url: str = "",
+        youtube_channel: str = "",
     ) -> dict:
         """POST /api/v1/agency/demo-portals — create or return a demo portal.
 
         Idempotent on external_ref: repeat calls return 200 with the existing portal.
-        Returns dict with: slug, demo_url, claim_url, status, expires_at.
+        Returns dict with: slug, demo_url, claim_url, video_demo_url, demo_video,
+        status, expires_at. video_url / youtube_channel give u9itus the
+        prospect's own video for the video campaign demo.
         """
         payload = {
             "external_ref": external_ref,
@@ -93,6 +97,10 @@ class U9itusClient:
             payload["refresh"] = True
         if irs_subsection:
             payload["irs_subsection"] = irs_subsection
+        if video_url:
+            payload["video_url"] = video_url
+        if youtube_channel:
+            payload["youtube_channel"] = youtube_channel
 
         resp = self._request("POST", "/api/v1/agency/demo-portals", json=payload)
         return resp
@@ -124,7 +132,8 @@ class U9itusClient:
     def get_plans(self) -> dict:
         """GET /api/v1/agency/plans — the prices u9itus charges.
 
-        Returns: {currency, cycle, cycle_ends_at, plans: [{key, label, amount_cents}]}
+        Returns: {currency, cycle, cycle_ends_at, plans: [{key, label, amount_cents}],
+                  video: {revenue_per_view_cents, voter_payout_per_view_cents}}
         """
         return self._request("GET", "/api/v1/agency/plans")
 

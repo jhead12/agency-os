@@ -1,0 +1,50 @@
+# Sponsored video campaigns for churches and other houses of worship.
+# Prospects come from the IRS BMF: religious-congregation NTEE codes (X), plus
+# foundation code 10 (church), which catches the many churches with no NTEE
+# code. Churches provision as org_type "church" (no candidate endorsements).
+name: "Video Campaigns — Churches (Los Angeles)"
+product: u9itus_video_campaign
+prospect_sources:
+- irs_bmf
+enrichers:
+- local_scraper    # also finds the church's YouTube channel for the demo
+- apollo
+- hunter
+channels:
+- email_smartlead
+- email_smtp
+- manual
+filters:
+  state: CA
+  county: Los Angeles
+  ntee_codes:
+  - X
+  foundation_codes:
+  - "10"
+  min_revenue: 0
+stages:
+- cold
+- contacted
+- engaged
+- demo_scheduled
+- proposal_sent
+- closed_won
+- closed_lost
+- nurture
+cadence:
+- touch: 0
+  delay_days: 0
+  script: 00_cold_outreach
+  next_stage: contacted
+- touch: 1
+  delay_days: 4
+  script: 01_followup_dashboard
+  next_stage: contacted
+- touch: 2
+  delay_days: 6
+  script: 02_breakup
+  next_stage: nurture
+stale_threshold_days: 21
+sender_name: Joshua
+sender_email: joshua@u9itus.com
+scheduler: calendly
