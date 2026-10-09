@@ -1,0 +1,15 @@
+name: Manage customer accounts
+description: The u9itus customers who pay for prospect searches, their keys and their usage. Nothing is changed.
+requires: '@owner'
+steps:
+  - goto: /admin/accounts
+    say: u9itus sells prospect searches to its customers and creates an account here for each one. u9itus does the billing; agency-os runs the searches and counts what it delivered.
+  - highlight: .data-table
+    say: Each row is a customer. "Last 30 days" shows their searches and the prospects delivered, which is the number u9itus bills for.
+  - say: What a customer's searches find belongs to them. It never appears in our prospects, campaigns or lead packages, and we never resell it.
+  - highlight: 'form[action$="/status"] button'
+    say: Suspend stops an account's key from working, for example after a failed payment. Their saved results are kept. u9itus normally does this for you.
+  - highlight: 'form[action$="/key"] button'
+    say: New key replaces a customer's key, and the old one stops working at once. The new key is shown once; copy it into u9itus straight away.
+  - say: Customers can also save their own Apollo, Hunter or Firecrawl keys through u9itus, and pay less for enrichment plus a platform fee. Those keys are encrypted and never shown again, not even here.
+  - pause: That's accounts. If the page says the platform key isn't set up, run "agency-os accounts platform-key" on the server first.

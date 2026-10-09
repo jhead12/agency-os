@@ -1,0 +1,25 @@
+name: Generate a lead package
+description: Find organizations by city, feed or directory page, enrich them, and get a list ready to sell. Nothing is started.
+requires: '@super_admin'
+steps:
+  - goto: /admin/generator
+    say: The generator turns a description, like "dentists in Austin", into a saved list you can sell. It searches, adds what it finds to a campaign, runs the enrichers and checks what's sellable.
+  - highlight: '#title'
+    say: Name the run. The saved list it makes gets the same name.
+  - highlight: '#campaign'
+    say: Pick the campaign the leads go into. Your team works them there like any other prospect.
+  - highlight: '#max_leads'
+    say: Cap how many leads the run may add. Paid enrichers spend on every lead, so start small.
+  - highlight: '#query'
+    say: Businesses in cities come from OpenStreetMap. Give the kind of organization, the state and one or more cities.
+  - highlight: '#feed_urls'
+    say: Optionally add news or RSS feeds. Organizations named in matching items become leads.
+  - highlight: '#scrape_url'
+    say: Or a directory page, such as a member list. Give CSS selectors for each listing and its fields. Sites' robots.txt is honored and only that one site is read.
+  - highlight: 'input[name="enrichers"]'
+    say: Choose the enrichers, in order; the first that finds a contact wins. local_scraper is free. Firecrawl reads JavaScript-heavy sites the scraper can't, for paid credits, so tick it after local_scraper.
+  - say: Apollo and Hunter find contacts too, but their terms forbid reselling their data. Contacts they find are used for your own outreach and are never put in a package you sell.
+  - highlight: 'form[action="/admin/generator"] button[type="submit"]'
+    say: Start the run here. It works in the background; open it from Recent runs to watch its progress.
+  - say: Recent runs show what each one found, how many have a contact, and how many are sellable at the "enriched" guarantee. Publish the list from Selling when you're happy with it.
+  - pause: Your turn. Try a small run, ten leads, in a test campaign.

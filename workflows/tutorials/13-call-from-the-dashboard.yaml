@@ -1,0 +1,18 @@
+name: Call from the dashboard
+description: Place a call from your browser, read the disclosure, then log it with the details filled in. Nothing is dialed.
+requires: '@super_admin'
+steps:
+  - goto: /prospects
+    say: You can call a prospect straight from agency-os, through your computer's microphone and speakers. No phone needed.
+  - click: 'table.data-table tbody a[href^="/prospects/"]'
+    say: Open a prospect.
+  - wait: {for: .call-log-form}
+  - highlight: 'button.voice-call, a.call-link'
+    say: The Call button appears next to each contact with a phone number. agency-os looks up the number when it dials, so the number never sits in the page. If the person asked not to be called, the button is turned off.
+  - say: When you click Call, a call bar opens at the bottom of the screen with the status, a timer, Mute and Hang up.
+  - say: Before anything else, the call bar shows the recording disclosure for the prospect's state. Read it out, then press "Disclosure read". That's your consent record, so only press it after you've said it.
+  - highlight: .call-log-form
+    say: When you hang up, this form is filled in for you with the call's status and length, and highlighted. Check the outcome, add notes and the next step, then save.
+  - highlight: '.call-log-form select[name="outcome"]'
+    say: The outcome is still yours to set. Wrong and disconnected numbers matter for lead guarantees, so record them honestly.
+  - pause: The tutorial stops before dialing. Use the Call button on your next real call.
