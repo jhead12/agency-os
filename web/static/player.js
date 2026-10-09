@@ -3,12 +3,17 @@
 // typed into, pages change, console commands run in the console window, and a
 // caption explains every step. Play/Pause/Next/Stop sit in a bar at the bottom.
 //
+// Captions are spoken: a tutorial step's pre-rendered clip (core/narration.py),
+// else the browser's own voice. In auto mode a step waits for its line to end.
+// Voice on/off is remembered per browser (localStorage).
+//
 // It keeps its place across page loads (sessionStorage), never blocks the page
 // (the overlay ignores the mouse), and asks before anything that changes data:
 // a click that submits a POST form waits for "Do it", and a console command that
 // makes a change asks "Run this? [y/N]" in the console as usual.
 (() => {
     const KEY = 'aos-player';
+    const VOICE_KEY = 'aos-player-voice';
     const FIND_TIMEOUT = 5000;
     const load = () => { try { return JSON.parse(sessionStorage.getItem(KEY)); } catch (_) { return null; } };
     const save = (s) => { try { sessionStorage.setItem(KEY, JSON.stringify(s)); } catch (_) { /* unavailable */ } };
@@ -51,16 +56,23 @@
         const count = el('span', 'player-count');
         const playBtn = el('button', 'player-btn');
         const nextBtn = el('button', 'player-btn', 'Next ⏭');
+        const voiceBtn = el('button', 'player-btn');
         const stopBtn = el('button', 'player-btn', 'Stop ✕');
-        [playBtn, nextBtn, stopBtn].forEach((b) => { b.type = 'button'; });
+        [playBtn, nextBtn, voiceBtn, stopBtn].forEach((b) => { b.type = 'button'; });
         playBtn.addEventListener('click', () => { state.auto = !state.auto; save(state); renderBar(); if (state.auto) next(); });
         nextBtn.addEventListener('click', () => next());
+        voiceBtn.addEventListener('click', () => {
+            const on = !voiceOn();
+            try { localStorage.setItem(VOICE_KEY, on ? 'on' : 'off'); } catch (_) { /* unavailable */ }
+            if (!on) hush();
+            renderBar();
+        });
         stopBtn.addEventListener('click', () => stop());
-        bar.append(title, count, playBtn, nextBtn, stopBtn);
+        bar.append(title, count, playBtn, nextBtn, voiceBtn, stopBtn);
 
         document.body.append(spot, cursor, caption, bar);
         document.body.classList.add('player-active');
-        ui = { spot, cursor, caption, captionText, captionActions, bar, title, count, playBtn, nextBtn };
+        ui = { spot, cursor, caption, captionText, captionActions, bar, title, count, playBtn, nextBtn, voiceBtn };
         document.addEventListener('keydown', onKey);
         return ui;
     }
@@ -79,11 +91,53 @@
     }
 
     function renderBar() {
-        const { title, count, playBtn } = build();
+        const { title, count, playBtn, voiceBtn } = build();
         title.textContent = state.wf.name;
         count.textContent = `Step ${Math.min(state.i + 1, state.wf.steps.length)} of ${state.wf.steps.length}`;
         playBtn.textContent = state.auto ? 'Pause ⏸' : 'Play ▶';
         playBtn.setAttribute('aria-pressed', String(state.auto));
+        voiceBtn.textContent = voiceOn() ? '🔊' : '🔇';
+        voiceBtn.setAttribute('aria-label', 'Voice');
+        voiceBtn.setAttribute('aria-pressed', String(voiceOn()));
+        voiceBtn.title = voiceOn() ? 'Voice on: captions are read aloud' : 'Voice off';
+    }
+
+    // ── Voice ──
+
+    const voiceOn = () => { try { return localStorage.getItem(VOICE_KEY) !== 'off'; } catch (_) { return true; } };
+    let voice = null;  // {stop, done}: done resolves 'said', or 'silent' if nothing could be played
+
+    // Starts saying a step's line: its clip, else the browser's voice.
+    function speak(step) {
+        hush();
+        const text = step.pause || step.say || '';  // what the caption shows (core/narration.py spoken())
+        if (!text || !voiceOn()) return;
+        let end;
+        const done = new Promise((r) => { end = r; });
+        if (step.audio) {
+            const audio = new Audio(step.audio);
+            audio.addEventListener('ended', () => end('said'));
+            audio.addEventListener('error', () => end('silent'));
+            audio.play().catch(() => end('silent'));  // e.g. autoplay blocked before any click on this page
+            voice = { stop: () => { audio.pause(); end('said'); }, done };
+        } else if (window.speechSynthesis) {
+            const line = new SpeechSynthesisUtterance(text);
+            line.addEventListener('end', () => end('said'));
+            line.addEventListener('error', () => end('silent'));
+            window.speechSynthesis.speak(line);
+            voice = { stop: () => { window.speechSynthesis.cancel(); end('said'); }, done };
+        }
+    }
+
+    function hush() {
+        if (voice) voice.stop();
+        voice = null;
+    }
+
+    // Waits until the line has been said, or for long enough to read it when it isn't spoken.
+    async function untilSaid(text, longest = Infinity) {
+        const said = voice ? await voice.done : 'silent';
+        await sleep(said === 'said' ? 400 : Math.min(readTime(text), longest));
     }
 
     let lit = null;        // the highlighted element
@@ -191,15 +245,17 @@
 
     const readTime = (text) => Math.min(7000, 1400 + (text || '').length * 35);
 
+    // A goto step goes first and explains on arrival. `went` stops a loop when the page redirects elsewhere.
+    const navigates = (step) => Boolean(step.goto) && location.pathname + location.search !== step.goto
+        && state.went !== state.i;
+
     // Runs one step. Returns 'next' (carry on), 'wait' (wait for Next), or 'left' (the page is changing).
     async function perform(step, token) {
         const missing = (what) => `Couldn't find ${what} on this page. It may be hidden for your role or screen size.`;
         const caption = step.say || '';
 
         if (step.goto) {
-            const here = location.pathname + location.search;
-            // Go first, explain on arrival. `went` stops a loop when the page redirects elsewhere.
-            if (here !== step.goto && state.went !== state.i) {
+            if (navigates(step)) {
                 say(`Going to ${step.goto}…`);
                 await sleep(500);
                 if (token !== run) return 'next';
@@ -250,7 +306,7 @@
                 if (!ok) { say('Skipped.', target); return 'next'; }
             } else {
                 say(caption, target);
-                await sleep(state.auto ? Math.min(readTime(caption), 2500) : 300);
+                await (state.auto ? untilSaid(caption, 2500) : sleep(300));
             }
             if (token !== run) return 'next';
             await pulse();
@@ -303,6 +359,7 @@
             if (state.i >= state.wf.steps.length) { finish(); return; }
             renderBar();
             const step = state.wf.steps[state.i];
+            if (!navigates(step)) speak(step);
             const outcome = await perform(step, token);
             if (outcome === 'left' || token !== run || !state) return;
             if (outcome === 'wait' || !state.auto) {
@@ -310,7 +367,7 @@
                 await new Promise((r) => { nextWaiter = r; });
                 if (token !== run || !state) return;
             } else {
-                await sleep(readTime(step.say));
+                await untilSaid(step.say);
                 if (token !== run || !state) return;
             }
             state.i += 1;
@@ -320,6 +377,7 @@
 
     function next() {
         if (!state) return;
+        hush();
         if (nextWaiter) { const r = nextWaiter; nextWaiter = null; r(); return; }
         // Skip ahead from a running step.
         state.i += 1;
@@ -339,6 +397,7 @@
 
     function stop() {
         run += 1;
+        hush();
         nextWaiter = null;
         state = null;
         clear();

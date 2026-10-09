@@ -214,6 +214,19 @@ steps:
   - pause: Call the first one, then log it.  # wait for Next
 ```
 
+### Narrate the tutorials
+
+Captions are read aloud: tutorials by a pre-rendered voice, your own workflows by
+the browser's voice. 🔊 in the player bar turns the voice off (remembered per browser).
+After changing a tutorial's wording, render its new lines:
+
+```bash
+AGENCY_OS_TTS_URL=http://localhost:8880/v1 python3 agency_os.py tutorials narrate
+python3 agency_os.py tutorials narrate --force   # everything again, e.g. a new voice
+```
+
+Then commit `workflows/narration/`. See [TUTORIAL_NARRATION.md](TUTORIAL_NARRATION.md).
+
 ---
 
 ## Roles & Permissions

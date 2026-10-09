@@ -60,7 +60,7 @@ from plugins.channels.lob_direct_mail import TEMPLATE_ID_RE, lob_template_url
 from core.jobs import JobRunner, configured_jobs, jobs_enabled
 from core import (
     accounts, agents, claims, compliance, credentials, console, contact_depth, evidence, lead_packages, llm, mcp_auth, panels, payments,
-    generator, plugin_pages, plugin_panels, royalties, searches, selling,
+    generator, narration, plugin_pages, plugin_panels, royalties, searches, selling,
     tools, verify, voice, workflows,
 )
 from core import welcome as welcome_email
@@ -186,6 +186,9 @@ templates.env.loader = ChoiceLoader([templates.env.loader, PrefixLoader({
 })])
 app.mount("/plugin-static", StaticFiles(directory=str(plugin_pages.STATIC_DIR), check_dir=False),
           name="plugin-static")
+# Tutorial narration clips (core/narration.py), rendered ahead of time.
+app.mount(narration.URL_PREFIX, StaticFiles(directory=str(narration.NARRATION_DIR), check_dir=False),
+          name="narration")
 
 # ── Auth ────────────────────────────────────────────────────────────
 # Multi-user login with role-based permissions (policy in core/access.py).
@@ -2045,6 +2048,8 @@ async def workflow_definition(request: Request, source: str, slug: str):
              else workflows.get_mine(get_db(), user, slug) if source == "mine" else None)
     if found is None:
         return JSONResponse({"ok": False, "error": "Workflow not found"}, status_code=404)
+    if source == "tutorial":
+        found = narration.with_audio(found)
     return {"ok": True, "workflow": {k: found[k] for k in ("name", "steps")}}
 
 
