@@ -30,6 +30,7 @@ Usage:
     agency-os accounts create --ref org_42 --name "Acme Realty"
     agency-os searches run
     agency-os generator run [--id 4]
+    agency-os tutorials narrate [--force]
     agency-os spend resolve --id 12 --status settled --tx 0x...
     agency-os connect --url https://your-app.up.railway.app --key aos_cli_...
     agency-os remote users invite --email rep@example.com --role Caller
@@ -972,6 +973,34 @@ def generator_run(ctx, run_id):
         click.echo(f"  #{r['id']:<6} {r['status']:<9} found {r['found']}/{r['max_leads']}, "
                    f"{r['enriched']} with a contact, {r['eligible']} sellable"
                    + (f"  ({r['error']})" if r["error"] else ""))
+
+
+@cli.group("tutorials")
+def tutorials_group():
+    """The built-in tutorials (workflows/tutorials/)."""
+
+
+@tutorials_group.command("narrate")
+@click.option("--force", is_flag=True, help="Render every line again, e.g. after changing the voice")
+def tutorials_narrate(force):
+    """Render the tutorials' spoken narration with a speech server (AGENCY_OS_TTS_URL).
+
+    Only new or changed lines are rendered; clips no tutorial uses any more are
+    deleted. Commit workflows/narration/ so the clips ship with the app."""
+    from core import narration
+
+    if not narration.configured():
+        click.echo("Error: set AGENCY_OS_TTS_URL to a speech server, e.g. http://localhost:8880/v1 "
+                   "(see docs/TUTORIAL_NARRATION.md)")
+        sys.exit(1)
+    click.echo(f"Narrating with {narration.describe()}")
+    try:
+        counts = narration.render(force=force, progress=lambda line: click.echo(f"  {line[:90]}"))
+    except narration.NarrationError as exc:
+        click.echo(f"Error: {exc}")
+        sys.exit(1)
+    click.echo(f"{counts['made']} rendered, {counts['kept']} unchanged, {counts['removed']} removed "
+               f"(in {narration.NARRATION_DIR.relative_to(narration.NARRATION_DIR.parent.parent)}/)")
 
 
 # ── Lead packages (x402) ───────────────────────────────────────────

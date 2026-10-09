@@ -10,3 +10,4 @@ data/exports/*.csv
 !data/prospects/.gitkeep
 !data/exports/.gitkeep
 .venv/
+workflows/narration/*.part

@@ -14,7 +14,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from core import access, console, workflows  # noqa: E402
+from core import access, console, narration, workflows  # noqa: E402
 from core.workflows import WorkflowError  # noqa: E402
 from tests.test_access import client_for, db, make_user  # noqa: E402,F401
 from tests.test_console import console_user  # noqa: E402
@@ -206,3 +206,14 @@ def test_console_lists_plays_and_exports(db):
 
     exported = json.loads(console.run_line(db, me, "workflows export")["output"])
     assert exported["workflows"][0]["name"] == "Morning check"
+
+
+def test_tutorials_carry_their_narration_clips(db, tmp_path, monkeypatch):
+    monkeypatch.setattr(narration, "NARRATION_DIR", tmp_path)
+    first = workflows.parse((workflows.TUTORIALS_DIR / "01-tour.yaml").read_text())["steps"][0]
+    (tmp_path / narration.clip_name(narration.spoken(first))).write_bytes(b"ID3")
+    make_user(db, "rep@x.com", "Caller")
+    c = client_for("rep@x.com")
+    steps = c.get("/api/workflows/tutorial/tour").json()["workflow"]["steps"]
+    assert steps[0]["audio"] == f"/narration/{narration.clip_name(narration.spoken(first))}"
+    assert not any("audio" in s for s in steps[1:] if narration.spoken(s) != narration.spoken(first))
