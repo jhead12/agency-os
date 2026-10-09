@@ -213,6 +213,18 @@ def test_deactivating_a_user_ends_their_session(db):
     assert "Incorrect" in r.headers["location"]
 
 
+def test_team_page_groups_users_by_who_added_them(db):
+    make_user(db, "owner@x.com", access.OWNER_ROLE)
+    owner = client_for("owner@x.com")
+    owner.post("/admin/users", data={"email": "rep@x.com", "name": "Rep", "password": PASSWORD})
+    rep = next(u for u in db.list_users() if u["email"] == "rep@x.com")
+    assert rep["created_by"] == next(u["id"] for u in db.list_users() if u["email"] == "owner@x.com")
+    page = owner.get("/admin/users").text
+    assert "Added by owner (owner@x.com)" in page and "Added from the server" in page
+    only = owner.get(f"/admin/users?added_by={rep['created_by']}").text
+    assert "rep@x.com" in only and "Added from the server</h2>" not in only
+
+
 def test_cross_site_post_is_rejected(db):
     make_user(db, "owner@x.com", access.OWNER_ROLE)
     c = client_for("owner@x.com")

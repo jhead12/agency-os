@@ -3409,7 +3409,8 @@ def _back(path: str, *, msg: str = "", error: str = "") -> RedirectResponse:
 
 
 @app.get("/admin/users", response_class=HTMLResponse)
-async def admin_users(request: Request, msg: str = Query(default=""), error: str = Query(default="")):
+async def admin_users(request: Request, msg: str = Query(default=""), error: str = Query(default=""),
+                      added_by: str = Query(default="")):
     db = get_db()
     me = current_user(request)
     roles = db.list_roles()
@@ -3420,9 +3421,25 @@ async def admin_users(request: Request, msg: str = Query(default=""), error: str
         u["locked"] = not me.is_super_admin and u["id"] != me.id and bool(u["role_ids"] & protected)
         u["agent_seen_label"] = access.describe_channel(u["agent_seen_via"] or "")
         u["agent_inbox"] = access.looks_like_agent_email(u["email"])
+    # Group accounts under whoever added them; accounts added from the server (or whose
+    # creator is gone) share one group, listed last.
+    by_id = {u["id"]: u for u in users}
+    groups: dict[str, dict] = {}
+    for u in users:
+        creator = by_id.get(u["created_by"])
+        key = str(creator["id"]) if creator else "server"
+        if key not in groups:
+            groups[key] = {"key": key, "users": [],
+                           "label": f"{creator['name']} ({creator['email']})" if creator else "Added from the server"}
+        groups[key]["users"].append(u)
+    group_list = sorted(groups.values(), key=lambda g: (g["key"] == "server", g["label"].lower()))
+    shown = [g for g in group_list if g["key"] == added_by] or group_list
     return templates.TemplateResponse(request, "admin_users.html", {
         "active": "admin",
         "users": users,
+        "groups": group_list,
+        "shown_groups": shown,
+        "added_by": added_by if len(shown) == 1 and shown[0]["key"] == added_by else "",
         "roles": roles,
         "protected_role_ids": protected,
         "msg": msg,
