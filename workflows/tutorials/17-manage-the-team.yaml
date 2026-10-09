@@ -6,6 +6,8 @@ steps:
     say: Team lists everyone who can sign in. A new person has no access until you give them a role.
   - highlight: .admin-tabs
     say: These tabs switch between the team, roles, the audit log, customer accounts and background jobs.
+  - highlight: .admin-group-filter
+    say: People are grouped by who added them. Pick someone under Added by to see only the accounts they added.
   - highlight: 'form.admin-row .check-grid'
     say: Each person has a row. Tick roles to set what they can do. Their access is everything their roles allow, added together.
   - highlight: 'form.admin-row .admin-row-flags'
