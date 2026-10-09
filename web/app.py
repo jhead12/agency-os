@@ -20,6 +20,8 @@ Features:
 from __future__ import annotations
 
 import asyncio
+import functools
+import hashlib
 import json
 import os
 import secrets
@@ -59,7 +61,7 @@ from core.protocols import portal_product
 from plugins.channels.lob_direct_mail import TEMPLATE_ID_RE, lob_template_url
 from core.jobs import JobRunner, configured_jobs, jobs_enabled
 from core import (
-    accounts, agents, claims, compliance, credentials, console, contact_depth, evidence, lead_packages, llm, mcp_auth, panels, payments,
+    accounts, agents, campaign_tests, claims, compliance, credentials, console, contact_depth, evidence, lead_packages, llm, mcp_auth, panels, payments,
     generator, narration, plugin_pages, plugin_panels, royalties, searches, selling,
     tools, verify, voice, workflows,
 )
@@ -154,7 +156,22 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="agency-os", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 
 templates = Jinja2Templates(directory=str(PROJECT_ROOT / "web" / "templates"))
-app.mount("/static", StaticFiles(directory=str(PROJECT_ROOT / "web" / "static")), name="static")
+STATIC_DIR = PROJECT_ROOT / "web" / "static"
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+@functools.lru_cache(maxsize=None)
+def static_url(path: str) -> str:
+    """/static/<path>?v=<hash of the file>. Static files carry no Cache-Control, so browsers
+    (and Railway's CDN) keep old copies; a new hash after a deploy makes them fetch it again."""
+    try:
+        digest = hashlib.sha256((STATIC_DIR / path).read_bytes()).hexdigest()[:10]
+    except OSError:
+        return f"/static/{path}"
+    return f"/static/{path}?v={digest}"
+
+
+templates.env.globals["static_url"] = static_url
 
 
 # Sent on every response. No page is ever framed; links never pass the URL
@@ -1971,7 +1988,8 @@ async def api_tool_call(request: Request, tool_name: str):
 
 @app.get("/console", response_class=HTMLResponse)
 async def console_page(request: Request):
-    return templates.TemplateResponse(request, "console.html", {"active": "account"})
+    return templates.TemplateResponse(request, "console.html", {
+        "active": "account", "commands": console.reference(current_user(request)), "site_url": site_url()})
 
 
 @app.post("/api/console")
@@ -2188,7 +2206,8 @@ async def webhook_bounce(request: Request, key: str = Query(default="")):
 
 @app.get("/voice/token")
 async def voice_token(request: Request):
-    """A short-lived token for the browser's calling SDK. Super Admins only, for now."""
+    """A short-lived token for the browser's calling SDK: Super Admins for prospect calls,
+    Owners for test calls to their own phone (the dial webhook decides which)."""
     found = voice.provider("twilio")
     if found is None:
         return JSONResponse({"detail": "Not Found"}, status_code=404)
@@ -2243,17 +2262,28 @@ async def webhook_voice_dial(request: Request, provider_key: str):
         return found
     ask = found.parse_dial(params)
     db = get_db()
-    call, refusal = await run_in_threadpool(voice.place_call, db, get_campaigns(), found.key,
-                                            ask["call_sid"], ask["identity"], ask["outreach_id"])
     user_id = voice.user_id_from_identity(ask["identity"])
     actor = db.load_current_user(user_id) if user_id else None
+    status_url = f"{site_url()}/webhooks/voice/{found.key}/status"
+    if ask.get("test_call_id"):
+        test, refusal = await run_in_threadpool(voice.place_test_call, db, get_campaigns(), found.key,
+                                                ask["call_sid"], ask["identity"], ask["test_call_id"],
+                                                campaign_tests.TEST_CALL_TTL_MINUTES)
+        if test is None:
+            db.audit(actor, "voice.test_refused", "campaign_test", ask["test_call_id"][:20],
+                     {"provider": found.key, "reason": refusal})
+            return Response(found.refuse_response(refusal), media_type=found.media_type)
+        db.audit(actor, "voice.test_dial", "campaign_test", test["id"], {"provider": found.key})
+        return Response(found.dial_response(test["destination"], test["caller_id"], status_url),
+                        media_type=found.media_type)
+    call, refusal = await run_in_threadpool(voice.place_call, db, get_campaigns(), found.key,
+                                            ask["call_sid"], ask["identity"], ask["outreach_id"])
     if call is None:
         db.audit(actor, "voice.refused", "outreach", ask["outreach_id"][:20] or None,
                  {"provider": found.key, "reason": refusal})
         return Response(found.refuse_response(refusal), media_type=found.media_type)
     db.audit(actor, "voice.dial", "voice_call", call["id"],
              {"provider": found.key, "outreach_id": call["outreach_id"]})
-    status_url = f"{site_url()}/webhooks/voice/{found.key}/status"
     return Response(found.dial_response(call["to_number"], call["caller_id"], status_url),
                     media_type=found.media_type)
 
@@ -3860,7 +3890,69 @@ async def admin_campaign_detail(request: Request, campaign_slug: str):
         "default_rules": verify.DEFAULT_RULES.merged((campaign.lead_packages or {}).get("guarantee_rules")),
         "ratings": claims.ratings(db),
         "package_ref": lead_packages.package_ref,
+        "test_scripts": campaign_tests.email_scripts(campaign),
+        "test_prospects": db.conn.execute(
+            """SELECT p.id, p.name FROM prospects p JOIN outreach o ON o.prospect_id = p.id
+               WHERE o.campaign_id = ? ORDER BY p.name LIMIT 50""", (campaign_id,),
+        ).fetchall() if campaign_id else [],
+        "test_call_ready": bool(voice.provider("twilio") and voice.campaign_caller_id(campaign)),
+        "test_disclosure": voice.disclosure_text(campaign.voice.company_name, current_user(request).name),
+        "smtp_ready": bool((ch := _plugin_registry().get_channel("email_smtp")) and ch.is_configured()),
+        "recent_tests": db.recent_campaign_tests(campaign.db_name),
     })
+
+
+def _visible_campaign_or_404(request: Request, campaign_slug: str):
+    campaign = next((c for c in get_campaigns() if c.db_name == campaign_slug), None)
+    if campaign is None or not current_user(request).sees_campaign(campaign):
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    return campaign
+
+
+@app.post("/admin/campaigns/{campaign_slug}/test-email")
+async def admin_campaign_test_email(
+    request: Request,
+    campaign_slug: str,
+    to_email: str = Form(...),
+    script: str = Form(...),
+    prospect_id: int = Form(default=0),
+):
+    """Send one of the campaign's emails to the Owner's own address (core/campaign_tests.py)."""
+    campaign = _visible_campaign_or_404(request, campaign_slug)
+    if prospect_id:
+        require_visible_prospect(request, prospect_id)
+    back = f"/admin/campaigns/{quote(campaign_slug)}"
+    try:
+        row = await run_in_threadpool(campaign_tests.send_email, get_db(), _plugin_registry(), campaign,
+                                      current_user(request), to_email, script, prospect_id)
+    except campaign_tests.TestRefused as e:
+        return RedirectResponse(url=f"{back}?test_error={quote(str(e))}#test", status_code=303)
+    if row["status"] != "sent":
+        failed = f"The email failed: {row['error'] or 'unknown error'}"
+        return RedirectResponse(url=f"{back}?test_error={quote(failed)}#test", status_code=303)
+    sent = f"Test email sent to {row['destination']}."
+    return RedirectResponse(url=f"{back}?test_msg={quote(sent)}#test", status_code=303)
+
+
+@app.post("/admin/campaigns/{campaign_slug}/test-call")
+async def admin_campaign_test_call(request: Request, campaign_slug: str, phone: str = Form(...)):
+    """Start a test call to the Owner's own phone; the browser then dials it by its id."""
+    campaign = _visible_campaign_or_404(request, campaign_slug)
+    try:
+        row = campaign_tests.start_call(get_db(), campaign, current_user(request), phone)
+    except campaign_tests.TestRefused as e:
+        return JSONResponse({"detail": str(e)}, status_code=400)
+    return JSONResponse({"test_call_id": row["id"], "to": row["destination"]})
+
+
+@app.get("/voice/test-calls/{test_id}")
+async def voice_test_call_status(request: Request, test_id: int):
+    """The Owner's own test call: whether it was dialed, and how it ended."""
+    row = get_db().get_campaign_test(test_id)
+    if not row or row["kind"] != "call" or row["user_id"] != current_user(request).id:
+        return JSONResponse({"detail": "Call not found"}, status_code=404)
+    return JSONResponse({"id": row["id"], "status": row["status"], "duration_seconds": row["duration_seconds"]},
+                        headers={"Cache-Control": "no-store"})
 
 
 def _members_back(campaign_slug: str, *, msg: str = "", error: str = "") -> RedirectResponse:

@@ -86,6 +86,7 @@ class TwilioVoice:
             "call_sid": str(params.get("CallSid") or ""),
             "identity": caller.removeprefix("client:") if caller.startswith("client:") else "",
             "outreach_id": str(params.get("outreach_id") or ""),
+            "test_call_id": str(params.get("test_call_id") or ""),
         }
 
     def dial_response(self, to_number: str, caller_id: str, status_url: str) -> str:

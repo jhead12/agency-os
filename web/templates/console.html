@@ -16,4 +16,31 @@
     </form>
 </div>
 <p class="muted" style="margin-top: 8px;">↑/↓ for history · Ctrl+L or <code>clear</code> to clear · Changes ask you to confirm first · On any other page, Ctrl+` (or the Console button) opens a small console window.</p>
+
+<div class="detail-card full-width" id="commands" style="margin-top: 16px;">
+    <h3>Commands you can run</h3>
+    <p class="muted">The same list <code>help</code> prints, for your role. Click an example to put it on the command line; <code>help &lt;command&gt;</code> explains every flag.</p>
+    <div class="table-scroll">
+    <table class="data-table">
+        <thead><tr><th>Command</th><th>What it does</th><th>Usage</th><th>Example</th></tr></thead>
+        <tbody>
+        {% for c in commands %}
+        <tr>
+            <td><code>{{ c.command }}</code>{% if c.changes %} <span class="badge badge-product" title="Asks Run this? [y/N] first">changes data</span>{% endif %}</td>
+            <td>{{ c.description }}</td>
+            <td><code>{{ c.usage }}</code></td>
+            <td><button type="button" class="btn btn-sm btn-secondary" data-console-fill="{{ c.example }}" title="Put this on the command line"><code>{{ c.example }}</code></button></td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+
+    <h4 class="mcp-step">From your own terminal (Railway or your computer)</h4>
+    <p class="muted">The same commands run outside the browser. Create a CLI key under <a href="/account#cli">Account → Command console → Use it from your own terminal</a>, then in a checkout of agency-os (or <code>railway ssh</code>):</p>
+    <pre class="agent-output">python3 agency_os.py connect --url {{ site_url }} --key aos_cli_...
+python3 agency_os.py remote help                 # this list
+python3 agency_os.py remote search-prospects --q "food bank" --limit 5
+python3 agency_os.py remote                      # interactive</pre>
+</div>
 {% endblock %}

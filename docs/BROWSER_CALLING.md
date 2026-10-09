@@ -217,6 +217,15 @@ disputed or depend on the kind of call.**
   caller's identity from the access token. It dials `tel_href(outreach.contact_phone)`
   only if the user is a Super Admin and the campaign has a `voice.caller_id`.
   Anything else gets `<Say>` and `<Hangup/>` and is written to the audit log.
+- **Test calls go only to the Owner's own number.** On a campaign's admin page
+  (**Test this campaign**), an Owner or Super Admin types their phone number and
+  the softphone rings it from the campaign's caller ID, so they can see and hear
+  the call on their own phone ([core/campaign_tests.py](../core/campaign_tests.py)).
+  The page first stores the number in `campaign_tests`, then the browser sends
+  only `test_call_id`. The dial webhook dials it once, for the Owner who started
+  it, within 10 minutes, and only to a +1 number. Nothing is recorded or logged,
+  and each user gets 10 test calls a day. This is why Owners get `/voice/token`;
+  they still can't dial prospects.
 - **Respect "stop".** A prospect with `do_not_call = 1` is never dialed. The button is
   disabled and the endpoint refuses.
 - **Record only with a disclosure.** `<Dial>` records only if the campaign has

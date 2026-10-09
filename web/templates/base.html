@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0f1117">
     <title>{% block title %}agency-os{% endblock %}</title>
     {% block head %}{% endblock %}
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="{{ static_url('style.css') }}">
 </head>
 <body>
     <nav class="navbar">
@@ -107,7 +107,7 @@
         </div>
     </section>
     {% endif %}
-    <script src="/static/console.js" defer></script>
+    <script src="{{ static_url('console.js') }}" defer></script>
     {% endif %}
     {% if user and user.uses_ai('agents.use') %}
     {% set chat_model = ai_model() %}
@@ -133,10 +133,10 @@
         <p class="chat-foot muted">No AI model is set up on this server yet. An owner can set <code>ANTHROPIC_API_KEY</code>, or point <code>AGENCY_OS_LLM</code> at a local model (see README).</p>
         {% endif %}
     </section>
-    <script src="/static/agent_chat.js" defer></script>
+    <script src="{{ static_url('agent_chat.js') }}" defer></script>
     {% endif %}
-    <script src="/static/app.js"></script>
-    {% if user %}<script src="/static/player.js" defer></script>{% endif %}
-    {% if user and user.uses_ai('ai.connect') %}<script src="/static/webmcp.js" defer></script>{% endif %}
+    <script src="{{ static_url('app.js') }}"></script>
+    {% if user %}<script src="{{ static_url('player.js') }}" defer></script>{% endif %}
+    {% if user and user.uses_ai('ai.connect') %}<script src="{{ static_url('webmcp.js') }}" defer></script>{% endif %}
 </body>
 </html>

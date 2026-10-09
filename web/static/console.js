@@ -146,6 +146,15 @@
         const term = mount(page);
         term.focus();
         window.aosConsole = { open: () => {}, run: term.run, waiting: term.waiting };
+        // The command list below it: clicking an example puts it on the command line to edit or run.
+        document.addEventListener('click', (event) => {
+            const example = event.target.closest('[data-console-fill]');
+            if (!example) return;
+            const input = page.querySelector('.console-input');
+            input.value = example.dataset.consoleFill;
+            input.focus();
+            input.setSelectionRange(input.value.length, input.value.length);
+        });
     }
 
     // ── The floating window ──
@@ -230,4 +239,5 @@
 
     // Stay open across pages, without stealing focus from the page that just loaded.
     if (state.open) setOpen(true, false);
+
 })();
