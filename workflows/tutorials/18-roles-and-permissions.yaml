@@ -1,0 +1,15 @@
+name: Roles and permissions
+description: What a role is, how to change one and how to make your own. Nothing is saved.
+requires: '@owner'
+steps:
+  - goto: /admin/roles
+    say: A role is a named set of permissions. Someone's access is all the permissions of all their roles, added together.
+  - highlight: '.admin-row .tag'
+    say: A protected role has every permission plus team administration. It can't be edited or deleted.
+  - highlight: 'form[action="/admin/roles"] .check-grid'
+    say: Every permission has a short key and a plain description. Tick the ones a role should have.
+  - highlight: 'form[action$="/delete"] button'
+    say: Deleting a role takes its permissions away from everyone who has it. The page tells you how many people that is and asks first.
+  - highlight: 'form[action="/admin/roles"]'
+    say: Make a new role at the bottom, for example a Caller who can log calls but not edit prospects. Then give it to people on the Team tab.
+  - pause: That's roles. Keep each one as small as the job needs.
