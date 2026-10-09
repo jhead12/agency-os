@@ -286,6 +286,11 @@ ALTER TABLE user_prefs ADD COLUMN IF NOT EXISTS ai_enabled INTEGER NOT NULL DEFA
 ALTER TABLE users ADD COLUMN IF NOT EXISTS is_agent INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS agent_seen_at TIMESTAMP;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS agent_seen_via TEXT;
+-- Who added the account (the Team page groups by it). Older accounts get it from the audit log.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS created_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+UPDATE users u SET created_by = a.actor_id FROM audit_log a
+ WHERE u.created_by IS NULL AND a.action = 'user.create' AND a.target_id = u.id::text
+   AND a.actor_id IS NOT NULL AND a.actor_id <> u.id;
 
 -- Ledger of every x402 payment attempt. `ref` identifies what was bought
 -- (provider/package for an unlock, provider/package/lead for a royalty).
@@ -1993,7 +1998,8 @@ class Database:
     def list_users(self) -> list[dict]:
         c = self.conn
         users = [dict(r) for r in c.execute(
-            """SELECT id, email, name, is_active, is_agent, agent_seen_at, agent_seen_via, last_login_at, created_at
+            """SELECT id, email, name, is_active, is_agent, agent_seen_at, agent_seen_via, last_login_at, created_at,
+                      created_by
                FROM users ORDER BY name"""
         ).fetchall()]
         links = c.execute("SELECT user_id, role_id FROM user_roles").fetchall()
@@ -2061,8 +2067,9 @@ class Database:
             if c.execute("SELECT 1 FROM users WHERE email = ?", (email,)).fetchone():
                 raise AccessError(f"A user with email {email} already exists.")
             cur = c.execute(
-                "INSERT INTO users (email, name, password_hash, is_agent) VALUES (?, ?, ?, ?) RETURNING id",
-                (email, name, access.hash_password(password), int(is_agent)),
+                """INSERT INTO users (email, name, password_hash, is_agent, created_by)
+                   VALUES (?, ?, ?, ?, ?) RETURNING id""",
+                (email, name, access.hash_password(password), int(is_agent), actor.id if actor else None),
             )
             user_id = cur.fetchone()["id"]
             self._set_roles(c, user_id, role_ids)

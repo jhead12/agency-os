@@ -1056,6 +1056,9 @@ table.sortable th {
 .admin-row-flags { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; }
 .tag-agent { background: var(--purple); color: white; }
 .admin-row-inactive { opacity: 0.6; }
+.admin-group-filter { margin-bottom: 16px; max-width: 420px; }
+.admin-group-filter label { display: flex; flex-direction: column; gap: 6px; }
+.admin-group-head { font-size: 1rem; margin: 24px 0 12px; }
 .admin-row-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
 .admin-row-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
 .check-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }

@@ -8,7 +8,21 @@
 </div>
 {% set tab = 'users' %}{% include "_admin_tabs.html" %}
 
-{% for u in users %}
+<form method="get" action="/admin/users" class="admin-group-filter">
+    <label>Added by
+        <select name="added_by" class="filter-select" onchange="this.form.submit()">
+            <option value="">Everyone</option>
+            {% for g in groups %}
+            <option value="{{ g.key }}" {% if g.key == added_by %}selected{% endif %}>{{ g.label }} — {{ g.users|length }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <noscript><button type="submit" class="btn btn-sm">Show</button></noscript>
+</form>
+
+{% for g in shown_groups %}
+<h2 class="admin-group-head">{% if g.key != 'server' %}Added by {% endif %}{{ g.label }} <span class="muted">· {{ g.users|length }}</span></h2>
+{% for u in g.users %}
 <form method="post" action="/admin/users/{{ u.id }}" class="detail-card admin-row {% if not u.is_active %}admin-row-inactive{% endif %}">
     <fieldset class="admin-row-fieldset" {% if u.locked %}disabled{% endif %}>
     <div class="admin-row-head">
@@ -50,6 +64,7 @@
     {% if not u.locked %}<button type="submit" class="btn btn-sm">Save</button>{% endif %}
     </fieldset>
 </form>
+{% endfor %}
 {% endfor %}
 
 <form method="post" action="/admin/users" class="detail-card admin-row">
