@@ -2766,7 +2766,7 @@ async def admin_payout(request: Request, user_id: int, confirm: str = Form(defau
 @app.get("/plugins", response_class=HTMLResponse)
 async def plugins_page(request: Request, msg: str = Query(default=""), error: str = Query(default=""),
                        test_slug: str = Query(default=""), test_demo: str = Query(default=""),
-                       test_claim: str = Query(default="")):
+                       test_claim: str = Query(default=""), test_video: str = Query(default="")):
     """Plugin management — view all plugins, their type, status, and config requirements."""
     from core.registry import PluginRegistry
 
@@ -2845,7 +2845,8 @@ async def plugins_page(request: Request, msg: str = Query(default=""), error: st
         "all_plugins": all_plugins,
         "msg": msg,
         "error": error,
-        "test_portal": {"slug": test_slug, "demo_url": test_demo, "claim_url": test_claim}
+        "test_portal": {"slug": test_slug, "demo_url": test_demo, "claim_url": test_claim,
+                        "video_demo_url": test_video}
                        if test_slug else None,
     })
 
@@ -2936,7 +2937,8 @@ async def test_product_plugin(request: Request, plugin_key: str, action: str = F
     qs = urlencode({"msg": f"Test portal created ({result.get('status')}).",
                     "test_slug": result.get("slug") or "",
                     "test_demo": result.get("demo_url") or "",
-                    "test_claim": result.get("claim_url") or ""})
+                    "test_claim": result.get("claim_url") or "",
+                    "test_video": result.get("video_demo_url") or ""})
     return RedirectResponse(url=f"/plugins?{qs}", status_code=303)
 
 

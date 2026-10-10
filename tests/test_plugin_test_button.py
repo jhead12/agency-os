@@ -82,6 +82,20 @@ def test_create_makes_a_throwaway_portal_and_shows_its_links(db, fake_client):
     assert "test-portal-1" in page and "Open demo page" in page and "Open claim page" in page
 
 
+
+def test_create_shows_the_video_demo_link_when_u9itus_returns_one(db, fake_client):
+    fake_client.response = {
+        "slug": "test-portal-1", "status": "demo",
+        "demo_url": "https://u9.example/portal/test-portal-1?src=outreach&t=abc",
+        "claim_url": "https://u9.example/portal/test-portal-1/claim?t=abc",
+        "video_demo_url": "https://u9.example/portal/test-portal-1/video-demo?src=outreach_video&t=abc",
+    }
+    make_user(db, "rep@agency.example", "Sales Rep")
+    client = client_for("rep@agency.example")
+    r = client.post("/plugins/u9itus_video_campaign/test", data={"action": "create"})
+    page = client.get(r.headers["location"]).text
+    assert "Open video demo" in page and "/portal/test-portal-1/video-demo" in page
+
 @pytest.mark.parametrize("status,hint", [(401, "token rejected"), (404, "not deployed"),
                                          (503, "AGENCY_OS_TOKEN_HASH")])
 def test_api_errors_are_explained(db, fake_client, status, hint):
