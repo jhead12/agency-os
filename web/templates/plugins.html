@@ -19,6 +19,7 @@
         A blank, unclaimed demo page. It isn't tied to a prospect and expires on its own after 60 days.
     </p>
     {% if test_portal.demo_url %}<p><a href="{{ test_portal.demo_url }}" target="_blank" rel="noopener noreferrer">Open demo page</a></p>{% endif %}
+    {% if test_portal.video_demo_url %}<p><a href="{{ test_portal.video_demo_url }}" target="_blank" rel="noopener noreferrer">Open video demo</a></p>{% endif %}
     {% if test_portal.claim_url %}<p><a href="{{ test_portal.claim_url }}" target="_blank" rel="noopener noreferrer">Open claim page</a> (creates the account)</p>{% endif %}
 </div>
 {% endif %}
