@@ -11,7 +11,14 @@ Chosen by environment:
                                      AGENCY_OS_LLM_BASE_URL=http://localhost:11434/v1
                                      AGENCY_OS_LLM_MODEL=hermes3
                                      AGENCY_OS_LLM_API_KEY=   (if the server needs one)
+    AGENCY_OS_LLM=xai                xAI's Grok (default when only XAI_API_KEY is set):
+                                     XAI_API_KEY=xai-...
+                                     AGENCY_OS_XAI_MODEL=grok-4.6   (optional)
     AGENCY_OS_LLM=off                no model
+
+A persona can ask for Grok whatever the app's model is (`model: grok` in its
+front matter, core/agents.py): callers pass provider="xai", which needs only
+XAI_API_KEY. Grok is a hosted model, so what it's sent leaves this server.
 
 A hosted deploy can't reach a model on someone's laptop; a local model is for
 self-hosted or local runs. generate() never raises.
@@ -28,6 +35,9 @@ from urllib.parse import urlsplit
 import httpx
 
 CLAUDE_MODEL = "claude-opus-5-5"
+XAI_BASE_URL = "https://api.x.ai/v1"
+XAI_DEFAULT_MODEL = "grok-4.6"
+PROVIDERS = ("xai",)  # what a caller may ask for by name, besides the app's own model
 _TIMEOUT = httpx.Timeout(180.0, connect=10.0)
 
 
@@ -50,23 +60,39 @@ class Reply:
 
 
 def backend() -> str:
-    """"anthropic", "openai_compatible", or "" when no model is configured."""
+    """"anthropic", "openai_compatible", "xai", or "" when no model is configured."""
     choice = os.environ.get("AGENCY_OS_LLM", "").strip().lower()
     if choice == "off":
         return ""
     if choice == "openai_compatible":
         return choice if _base_url() and os.environ.get("AGENCY_OS_LLM_MODEL") else ""
+    if choice == "xai":
+        return choice if available("xai") else ""
     if choice in ("", "anthropic") and os.environ.get("ANTHROPIC_API_KEY"):
         return "anthropic"
+    if choice == "" and available("xai"):
+        return "xai"
     return ""
 
 
-def describe() -> str:
-    kind = backend()
+def available(provider: str) -> bool:
+    """Whether a named provider (PROVIDERS) can be called, whatever the app's own model is."""
+    return provider == "xai" and bool(os.environ.get("XAI_API_KEY", "").strip())
+
+
+def xai_model() -> str:
+    """The Grok model to use (AGENCY_OS_XAI_MODEL)."""
+    return os.environ.get("AGENCY_OS_XAI_MODEL", "").strip() or XAI_DEFAULT_MODEL
+
+
+def describe(provider: str = "") -> str:
+    kind = provider or backend()
     if kind == "anthropic":
         return f"Claude ({CLAUDE_MODEL})"
     if kind == "openai_compatible":
         return f"{os.environ.get('AGENCY_OS_LLM_MODEL')} at {urlsplit(_base_url()).netloc}"
+    if kind == "xai":
+        return f"Grok ({xai_model()})"
     return ""
 
 
@@ -77,27 +103,42 @@ def _base_url() -> str:
 
 
 def generate(system: str, prompt: str, *, max_tokens: int = 4000, effort: str = "medium",
-             json_schema: Optional[dict] = None, http: Optional[httpx.Client] = None) -> Reply:
+             json_schema: Optional[dict] = None, http: Optional[httpx.Client] = None,
+             provider: str = "") -> Reply:
     """One model turn: a system prompt plus one user message. Never raises.
 
     json_schema asks for a JSON object matching it (strictly on Claude; as a
     JSON-mode hint on OpenAI-style servers, so callers still validate).
+    provider names a model to use instead of the app's own (PROVIDERS).
     """
     return chat(system, [{"role": "user", "content": prompt}], max_tokens=max_tokens, effort=effort,
-                json_schema=json_schema, http=http)
+                json_schema=json_schema, http=http, provider=provider)
 
 
 def chat(system: str, messages: list[dict], *, max_tokens: int = 4000, effort: str = "medium",
-         json_schema: Optional[dict] = None, http: Optional[httpx.Client] = None) -> Reply:
+         json_schema: Optional[dict] = None, http: Optional[httpx.Client] = None,
+         provider: str = "") -> Reply:
     """The next reply in a conversation. messages alternate user/assistant and end
     with the user's turn: [{"role": "user", "content": "..."}, ...]. Never raises."""
-    kind = backend()
+    if provider:
+        if provider not in PROVIDERS:
+            return Reply(False, error=f"Unknown AI model: {provider}")
+        if not available(provider):
+            return Reply(False, error="Grok isn't set up on this server (XAI_API_KEY)")
+        kind = provider
+    else:
+        kind = backend()
     if not kind:
         return Reply(False, error="No AI model is configured (AGENCY_OS_LLM)")
     try:
         if kind == "anthropic":
             return _anthropic(system, messages, max_tokens, effort, json_schema)
-        return _openai_compatible(system, messages, max_tokens, json_schema, http)
+        if kind == "xai":
+            return _openai_compatible(system, messages, max_tokens, json_schema, http, base_url=XAI_BASE_URL,
+                                      model=xai_model(), api_key=os.environ["XAI_API_KEY"].strip())
+        return _openai_compatible(system, messages, max_tokens, json_schema, http,
+                                  base_url=_base_url(), model=os.environ["AGENCY_OS_LLM_MODEL"],
+                                  api_key=os.environ.get("AGENCY_OS_LLM_API_KEY", ""))
     except Exception as exc:  # a model outage must never take a page down
         return Reply(False, error=f"The AI model failed: {type(exc).__name__}: {str(exc)[:200]}")
 
@@ -125,20 +166,20 @@ def _anthropic(system: str, messages: list[dict], max_tokens: int, effort: str, 
 
 
 def _openai_compatible(system: str, messages: list[dict], max_tokens: int, json_schema: Optional[dict],
-                       http: Optional[httpx.Client]) -> Reply:
+                       http: Optional[httpx.Client], *, base_url: str, model: str, api_key: str) -> Reply:
     body: dict = {
-        "model": os.environ["AGENCY_OS_LLM_MODEL"],
+        "model": model,
         "messages": [{"role": "system", "content": system}, *messages],
         "max_tokens": max_tokens,
     }
     if json_schema:
         body["response_format"] = {"type": "json_object"}
     headers = {}
-    if os.environ.get("AGENCY_OS_LLM_API_KEY"):
-        headers["Authorization"] = f"Bearer {os.environ['AGENCY_OS_LLM_API_KEY']}"
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
     client = http or httpx.Client(timeout=_TIMEOUT, follow_redirects=False)
     try:
-        response = client.post(f"{_base_url()}/chat/completions", json=body, headers=headers)
+        response = client.post(f"{base_url}/chat/completions", json=body, headers=headers)
     finally:
         if http is None:
             client.close()

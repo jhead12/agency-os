@@ -13,7 +13,10 @@ its own task:
       - freeform
 
 Without `tasks`, a built-in persona keeps AGENT_TASKS and any other persona
-offers every built-in task. Scheduled plugin jobs (core/jobs.py) use a persona
+offers every built-in task.
+
+`model: grok` runs a persona on xAI's Grok instead of the app's own model
+(core/llm.py). Such a persona is hidden until XAI_API_KEY is set. Scheduled plugin jobs (core/jobs.py) use a persona
 through ask(), which drafts the same way and never sends.
 
 Agents draft; they never send. The prospect's record is passed as data the
@@ -38,6 +41,7 @@ PLUGIN_AGENTS_DIR = Path(__file__).resolve().parent.parent / "plugins" / "agents
 _KEY_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 _TASK_KEY_RE = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
 MAX_TASK_LABEL = 60
+MODELS = {"grok": "xai"}  # a persona's `model` -> the llm provider it runs on
 
 TASKS: dict[str, tuple[str, str]] = {
     "next_email": ("Next email", "Write the next outreach email to this contact. Start with a subject line "
@@ -75,6 +79,7 @@ class Persona:
     body: str
     task_keys: tuple[str, ...] = ()  # from front matter; empty means the defaults
     own_tasks: dict = field(default_factory=dict, hash=False, compare=False)  # key -> (label, ask)
+    provider: str = ""  # an llm provider (MODELS); empty means the app's own model
 
     @property
     def tasks(self) -> list[str]:
@@ -125,20 +130,25 @@ def _parse(path: Path) -> Optional[Persona]:
     if not isinstance(meta, dict) or not meta.get("name"):
         return None
     task_keys, own_tasks = _tasks(meta.get("tasks"), path.name)
+    model = str(meta.get("model") or "").strip().lower()
+    if model and model not in MODELS:
+        print(f"  ! {path.name}: unknown model {model!r} (one of {', '.join(MODELS)}); skipped")
+        return None
     return Persona(key=path.stem, name=str(meta["name"]), description=str(meta.get("description", "")),
                    emoji=str(meta.get("emoji", "")), body=match.group(2).strip(),
-                   task_keys=task_keys, own_tasks=own_tasks)
+                   task_keys=task_keys, own_tasks=own_tasks, provider=MODELS.get(model, ""))
 
 
 def load_personas() -> dict[str, Persona]:
-    """Every persona in agents/ and plugins/agents/, read fresh so a dropped-in file shows up at once."""
+    """Every persona in agents/ and plugins/agents/, read fresh so a dropped-in file shows up at once.
+    A persona whose model isn't set up on this server is left out."""
     personas = {}
     for folder in (AGENTS_DIR, PLUGIN_AGENTS_DIR):
         for path in sorted(folder.glob("*.md")):
             if path.name == "README.md" or not _KEY_RE.match(path.stem) or path.stem in personas:
                 continue
             persona = _parse(path)
-            if persona:
+            if persona and (not persona.provider or llm.available(persona.provider)):
                 personas[persona.key] = persona
     return personas
 
@@ -183,7 +193,7 @@ def draft(persona_key: str, task: str, context: dict, instructions: str = "") ->
     if task == "freeform" and not instructions.strip():
         return {"ok": False, "error": "Type your question for the agent"}
     system, user = build_prompt(persona, task, context, instructions)
-    reply = llm.generate(system, user, max_tokens=4000, effort="medium")
+    reply = llm.generate(system, user, max_tokens=4000, effort="medium", provider=persona.provider)
     return {"ok": reply.ok, "text": reply.text, "error": reply.error, "agent": persona.name,
             "task": persona.task(task)[0]}
 
@@ -204,7 +214,7 @@ def ask(persona_key: str, ask_text: str, data, max_tokens: int = 4000) -> dict:
     )
     user = (f"<prospect_record>\n{json.dumps(data, indent=1, default=str)}\n</prospect_record>\n\n"
             f"{ask_text.strip()[:MAX_INSTRUCTIONS]}")
-    reply = llm.generate(system, user, max_tokens=max_tokens, effort="medium")
+    reply = llm.generate(system, user, max_tokens=max_tokens, effort="medium", provider=persona.provider)
     return {"ok": reply.ok, "text": reply.text, "error": reply.error, "agent": persona.name}
 
 
@@ -254,5 +264,6 @@ def chat(persona_key: str, messages, context: Optional[dict] = None) -> dict:
         conversation = clean_conversation(messages)
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
-    reply = llm.chat(build_chat_system(persona, context), conversation, max_tokens=4000, effort="medium")
+    reply = llm.chat(build_chat_system(persona, context), conversation, max_tokens=4000, effort="medium",
+                     provider=persona.provider)
     return {"ok": reply.ok, "text": reply.text, "error": reply.error, "agent": persona.name}

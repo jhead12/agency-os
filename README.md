@@ -622,6 +622,7 @@ export CALENDLY_API_TOKEN=...
 | enricher | `apollo` | Apollo.io contact enrichment (paid plan required) |
 | enricher | `hunter` | Hunter.io email finder + verifier |
 | enricher | `firecrawl` | Firecrawl scrape + LLM extraction — handles JS-heavy sites (paid credits) |
+| enricher | `grok` | xAI Grok web search — fills in contacts the others missed, kept only with a cited source (XAI_API_KEY) |
 | scheduler | `calendly` | Calendly booking links + booking sync |
 
 ## License

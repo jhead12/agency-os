@@ -25,7 +25,8 @@ HEADERS = {"X-AOS-Tool": "1"}
 
 @pytest.fixture
 def no_model(monkeypatch):
-    for var in ("ANTHROPIC_API_KEY", "AGENCY_OS_LLM", "AGENCY_OS_LLM_BASE_URL", "AGENCY_OS_LLM_MODEL", "AGENCY_OS_AI"):
+    for var in ("ANTHROPIC_API_KEY", "AGENCY_OS_LLM", "AGENCY_OS_LLM_BASE_URL", "AGENCY_OS_LLM_MODEL", "AGENCY_OS_AI",
+                "XAI_API_KEY", "AGENCY_OS_XAI_MODEL"):
         monkeypatch.delenv(var, raising=False)
 
 
@@ -357,6 +358,51 @@ def test_openai_compatible_backend_for_local_models(monkeypatch, no_model):
     assert url == "http://localhost:11434/v1/chat/completions" and body["model"] == "hermes3"
     assert body["messages"][0] == {"role": "system", "content": "sys"} and body["response_format"]["type"] == "json_object"
     assert llm.describe() == "hermes3 at localhost:11434"
+
+
+def test_xai_backend_for_grok(monkeypatch, no_model):
+    seen = []
+
+    def handler(request):
+        seen.append((str(request.url), request.headers.get("authorization"), json.loads(request.content)))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "Hi"}, "finish_reason": "stop"}]})
+
+    http = httpx.Client(transport=httpx.MockTransport(handler))
+    assert not llm.generate("s", "p", provider="xai", http=http).ok and not seen  # no key yet
+    assert "Unknown AI model" in llm.generate("s", "p", provider="openai").error
+
+    monkeypatch.setenv("XAI_API_KEY", "xai-test")
+    assert llm.backend() == "xai" and llm.describe() == "Grok (grok-4.6)"  # the only model set up
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    assert llm.backend() == "anthropic" and llm.available("xai")  # Claude stays the app's model
+
+    monkeypatch.setenv("AGENCY_OS_XAI_MODEL", "grok-4.5")
+    assert llm.generate("sys", "hi", provider="xai", http=http).text == "Hi"
+    url, auth, body = seen[0]
+    assert url == "https://api.x.ai/v1/chat/completions" and auth == "Bearer xai-test" and body["model"] == "grok-4.5"
+
+
+def test_grok_personas_run_on_grok_once_set_up(monkeypatch, no_model):
+    assert not [p for p in agents.load_personas().values() if p.provider]  # hidden without XAI_API_KEY
+    monkeypatch.setenv("XAI_API_KEY", "xai-test")
+    personas = agents.load_personas()
+    writer = personas["grok-outbound-writer"]
+    assert writer.provider == "xai" and personas["grok-objection-handler"].provider == "xai"
+    assert writer.task("grok_subject_lines")[0] == "Subject lines" and personas["sales-engineer"].provider == ""
+
+    calls = []
+    monkeypatch.setattr(llm, "generate", lambda system, prompt, **kw: calls.append(kw) or llm.Reply(True, "Draft"))
+    monkeypatch.setattr(llm, "chat", lambda system, messages, **kw: calls.append(kw) or llm.Reply(True, "Hi"))
+    assert agents.draft("grok-outbound-writer", "next_email", {"name": "Civic Org"})["ok"]
+    assert agents.chat("grok-objection-handler", [{"role": "user", "content": "hey"}])["ok"]
+    assert agents.draft("sales-engineer", "call_prep", {"name": "Civic Org"})["ok"]
+    assert [c["provider"] for c in calls] == ["xai", "xai", ""]
+
+
+def test_persona_with_an_unknown_model_is_skipped(monkeypatch, tmp_path):
+    (tmp_path / "odd.md").write_text("---\nname: Odd\nmodel: gpt-9\n---\nYou are odd.\n")
+    monkeypatch.setattr(agents, "PLUGIN_AGENTS_DIR", tmp_path)
+    assert "odd" not in agents.load_personas()
 
 
 def test_anthropic_backend_request_shape(monkeypatch, no_model):

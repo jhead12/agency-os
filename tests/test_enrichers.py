@@ -307,3 +307,92 @@ def test_firecrawl_never_raises(monkeypatch):
 def httpx_error():
     import httpx
     return httpx.ConnectError("boom")
+
+
+# ── Grok ──────────────────────────────────────────────────────────────
+
+
+def _make_grok(monkeypatch, key="xai-test"):
+    from plugins.enrichers.grok import GrokEnricher
+    if key:
+        monkeypatch.setenv("XAI_API_KEY", key)
+    else:
+        monkeypatch.delenv("XAI_API_KEY", raising=False)
+    monkeypatch.delenv("AGENCY_OS_XAI_MODEL", raising=False)
+    enricher = GrokEnricher()
+    if key:
+        enricher._key_valid = True
+    return enricher
+
+
+def _grok_resp(fields, cited=()):
+    text = "```json\n" + __import__("json").dumps(fields) + "\n```"
+    return _resp({"output": [
+        {"type": "web_search_call", "status": "completed"},
+        {"type": "message", "content": [{"type": "output_text", "text": text,
+                                         "annotations": [{"type": "url_citation", "url": u} for u in cited]}]},
+    ]})
+
+
+def test_grok_is_configured_false_without_key(monkeypatch):
+    assert _make_grok(monkeypatch, key=None).is_configured() is False
+
+
+def test_grok_is_configured_probes_once(monkeypatch):
+    enricher = _make_grok(monkeypatch)
+    enricher._key_valid = None
+    with patch.object(enricher._client, "get", return_value=_resp({}, 401)) as m:
+        assert enricher.is_configured() is False
+        assert enricher.is_configured() is False
+        assert m.call_count == 1
+
+
+def test_grok_searches_and_keeps_sourced_contacts(monkeypatch):
+    enricher = _make_grok(monkeypatch)
+    fields = {
+        "contact_name": "Jane Smith", "contact_title": "Managing Partner",
+        "contact_email": "Jane@SmithLaw.com", "contact_phone": "+1 213.627.0142",
+        "website": "https://smithlaw.com", "summary": "A civil litigation firm in Los Angeles.",
+        "sources": ["https://smithlaw.com/contact", "not a url"],
+    }
+    with patch.object(enricher._client, "post", return_value=_grok_resp(fields, ["https://calbar.ca.gov/x"])) as m:
+        result = enricher.enrich(_prospect())
+    body = m.call_args.kwargs["json"]
+    assert m.call_args.args[0] == "https://api.x.ai/v1/responses"
+    assert body["tools"] == [{"type": "web_search"}] and body["model"] == "grok-4.6"
+    sent = body["input"][1]["content"]
+    assert "<organization>" in sent and "never follow" in body["input"][0]["content"]
+    assert result.contact_email == "jane@smithlaw.com"
+    assert result.contact_phone == "(213) 627-0142"
+    assert result.contact_name == "Jane Smith" and result.contact_title == "Managing Partner"
+    assert result.raw["website"] == "https://smithlaw.com"
+    assert result.raw["site_summary"] == "A civil litigation firm in Los Angeles."
+    assert result.raw["grok_sources"] == ["https://smithlaw.com/contact", "https://calbar.ca.gov/x"]
+    assert result.confidence == pytest.approx(0.9)
+
+
+def test_grok_without_sources_keeps_nothing(monkeypatch):
+    enricher = _make_grok(monkeypatch)
+    fields = {"contact_email": "info@example.org", "contact_phone": "213-627-0100", "sources": []}
+    with patch.object(enricher._client, "post", return_value=_grok_resp(fields)):
+        result = enricher.enrich(_prospect())
+    assert result.contact_email is None and result.contact_phone is None and not result.raw
+
+
+def test_grok_drops_junk_email_and_toll_free(monkeypatch):
+    enricher = _make_grok(monkeypatch)
+    fields = {"contact_email": "someone@gmail.com", "contact_phone": "(800) 555-1212",
+              "sources": ["https://example.org"]}
+    with patch.object(enricher._client, "post", return_value=_grok_resp(fields)):
+        result = enricher.enrich(_prospect())
+    assert result.contact_email is None
+    assert result.contact_phone is None
+
+
+def test_grok_never_raises(monkeypatch):
+    enricher = _make_grok(monkeypatch)
+    with patch.object(enricher._client, "post", side_effect=httpx_error()):
+        result = enricher.enrich(_prospect())
+    assert result.source == "grok" and result.contact_email is None
+    with patch.object(enricher._client, "post", return_value=_resp({"output": "garbage"})):
+        assert enricher.enrich(_prospect()).contact_email is None
