@@ -162,6 +162,13 @@ def test_opening_the_video_demo_counts_as_engagement():
     assert effect.stage == "engaged" and effect.log_as == "portal.video_demo_viewed"
 
 
+def test_continuing_past_the_30_second_stop_flags_interest():
+    effect = shared_event_effect({"type": "portal.video_demo_continued"})
+
+    assert effect.stage == "engaged" and effect.log_as == "portal.video_demo_continued"
+    assert effect.flag == "interested"
+
+
 def test_both_u9itus_products_read_one_feed_under_the_existing_cursor():
     assert event_feed(U9itusVideoCampaignProduct(), "u9itus_video_campaign") == "u9itus_voter_guide"
     assert event_feed(U9itusVoterGuideProduct(), "u9itus_voter_guide") == "u9itus_voter_guide"

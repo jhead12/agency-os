@@ -1534,6 +1534,7 @@ def _voice_buttons(request: Request, outreach_rows, prospect, do_not_call: bool)
             buttons[o["id"]] = {**button, "outreach_id": o["id"], "prospect_id": prospect.id}
     return buttons
 
+        "interested": any(e.get("flag") == "interested" for e in portal_events),
 
 def _plugin_registry() -> PluginRegistry:
     registry = PluginRegistry()
