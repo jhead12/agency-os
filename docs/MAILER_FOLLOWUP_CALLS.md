@@ -7,8 +7,13 @@ script that refers to the mailer. Written in the same format as
 [LISTMONK_INTEGRATION.md](LISTMONK_INTEGRATION.md): diagrams are Mermaid, the
 contract is YAML, and tasks have file paths and acceptance checks.
 
-Status (2026-10-06): **M1 built** (Lob delivery scans are recorded). M2–M7 are
-proposed. The open questions are in section 8.
+Status (2026-10-11): **M1–M5 built.** M1 records Lob delivery scans; M2–M5 are on
+`feat/u9itus-hybrid-campaign` (`core/calls.py`, `tests/test_call_tasks.py`), used
+first by the u9itus hybrid campaign ([U9ITUS_PROSPECT_SOURCE.md](U9ITUS_PROSPECT_SOURCE.md)).
+M6–M7 are proposed. The open questions are in section 8; until they're decided,
+call tasks are a shared queue (Q3), a call is due 2 days after delivery when the
+campaign says so (Q2), and the Calls due page shows the script title, not the
+mailer (Q5).
 
 ## Goal
 
@@ -220,12 +225,25 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_call_tasks_open ON call_tasks(outreach_id)
 | ID | Task | Files | Acceptance check |
 |---|---|---|---|
 | M1 ✓ | Record Lob delivery: `processed_for_delivery` / `delivered` → `mail_delivered` contact event, once per piece; return envelopes ignored | `core/evidence.py`, `core/verify.py` (`EVENT_KINDS`), `tests/test_evidence.py` | **Done.** In transit / in local area record nothing; the first delivered scan records one event; a second scan or a replay records nothing. |
-| M2 | Let Lob-only contacts be mailed: move the "no email or phone" check after channel selection, so a contact with only a mailing address can still get a `lob_direct_mail` touch | `core/pipeline.py` | Test: an outreach with an address but no email or phone gets the Lob step, and still counts as `no_contact` for an email-only step. |
-| M3 | Cadence `after:` and `fallback_days`: parse in `CadenceStep`; in `enqueue_outreach`, skip a due step whose event hasn't happened (no touch advance) | `core/campaign.py`, `core/pipeline.py` | Tests: step waits until `mail_delivered` + delay; falls back after `fallback_days` from the send; `call_logged` waits until a call is logged after the previous touch. |
-| M4 | Call tasks: `call_tasks` table; a `call` channel in the pipeline that creates the task instead of sending; `/call-log/record` closes the open task and advances the touch; outcome rules (`not_interested` etc. end the sequence) | `core/db.py`, `core/calls.py` (NEW), `core/pipeline.py`, `web/app.py` | Tests: creating twice leaves one open task; logging a call closes it and increments `touch_count`; `do_not_call` moves the outreach to `closed_lost`. |
-| M5 | **Calls due** page: open tasks due now, filtered to campaigns the caller can see (`visible_campaigns`), oldest first; shows reason (delivered / unconfirmed / returned), mailer headline or Lob thumbnail, phone, and a "Log call" form with the task's script open | `web/app.py`, `web/templates/calls_due.html`, `core/access.py` (`GET /calls/due`: `calls.log`) | Route permission tests pass; a Caller sees only tasks for campaigns they can see; a Viewer gets 403. |
+| M2 ✓ | Let Lob-only contacts be mailed: move the "no email or phone" check after channel selection, so a contact with only a mailing address can still get a `lob_direct_mail` touch | `core/pipeline.py` | Test: an outreach with an address but no email or phone gets the Lob step, and still counts as `no_contact` for an email-only step. |
+| M3 ✓ | Cadence `after:` and `fallback_days`: parse in `CadenceStep`; in `enqueue_outreach`, skip a due step whose event hasn't happened (no touch advance) | `core/campaign.py`, `core/pipeline.py` | Tests: step waits until `mail_delivered` + delay; falls back after `fallback_days` from the send; `call_logged` waits until a call is logged after the previous touch. |
+| M4 ✓ | Call tasks: `call_tasks` table; a `call` channel in the pipeline that creates the task instead of sending; `/call-log/record` closes the open task and advances the touch; outcome rules (`not_interested` etc. end the sequence) | `core/db.py`, `core/calls.py` (NEW), `core/pipeline.py`, `web/app.py` | Tests: creating twice leaves one open task; logging a call closes it and increments `touch_count`; `do_not_call` moves the outreach to `closed_lost`. |
+| M5 ✓ | **Calls due** page: open tasks due now, filtered to campaigns the caller can see (`visible_campaigns`), oldest first; shows reason (delivered / unconfirmed / returned), mailer headline or Lob thumbnail, phone, and a "Log call" form with the task's script open | `web/app.py`, `web/templates/calls_due.html`, `core/access.py` (`GET /calls/due`: `calls.log`) | Route permission tests pass; a Caller sees only tasks for campaigns they can see; a Viewer gets 403. |
 | M6 | Call-task job: creates due call tasks without an `enqueue` run (idempotent), so callers' lists fill on their own | `core/jobs.py` (`Job("call-tasks", ..., AGENCY_OS_CALL_TASKS_MINUTES, 30)`) | Running the job twice creates nothing new the second time. It never sends email or mail. |
 | M7 | Timeline and tutorial: show `mail_delivered` / `mail_returned` / call tasks on the prospect page; add a "Work your calls-due list" Workflow tutorial | `web/templates/prospect_detail.html`, `workflows/tutorials/calls_due.yaml` | The prospect page shows "Mailer delivered Oct 9" and any open call task; the tutorial plays for a Caller. |
+
+As built (M2–M5):
+- A `call` step opens the task with the reason `mail_delivered`, `mail_unconfirmed`,
+  `mail_returned`, or `manual` (no mailer to wait for). The touch is counted when the call is
+  logged; the next follow-up is the step's `delay_days` after that, unless the call set a
+  next-step date.
+- `after: call_logged` waits while the previous touch's call task is open. If the previous
+  step reached them another way (no phone, so it emailed), there's no task and nothing to wait for.
+- Logging a call with no open task changes the cadence in no way (the existing behavior).
+- `wrong_number` ends the sequence (`closed_lost`), per section 3; `do_not_call` and a
+  `not_interested` interest level already did.
+- A mail step after returned mail isn't skipped yet (section 3's "returned mail stops the
+  mail branch" is still to do).
 
 Suggested order: M1 ✓ → M2 → M4 → M5 (a usable manual calls-due list, fed by
 `call` steps) → M3 → M6 → M7.

@@ -1,0 +1,16 @@
+# DRAFT COPY. Sent 3 days after the call is logged, or after the follow-up if there was no phone.
+key: u9itus_hybrid_after_call
+stage: contacted
+subject: "{{org_name}}'s page on u9itus"
+body: |
+  Hi {{contact_first}},
+
+  Following up on the postcard we sent {{org_name}}. Here is your page on
+  u9itus:
+
+  {{source_url}}
+
+  You can claim it there to keep your details right. Happy to answer
+  questions, just reply to this email.
+
+  {{your_name}}

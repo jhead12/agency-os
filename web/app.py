@@ -61,7 +61,7 @@ from core.protocols import portal_product
 from plugins.channels.lob_direct_mail import TEMPLATE_ID_RE, lob_template_url
 from core.jobs import JobRunner, configured_jobs, jobs_enabled
 from core import (
-    accounts, agents, campaign_tests, claims, compliance, credentials, console, contact_depth, evidence, lead_packages, llm, mcp_auth, panels, payments,
+    accounts, agents, calls, campaign_tests, claims, compliance, credentials, console, contact_depth, evidence, lead_packages, llm, mcp_auth, panels, payments,
     generator, narration, plugin_pages, plugin_panels, royalties, searches, selling,
     tools, verify, voice, workflows,
 )
@@ -1213,8 +1213,10 @@ async def record_call(
     voicemail_left: str = Form(default=""),
     notes: str = Form(default=""),
     voice_call_id: int = Form(default=0),
+    return_to: str = Form(default=""),
 ):
-    """Record a completed phone call (and link it to the dashboard call it came from, if any)."""
+    """Record a completed phone call (and link it to the dashboard call it came from, if any).
+    It closes the outreach's open call task, if any, and counts that cadence touch (core/calls.py)."""
     from core.models import CallLog
     require_visible_prospect(request, prospect_id)
     if outcome not in contact_depth.CALL_OUTCOMES:
@@ -1256,7 +1258,29 @@ async def record_call(
     call_id = db.log_call(call)
     if voice_call_id:
         db.link_voice_call(voice_call_id, call_id, current_user(request).id)
+    row = db.conn.execute("SELECT name FROM campaigns WHERE id = ?", (campaign_id,)).fetchone()
+    calls.complete(db, call, call_id, next((c for c in get_campaigns() if row and c.db_name == row["name"]), None))
+    if return_to == "calls-due":
+        return RedirectResponse(url="/calls/due", status_code=303)
     return RedirectResponse(url=f"/prospects/{prospect_id}", status_code=303)
+
+
+@app.get("/calls/due", response_class=HTMLResponse)
+async def calls_due_page(request: Request):
+    """People to call now: open call tasks in the campaigns this caller can see, oldest first."""
+    db = get_db()
+    configs = {c.db_name: c for c in visible_campaigns(request)}
+    ids = [i for i in (db.get_campaign_id(name) for name in configs) if i]
+    tasks = calls.due(db, ids, hidden_for(request))
+    for task in tasks:
+        task["reason_label"] = calls.REASONS.get(task["reason"], task["reason"])
+        try:
+            script = configs[task["campaign"]].load_script(task["script_key"])
+        except (KeyError, FileNotFoundError, OSError):
+            script = {}
+        task["script_title"] = (script or {}).get("title") or task["script_key"]
+        task["campaign_title"] = configs[task["campaign"]].name if task["campaign"] in configs else task["campaign"]
+    return templates.TemplateResponse(request, "calls_due.html", {"tasks": tasks, "active": "calls-due"})
 
 
 @app.get("/call-scripts", response_class=HTMLResponse)
@@ -1510,6 +1534,7 @@ async def prospect_detail(request: Request, prospect_id: int):
         "portal_link": next((r["demo_link"] for r in outreach_rows if r["demo_link"]), None),
         "portal_events": portal_events,
         "ready_to_close": any(e.get("flag") == "ready_to_close" for e in portal_events),
+        "interested": any(e.get("flag") == "interested" for e in portal_events),
         "portal_available": portal_product_ is not None,
         "msg": request.query_params.get("msg", ""),
         "error": request.query_params.get("error", ""),
@@ -1534,7 +1559,6 @@ def _voice_buttons(request: Request, outreach_rows, prospect, do_not_call: bool)
             buttons[o["id"]] = {**button, "outreach_id": o["id"], "prospect_id": prospect.id}
     return buttons
 
-        "interested": any(e.get("flag") == "interested" for e in portal_events),
 
 def _plugin_registry() -> PluginRegistry:
     registry = PluginRegistry()

@@ -1,0 +1,13 @@
+# DRAFT COPY. Last touch; the outreach moves to nurture after it.
+key: u9itus_hybrid_last_note
+stage: contacted
+subject: "Last note about {{org_name}} on u9itus"
+body: |
+  Hi {{contact_first}},
+
+  I won't keep filling your inbox. If you'd like to claim {{org_name}}'s
+  page on u9itus later, it's here:
+
+  {{source_url}}
+
+  {{your_name}}

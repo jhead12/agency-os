@@ -249,6 +249,7 @@ ROUTE_RULES: dict[str, str] = {
     "POST /email-templates/save": "templates.edit",
     "GET /call-log": "calls.view",
     "POST /call-log/record": "calls.log",
+    "GET /calls/due": "calls.log",
     "GET /call-scripts": "calls.view",
     "GET /campaigns": "campaigns.view",
     "GET /emails": "emails.view",

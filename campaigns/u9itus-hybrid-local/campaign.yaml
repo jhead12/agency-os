@@ -1,0 +1,72 @@
+# The hybrid model: mail, then a person calls, then email, with AI drafting
+# along the way (plugins/agents/u9itus-call-coach.md). Copy this folder to run
+# the same play for another customer: change the source, filters, sender and
+# script copy. Prospects come from u9itus's own directory
+# (plugins/prospect_sources/u9itus.py, docs/U9ITUS_PROSPECT_SOURCE.md).
+#
+# DRAFT COPY: the scripts in scripts/ are placeholders. Settle the offer and
+# wording before the first real send.
+#
+# Timeline (docs/MAILER_FOLLOWUP_CALLS.md):
+#   touch 0  postcard (Lob)                          day 0
+#   touch 1  call 2 days after it lands              (10 days after sending if
+#            (no phone: an email instead)             Lob reports no delivery)
+#   touch 2  email 3 days after the call is logged
+#   touch 3  last note 5 days later, then nurture
+#
+# Lob costs money per piece; only a Super Admin can turn lob_direct_mail on or
+# off for a campaign. Sends still go out only on a deliberate enqueue run.
+name: "u9itus Hybrid — Local Businesses & Organizations"
+product: u9itus_directory   # no product plugin: scripts link to the record's u9itus page ({{source_url}})
+prospect_sources:
+- u9itus
+enrichers:
+- local_scraper    # primary: free, no API key, mailto:/tel: fallback
+- hunter           # auto-skipped unless HUNTER_API_KEY is set and valid
+channels:
+- email_smtp
+- email_smartlead
+- lob_direct_mail
+filters:
+  u9itus_kinds: [business, organization]
+  state: CA
+  cities:
+  - Long Beach
+  - Torrance
+  - Santa Monica
+  u9itus_max: 500
+stages:
+- cold
+- contacted
+- engaged
+- demo_scheduled
+- closed_won
+- closed_lost
+- nurture
+cadence:
+- touch: 0
+  delay_days: 3
+  script: mail_00_postcard
+  next_stage: contacted
+  channels: [lob_direct_mail]
+- touch: 1
+  after: mail_delivered
+  delay_days: 2
+  fallback_days: 10
+  script: phone_00_mailer_followup
+  next_stage: contacted
+  channels: [call, email_smtp, email_smartlead]
+- touch: 2
+  after: call_logged
+  delay_days: 3
+  script: 01_after_call
+  next_stage: contacted
+  channels: [email_smtp, email_smartlead]
+- touch: 3
+  delay_days: 5
+  script: 02_last_note
+  next_stage: nurture
+  channels: [email_smtp, email_smartlead]
+stale_threshold_days: 14
+sender_name: Joshua
+sender_email: joshua@u9itus.com

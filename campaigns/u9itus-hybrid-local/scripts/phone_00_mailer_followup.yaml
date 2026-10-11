@@ -1,0 +1,32 @@
+# DRAFT COPY. Shown to the caller on Calls due; logging the call moves the sequence on.
+key: phone_u9itus_mailer_followup
+stage: contacted
+channel: phone
+title: "Mailer Follow-Up — Did the postcard arrive?"
+goal: "Confirm the right contact and get permission to email the claim link"
+duration: "2-4 minutes"
+body: |
+  ── BEFORE YOU DIAL ──────────────────────────────────────
+
+  [Contact: {{contact_name}}, {{contact_title}}]
+  [Their u9itus page: {{source_url}}]
+  [Ask the Call Coach agent on the prospect page for a one-paragraph prep.]
+
+  ── OPENING ──────────────────────────────────────────────
+
+  "Hi, is this {{contact_name}}? This is {{your_name}} with u9itus. We mailed
+  {{org_name}} a postcard last week about your page on u9itus. Did it make it
+  to you?"
+
+  [If no: "No problem. It's about the page people in {{city}} see for you.
+  Could I email you the link instead? What's the best address?"]
+
+  ── IF THEY'RE INTERESTED ───────────────────────────────
+
+  "Great. I'll email you the link to claim it today."
+  [Log: interest high or medium, next step "send claim link".]
+
+  ── IF NOT ───────────────────────────────────────────────
+
+  "Understood, thanks for your time."
+  [If they ask not to be called: log "Asked not to be called again".]
