@@ -15,7 +15,7 @@ from typing import Optional
 
 from core.campaign import CadenceStep, CampaignConfig, discover_campaigns
 from core.db import Database
-from core import compliance, lead_packages
+from core import calls, compliance, lead_packages
 from core.models import Prospect, SendResult
 from core.protocols import DemoPortalProduct, EventEffect, event_effect, event_feed, portal_product
 from core.registry import PluginRegistry
@@ -125,7 +125,8 @@ class Pipeline:
         instead of the prospect's real email. This lets you test the full pipeline
         (scripts, personalization, sending) without emailing real prospects.
         """
-        stats = {"sent": 0, "skipped": 0, "failed": 0, "no_contact": 0, "royalty_blocked": 0, "suppressed": 0}
+        stats = {"sent": 0, "skipped": 0, "failed": 0, "no_contact": 0, "royalty_blocked": 0, "suppressed": 0,
+                 "waiting": 0, "call_tasks": 0}
         campaign_id = self.db.get_campaign_id(campaign.db_name)
         if not campaign_id:
             return {**stats, "error": "campaign not found"}
@@ -138,11 +139,6 @@ class Pipeline:
             print(f"  ! Email channels off: {email_blocked}")
 
         for outreach in due:
-            # Need some way to reach them — if not, skip (or enrich)
-            if not (outreach.contact_email or outreach.contact_phone):
-                stats["no_contact"] += 1
-                continue
-
             # In test mode, redirect all emails to the test address
             send_email = outreach.contact_email or ""
             send_phone = outreach.contact_phone or ""
@@ -158,6 +154,14 @@ class Pipeline:
                 stats["skipped"] += 1
                 continue
 
+            # A step can wait for its mailer to land or a call to be logged (core/calls.py)
+            call_reason = "manual"
+            if step.after:
+                ready, call_reason = calls.event_ready(self.db, step, outreach)
+                if not ready:
+                    stats["waiting"] += 1
+                    continue
+
             # Load and render the script
             try:
                 script = campaign.load_script(step.script)
@@ -169,6 +173,14 @@ class Pipeline:
             prospect = self.db.get_prospect(outreach.prospect_id)
             if not prospect:
                 stats["failed"] += 1
+                continue
+
+            # Need some way to reach them: email or phone, or a mailing address
+            # for a step that can mail. If not, skip (or enrich).
+            channels = step.channels or campaign.channels
+            mailable = prospect.address and any(ch.startswith("lob") for ch in channels)
+            if not (outreach.contact_email or outreach.contact_phone or mailable):
+                stats["no_contact"] += 1
                 continue
 
             # Leads bought as an x402 package: pay the royalty before the first
@@ -200,10 +212,21 @@ class Pipeline:
             # (a channel returns "skipped" when e.g. there's no phone number)
             result = None
             suppressed = False
+            call_task = False
             sent_body = body
-            for ch_key in step.channels or campaign.channels:
+            for ch_key in channels:
                 if ch_key.startswith("sms") and (not gate.sms_allowed or self.db.do_not_call(prospect.id)):
                     continue
+                if ch_key == "call":
+                    # Not a send: a person calls them from Calls due, and logging
+                    # the call counts the touch (core/calls.py). No phone → next channel.
+                    if not send_phone or self.db.do_not_call(prospect.id):
+                        continue
+                    if calls.open_task(self.db, outreach_id=outreach.id, campaign_id=campaign_id,
+                                       touch=step.touch, script_key=step.script, reason=call_reason):
+                        stats["call_tasks"] += 1
+                    call_task = True
+                    break
                 channel = self.registry.get_channel(ch_key)
                 if not channel or not channel.is_configured():
                     continue
@@ -255,6 +278,8 @@ class Pipeline:
                 if result.status != "skipped":
                     break
 
+            if call_task:
+                continue
             if suppressed and (result is None or result.status == "skipped"):
                 print(f"  · {outreach.contact_email} unsubscribed; not emailed")
                 stats["suppressed"] += 1
@@ -411,6 +436,7 @@ class Pipeline:
             "state": prospect.state or "CA",
             "your_name": campaign.sender_name,
             "your_email": campaign.sender_email,
+            "source_url": prospect.source_url or "",  # e.g. the record's u9itus profile page
         }
 
         # Scheduler plugin provides a personalized booking link

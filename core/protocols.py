@@ -124,6 +124,9 @@ def shared_event_effect(event: dict) -> Optional[EventEffect]:
         "portal.viewed": EventEffect(stage="engaged", log_as="portal.viewed"),
         # The sandboxed video campaign demo (u9itus section 13) counts the same as a view.
         "portal.video_demo_viewed": EventEffect(stage="engaged", log_as="portal.video_demo_viewed"),
+        # They pressed Continue at the video demo's 30-second stop: a sign of interest.
+        "portal.video_demo_continued": EventEffect(stage="engaged", log_as="portal.video_demo_continued",
+                                                   flag="interested"),
         "portal.claimed": EventEffect(stage="demo_scheduled", log_as="portal.claimed",
                                       portal={"status": "claimed"}),
         # Publishing is the buying signal: flag it, but leave the stage to the rep.

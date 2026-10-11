@@ -137,6 +137,18 @@ class U9itusClient:
         """
         return self._request("GET", "/api/v1/agency/plans")
 
+    # ── u9itus's own directory as prospects ───────────────────────────
+
+    def prospects(self, **params) -> dict:
+        """GET /api/v1/agency/prospects — one page of businesses or organizations.
+
+        params: kind (business | organization), state, cities, categories,
+        org_types, after (cursor), limit. Contract: docs/U9ITUS_PROSPECT_SOURCE.md.
+        Returns: {prospects: [...], next_after: str | None}
+        """
+        return self._request("GET", "/api/v1/agency/prospects",
+                             params={k: v for k, v in params.items() if v not in (None, "", [])})
+
     # ── Internal request with retry ───────────────────────────────────
 
     def _request(self, method: str, path: str, **kwargs) -> dict:

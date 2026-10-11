@@ -154,7 +154,7 @@ try { var enter = sessionStorage.getItem("aos.recordEnter"); sessionStorage.remo
             <div class="detail-row"><span>Campaign</span><strong>{{ o.campaign_name }}</strong></div>
             <div class="detail-row"><span>Stage</span>
                 <span class="stage-badges"><span class="stage-badge stage-{{ o.stage }}">{{ o.stage }}</span>
-                {% if ready_to_close %}<span class="stage-badge stage-closed_won" title="They published their demo page">ready to close</span>{% endif %}</span>
+                {% if ready_to_close %}<span class="stage-badge stage-closed_won" title="They published their demo page">ready to close</span>{% elif interested %}<span class="stage-badge stage-engaged" title="They pressed Continue at the video demo's 30-second stop">interested</span>{% endif %}</span>
             </div>
             <div class="detail-row"><span>Touches</span><span>{{ o.touch_count }}</span></div>
             <div class="detail-row"><span>Last Contacted</span><span>{{ o.last_contacted_at|fmt_date }}</span></div>
@@ -325,6 +325,8 @@ try { var enter = sessionStorage.getItem("aos.recordEnter"); sessionStorage.remo
     'demo': 'Demo live', 'expired': 'Expired', 'claimed': 'Claimed', 'published': 'Published'} %}
 {% set event_labels = {
     'portal.viewed': 'Viewed the demo', 'portal.claimed': 'Claimed the page',
+    'portal.video_demo_viewed': 'Opened the video demo',
+    'portal.video_demo_continued': 'Kept watching past 30 seconds (interested)',
     'portal_published': 'Published the page'} %}
 <div class="detail-card portal-card" {{ board.attrs('portal') }}>
     <h3>{{ portal_label }}

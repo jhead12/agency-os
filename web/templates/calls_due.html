@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Calls Due — agency-os{% endblock %}
+{% block content %}
+
+<div class="page-header">
+    <h1>Calls Due</h1>
+    <p class="subtitle">{{ tasks|length }} to call · oldest first · logging a call takes them off this list and moves their sequence on</p>
+</div>
+
+{% if tasks %}
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>Due</th>
+            <th>Prospect</th>
+            <th>Why now</th>
+            <th>Contact</th>
+            <th>Script</th>
+            <th>Log the call</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for t in tasks %}
+        <tr>
+            <td>{{ t.due_at|fmt_date }}</td>
+            <td>
+                <a href="/prospects/{{ t.prospect_id }}">{{ t.prospect_name }}</a>
+                <div class="muted">{{ t.city or '' }}{% if t.city and t.state %}, {% endif %}{{ t.state or '' }} · {{ t.campaign_title }}</div>
+            </td>
+            <td><span class="badge {% if t.reason == 'mail_delivered' %}badge-success{% elif t.reason in ['mail_unconfirmed', 'mail_returned'] %}badge-warning{% endif %}">{{ t.reason_label }}</span></td>
+            <td>
+                {{ t.contact_name or '—' }}{% if t.contact_title %} <span class="muted">({{ t.contact_title }})</span>{% endif %}
+                <div>{% if t.do_not_call %}<span class="badge badge-warning">Do not call</span>{% else %}<a href="tel:{{ t.contact_phone }}">{{ t.contact_phone }}</a>{% endif %}</div>
+            </td>
+            <td><a href="/call-scripts?prospect_id={{ t.prospect_id }}" target="_blank" rel="noopener">{{ t.script_title }}</a></td>
+            <td>
+                <form method="post" action="/call-log/record" class="call-log-form">
+                    <input type="hidden" name="prospect_id" value="{{ t.prospect_id }}">
+                    <input type="hidden" name="outreach_id" value="{{ t.outreach_id }}">
+                    <input type="hidden" name="campaign_id" value="{{ t.campaign_id }}">
+                    <input type="hidden" name="stage_at_call" value="{{ t.stage }}">
+                    <input type="hidden" name="script_key" value="{{ t.script_key }}">
+                    <input type="hidden" name="script_title" value="{{ t.script_title }}">
+                    <input type="hidden" name="return_to" value="calls-due">
+                    <select name="outcome" class="filter-select" required aria-label="Outcome">
+                        {% for key, label in CALL_OUTCOMES.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
+                    </select>
+                    <select name="interest_level" class="filter-select" aria-label="Interest level">
+                        <option value="">Interest: N/A</option>
+                        <option value="high">High</option>
+                        <option value="medium">Medium</option>
+                        <option value="low">Low</option>
+                        <option value="not_interested">Not interested</option>
+                    </select>
+                    <input type="text" name="notes" placeholder="Notes" class="filter-input" aria-label="Notes">
+                    <button type="submit" class="btn btn-sm">Record</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="empty-state">
+    <p>Nobody to call right now. A campaign step on the <code>call</code> channel puts people here when they're due.</p>
+</div>
+{% endif %}
+{% endblock %}

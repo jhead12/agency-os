@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from core.calls import AFTER_EVENTS
+
 if TYPE_CHECKING:
     from core.db import Database
 
@@ -27,6 +29,10 @@ class CadenceStep:
     script: str       # script file stem (e.g. "00_cold_outreach")
     next_stage: str   # stage to move to after this touch
     channels: list[str] = field(default_factory=list)  # overrides campaign channels for this touch
+    # Wait for an event before this touch (docs/MAILER_FOLLOWUP_CALLS.md section 3):
+    # "mail_delivered" or "call_logged". delay_days then counts from the event.
+    after: str = ""
+    fallback_days: int = 10  # after: mail_delivered with no delivery scan: due this long after the send
 
 
 @dataclass
@@ -75,9 +81,14 @@ class CampaignConfig:
                 script=step["script"],
                 next_stage=step["next_stage"],
                 channels=step.get("channels", []),
+                after=str(step.get("after") or "").strip(),
+                fallback_days=int(step.get("fallback_days", 10)),
             )
             for step in raw.get("cadence", [])
         ]
+        for step in cadence:
+            if step.after and step.after not in AFTER_EVENTS:
+                raise ValueError(f"cadence touch {step.touch}: after must be mail_delivered or call_logged")
 
         return cls(
             name=raw["name"],

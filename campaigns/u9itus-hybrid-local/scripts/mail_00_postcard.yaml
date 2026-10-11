@@ -1,0 +1,17 @@
+# DRAFT COPY: settle the offer before mailing.
+key: u9itus_hybrid_postcard
+stage: cold
+mail_type: postcard
+front: |
+  {{org_name}} IS ON U9ITUS
+  Take a look at your page
+back: |
+  Hi {{contact_first}},
+
+  {{org_name}} has a page on u9itus, and people in {{city}}
+  are finding it. Claim it to keep your details right.
+
+  See it: {{source_url}}
+
+  We'll give you a quick call in a few days.
+  — {{your_name}}, {{your_email}}
