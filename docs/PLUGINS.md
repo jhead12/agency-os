@@ -144,6 +144,10 @@ task. A task key must be lowercase and can't reuse a built-in key. Prefix
 yours with the plugin's name so two plugins don't collide. If a file has the
 same name as one in `agents/`, the `agents/` one wins.
 
+Add `model: grok` to run an agent on xAI's Grok instead of the app's own
+model. It needs `XAI_API_KEY`; until that's set the agent is hidden. The
+Grok agents in `plugins/agents/grok-*.md` are examples.
+
 Agents draft; they never send. Prospect records are given to the model as
 data it must not take instructions from. That holds on prospect pages, in the
 chat robot, over MCP and in scheduled jobs.
