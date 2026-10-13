@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable
 
-from core import access, agents, llm, verify
+from core import access, agents, lead_import, llm, verify
 from core.access import AccessError, CurrentUser
 from core.campaign import hidden_campaigns
 from core.contact_depth import CALL_OUTCOMES
@@ -40,6 +40,8 @@ campaigns_changed: Callable[[], None] = lambda: None
 
 STAGES = ["cold", "contacted", "engaged", "demo_scheduled", "proposal_sent", "closed_won", "closed_lost", "nurture"]
 MAX_NOTE = 4000
+MAX_IMPORT_ROWS = 2000
+MAX_IMPORT_CHARS = 1_000_000
 
 
 @dataclass(frozen=True)
@@ -261,6 +263,21 @@ def _set_stage(db, user, args):
         updates["closed_at"] = datetime.now().isoformat()
     db.update_outreach(row["id"], updates)
     return {"ok": True, "outreach_id": row["id"], "from": row["stage"], "to": args["stage"]}
+
+
+def _list_campaigns(db, user, args):
+    return {"ok": True, "campaigns": [
+        {"name": c.db_name, "title": c.name, "product": c.product, "channels": c.channels}
+        for c in campaign_source() if user.sees_campaign(c)]}
+
+
+def _import_leads(db, user, args):
+    campaign = _campaign_named(args["campaign"], user)
+    try:
+        result = lead_import.import_csv(db, campaign, args["csv"], max_rows=MAX_IMPORT_ROWS)
+    except lead_import.LeadImportError as exc:
+        raise ToolError(str(exc)) from exc
+    return {"ok": True, "campaign": campaign.db_name, **result, "errors": result["errors"][:10]}
 
 
 # ── Team administration (console only) ─────────────────────────────────
@@ -547,6 +564,14 @@ TOOLS: dict[str, Tool] = {t.name: t for t in [
     Tool("set_stage", "Move a prospect to another pipeline stage.",
          _obj({"prospect_id": PROSPECT_ID, "stage": {"type": "string", "enum": STAGES}, "campaign": CAMPAIGN},
               ["prospect_id", "stage"]), "pipeline.edit", "write", _set_stage),
+    Tool("list_campaigns", "The campaigns you can see, with their product and channels.",
+         _obj({}), "campaigns.view", "read", _list_campaigns),
+    Tool("import_leads", "Add a lead list to a campaign. Give it as CSV text with a header row; recognized "
+         "columns: " + ", ".join(lead_import.TEMPLATE_HEADERS) + ". Leads already in agency-os are updated, "
+         f"not duplicated. At most {MAX_IMPORT_ROWS} rows per call; nothing is sent until the campaign's cadence runs.",
+         _obj({"campaign": CAMPAIGN_NAME, "csv": {"type": "string", "maxLength": MAX_IMPORT_CHARS,
+                                                  "description": "The list as CSV, header row first"}},
+              ["campaign", "csv"]), "prospects.import", "write", _import_leads),
     Tool("users_list", "List team members, their roles and whether they're active.",
          _obj({}), access.OWNER, "read", _users_list, CONSOLE),
     Tool("users_invite", "Add a team member and send them a one-time set-password link. "
@@ -580,14 +605,14 @@ TOOLS: dict[str, Tool] = {t.name: t for t in [
          _obj({"campaign": CAMPAIGN_NAME, "user": {**EMAIL, "description": "The Owner's email"}}, ["campaign", "user"]),
          access.SUPER_ADMIN, "write", lambda db, user, args: _owner_change(db, user, args, False), CONSOLE),
     Tool("campaigns_templates", "Campaign templates: a whole campaign in one JSON file, with the settings each takes.",
-         _obj({}), access.OWNER, "read", _campaigns_templates, CONSOLE),
+         _obj({}), "campaigns.create", "read", _campaigns_templates),
     Tool("campaigns_preview_template", "Fill a template with your settings and show the campaign and copy it makes. "
          "Nothing is saved.",
          _obj({"template": TEMPLATE, "param": PARAMS}, ["template"]),
-         access.OWNER, "read", _campaigns_preview_template, CONSOLE),
+         "campaigns.create", "read", _campaigns_preview_template),
     Tool("campaigns_from_template", "Make a campaign from a template. Nothing is sent until its cadence runs.",
          _obj({"template": TEMPLATE, "param": PARAMS}, ["template"]),
-         access.OWNER, "write", _campaigns_from_template, CONSOLE),
+         "campaigns.create", "write", _campaigns_from_template),
     Tool("workflows_list", "Tutorials and your own workflows (play one with workflows play --name ...).",
          _obj({}), access.ANY_USER, "read", _workflows_list, CONSOLE),
     Tool("workflows_play", "Play a tutorial or workflow in your browser: it moves around the app and explains each step.",
