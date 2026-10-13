@@ -95,6 +95,7 @@ def get_campaigns():
 
 tools.campaign_source = lambda: get_campaigns()  # the AI tools read campaigns through the web app's cache
 tools.site_url = lambda: site_url()  # invite links from the console's user tools
+tools.campaigns_changed = lambda: _invalidate_campaign_cache()  # campaigns from-template
 selling.campaign_source = lambda: get_campaigns()  # packages only draw from campaigns their publisher sees
 
 

@@ -1,0 +1,16 @@
+name: Make a campaign from a template
+description: Fill in a campaign template's settings, preview the campaign and copy it makes, then make it yourself. Nothing is saved.
+requires: '@owner'
+steps:
+  - say: A campaign template is a whole campaign in one file, with its postcard, call script and emails written in. You fill in a few settings, like the cities to reach, and it makes the campaign.
+  - run: campaigns templates
+    say: campaigns templates lists the templates and the settings each one takes. Farm outreach reaches local farms with a postcard, a call when it lands, and a follow-up email.
+  - run: campaigns preview-template --template farm-outreach
+    say: Preview shows the campaign a template makes with its default settings, and every piece of copy that would go out. Preview never saves anything.
+  - run: campaigns preview-template --template farm-outreach --param "campaign_name=Farm Outreach Fresno" --param cities=Fresno --param farm_types=dairy,orchards
+    say: Change a setting with --param, name equals value. Repeat it for each setting, and separate list values with commas. Settings you leave out keep their defaults.
+  - run: campaigns preview-template --template farm-outreach --param state=California
+    say: A setting that isn't valid is refused with what's wrong, before anything is made. Here the state needs its two-letter code.
+  - goto: /admin/campaigns
+    say: When you make a campaign from a template, it appears here like any other campaign. Read its copy and choose who works it before the first send.
+  - pause: Your turn. Run campaigns from-template --template farm-outreach --param cities=Fresno. It asks before it saves.

@@ -94,14 +94,15 @@ def test_every_tutorial_is_valid_and_visible_by_role(db):
                         "build-a-sellable-lead", "save-a-list", "sell-a-package", "your-data-royalties",
                         "pay-reps", "buy-a-package", "call-from-the-dashboard", "generate-a-lead-package",
                         "customer-accounts", "direct-mail-with-lob", "manage-the-team",
-                        "roles-and-permissions", "audit-log", "background-jobs", "set-up-a-campaign", "your-campaigns"}
+                        "roles-and-permissions", "audit-log", "background-jobs", "set-up-a-campaign", "your-campaigns",
+                        "campaign-from-a-template"}
     caller = {t["slug"] for t in workflows.tutorials(user(db, "caller@x.com"))}
     assert {"tour", "find-a-prospect", "log-a-call"} <= caller
     assert {"save-a-list", "your-data-royalties"} <= caller
     assert not {"console", "invite-a-teammate", "build-a-sellable-lead", "sell-a-package", "pay-reps",
                 "buy-a-package", "call-from-the-dashboard", "generate-a-lead-package",
                 "customer-accounts", "manage-the-team", "roles-and-permissions", "audit-log",
-                "background-jobs", "set-up-a-campaign"} & caller  # no cli.use, prospects.edit or packages.*, not an owner
+                "background-jobs", "set-up-a-campaign", "campaign-from-a-template"} & caller  # no cli.use, prospects.edit or packages.*, not an owner
     assert {t["slug"] for t in workflows.tutorials(user(db, "nobody@x.com"))} == {"back-up-workflows"}
 
 

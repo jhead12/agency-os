@@ -35,6 +35,8 @@ from core.models import CallLog
 campaign_source: Callable[[], list] = lambda: []
 # This server's public URL, for invite links; the web app sets it at import.
 site_url: Callable[[], str] = lambda: ""
+# Called after a tool stores new campaign files, so the web app re-syncs its campaign cache.
+campaigns_changed: Callable[[], None] = lambda: None
 
 STAGES = ["cold", "contacted", "engaged", "demo_scheduled", "proposal_sent", "closed_won", "closed_lost", "nurture"]
 MAX_NOTE = 4000
@@ -444,6 +446,57 @@ def _owner_change(db, user, args, add: bool):
     return {"ok": True, "campaign": campaign.db_name, "result": result}
 
 
+def _template_args(args) -> tuple:
+    """The template a command names and its --param NAME=VALUE pairs."""
+    from core.campaign_templates import TemplateError, get_template
+
+    params = {}
+    for pair in args.get("param", []):
+        name, sep, value = pair.partition("=")
+        if not sep or not name.strip():
+            raise ToolError(f"--param {pair} must be NAME=VALUE, e.g. --param cities=Fresno,Visalia")
+        params[name.strip()] = value.strip()
+    try:
+        return get_template(args["template"]), params
+    except TemplateError as exc:
+        raise ToolError(f"{exc}. See campaigns templates for the list.") from exc
+
+
+def _campaigns_templates(db, user, args):
+    from core.campaign_templates import discover_templates
+
+    return {"ok": True, "templates": [
+        {"template": t.key, "status": t.status, "about": t.label,
+         "params": ", ".join(p["name"] for p in t.params)} for t in discover_templates()]}
+
+
+def _campaigns_preview_template(db, user, args):
+    from core.campaign_templates import TemplateError
+
+    template, params = _template_args(args)
+    try:
+        values = template.resolve_params(params)
+        slug, files = template.render(params)
+    except TemplateError as exc:
+        raise ToolError(str(exc)) from exc
+    return {"ok": True, "campaign": slug, "status": f"{template.status}: nothing is saved or sent",
+            "settings": {k: ", ".join(map(str, v)) if isinstance(v, list) else v for k, v in values.items()},
+            "files": "\n".join(f"── {path} ──\n{content}" for path, content in files.items())}
+
+
+def _campaigns_from_template(db, user, args):
+    from core.campaign_templates import TemplateError, create_campaign
+
+    template, params = _template_args(args)
+    try:
+        slug = create_campaign(db, template, params, taken=[c.db_name for c in campaign_source()])
+    except TemplateError as exc:
+        raise ToolError(str(exc)) from exc
+    campaigns_changed()
+    return {"ok": True, "campaign": slug,
+            "result": f"Made from {template.key}. Review its copy at /admin/campaigns before the first send."}
+
+
 EMAIL = {"type": "string", "maxLength": 254, "description": "The user's email"}
 NAME = {"type": "string", "maxLength": 200, "description": "Display name (defaults to the email's local part)"}
 ROLES = {"type": "array", "items": {"type": "string", "maxLength": 100}, "maxItems": 20,
@@ -454,6 +507,9 @@ CAMPAIGN_NAME = {"type": "string", "maxLength": 200,
                  "description": "Campaign name, or words matching one (e.g. voter-guide-cbo)"}
 
 CAMPAIGN = {"type": "string", "maxLength": 200, "description": "Campaign name; defaults to the most recent"}
+TEMPLATE = {"type": "string", "maxLength": 64, "description": "Template key, from campaigns templates"}
+PARAMS = {"type": "array", "items": {"type": "string", "maxLength": 500}, "maxItems": 20,
+          "description": "NAME=VALUE; repeat for each setting, lists are comma-separated"}
 
 TOOLS: dict[str, Tool] = {t.name: t for t in [
     Tool("search_prospects", "Search prospects by name, city, EIN or focus area, optionally by stage or campaign.",
@@ -523,6 +579,15 @@ TOOLS: dict[str, Tool] = {t.name: t for t in [
     Tool("campaigns_remove_owner", "Unassign an Owner from a campaign. With none left, every Owner sees it again.",
          _obj({"campaign": CAMPAIGN_NAME, "user": {**EMAIL, "description": "The Owner's email"}}, ["campaign", "user"]),
          access.SUPER_ADMIN, "write", lambda db, user, args: _owner_change(db, user, args, False), CONSOLE),
+    Tool("campaigns_templates", "Campaign templates: a whole campaign in one JSON file, with the settings each takes.",
+         _obj({}), access.OWNER, "read", _campaigns_templates, CONSOLE),
+    Tool("campaigns_preview_template", "Fill a template with your settings and show the campaign and copy it makes. "
+         "Nothing is saved.",
+         _obj({"template": TEMPLATE, "param": PARAMS}, ["template"]),
+         access.OWNER, "read", _campaigns_preview_template, CONSOLE),
+    Tool("campaigns_from_template", "Make a campaign from a template. Nothing is sent until its cadence runs.",
+         _obj({"template": TEMPLATE, "param": PARAMS}, ["template"]),
+         access.OWNER, "write", _campaigns_from_template, CONSOLE),
     Tool("workflows_list", "Tutorials and your own workflows (play one with workflows play --name ...).",
          _obj({}), access.ANY_USER, "read", _workflows_list, CONSOLE),
     Tool("workflows_play", "Play a tutorial or workflow in your browser: it moves around the app and explains each step.",

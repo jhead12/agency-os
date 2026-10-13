@@ -1,0 +1,106 @@
+{
+  "template": {
+    "key": "farm-outreach",
+    "version": 1,
+    "status": "draft",
+    "label": "Farm outreach",
+    "description": "Reach local farms, ranches and growers listed on u9itus: a postcard, a call from our team when it lands, and a follow-up email inviting them to claim their page.",
+    "notes": [
+      "DRAFT COPY: settle the offer and wording before the first real send.",
+      "Lives in campaign_templates/, not campaigns/, so it never runs as a house campaign (docs/U9ITUS_CAMPAIGN_ORDERS.md section 3).",
+      "Same play as campaigns/u9itus-hybrid-local: mail, then a person calls, then email (docs/MAILER_FOLLOWUP_CALLS.md).",
+      "u9itus_categories values are a guess; confirm them against u9itus's businesses.category before use."
+    ],
+    "placeholders": {
+      "[[name]]": "Filled once, when a campaign is made from this template, from params below.",
+      "{{name}}": "Filled per prospect at send time (core/pipeline.py _build_variables): org_name, contact_first, city, state, your_name, your_email, source_url."
+    },
+    "params": [
+      {"name": "campaign_name", "label": "Campaign name", "type": "text", "required": true, "default": "Farm Outreach — Central Valley"},
+      {"name": "state", "label": "State", "type": "state", "required": true, "default": "CA"},
+      {"name": "cities", "label": "Cities (optional)", "type": "list", "required": false, "default": ["Fresno", "Visalia", "Bakersfield"]},
+      {"name": "farm_types", "label": "Kinds of farms", "type": "multi_choice", "required": true,
+       "choices": ["produce", "livestock", "dairy", "orchards", "vineyards", "nurseries"],
+       "default": ["produce", "orchards"]},
+      {"name": "max_prospects", "label": "Most farms to reach", "type": "number", "required": true, "default": 250, "max": 500},
+      {"name": "sender_name", "label": "Sender name", "type": "text", "required": true, "default": "Joshua"},
+      {"name": "sender_email", "label": "Sender email", "type": "email", "required": true, "default": "joshua@u9itus.com"}
+    ],
+    "farm_type_filters": {
+      "produce":   {"u9itus_categories": ["farm", "produce_farm"]},
+      "livestock": {"u9itus_categories": ["ranch", "livestock_farm"]},
+      "dairy":     {"u9itus_categories": ["dairy"]},
+      "orchards":  {"u9itus_categories": ["orchard"]},
+      "vineyards": {"u9itus_categories": ["vineyard", "winery"]},
+      "nurseries": {"u9itus_categories": ["nursery"]}
+    }
+  },
+
+  "order": {
+    "price_cents": null,
+    "max_prospects": "[[max_prospects]]",
+    "guarantee": "pieces_mailed",
+    "lead_sources": ["u9itus"]
+  },
+
+  "campaign": {
+    "name": "[[campaign_name]]",
+    "product": "u9itus_directory",
+    "prospect_sources": ["u9itus"],
+    "enrichers": ["local_scraper", "hunter"],
+    "channels": ["email_smtp", "email_smartlead", "lob_direct_mail"],
+    "filters": {
+      "u9itus_kinds": ["business"],
+      "u9itus_categories": "[[farm_types -> farm_type_filters.u9itus_categories]]",
+      "state": "[[state]]",
+      "cities": "[[cities]]",
+      "u9itus_max": "[[max_prospects]]"
+    },
+    "stages": ["cold", "contacted", "engaged", "demo_scheduled", "closed_won", "closed_lost", "nurture"],
+    "cadence": [
+      {"touch": 0, "delay_days": 3, "script": "mail_00_postcard", "next_stage": "contacted",
+       "channels": ["lob_direct_mail"]},
+      {"touch": 1, "after": "mail_delivered", "delay_days": 2, "fallback_days": 10,
+       "script": "phone_00_mailer_followup", "next_stage": "contacted",
+       "channels": ["call", "email_smtp", "email_smartlead"]},
+      {"touch": 2, "after": "call_logged", "delay_days": 3, "script": "01_after_call", "next_stage": "contacted",
+       "channels": ["email_smtp", "email_smartlead"]},
+      {"touch": 3, "delay_days": 7, "script": "02_last_note", "next_stage": "nurture",
+       "channels": ["email_smtp", "email_smartlead"]}
+    ],
+    "stale_threshold_days": 21,
+    "sender_name": "[[sender_name]]",
+    "sender_email": "[[sender_email]]"
+  },
+
+  "scripts": {
+    "mail_00_postcard": {
+      "key": "farm_outreach_postcard",
+      "stage": "cold",
+      "mail_type": "postcard",
+      "front": "{{org_name}} IS ON U9ITUS\nBuyers near {{city}} can find your farm",
+      "back": "Hi {{contact_first}},\n\n{{org_name}} has a page on u9itus, where restaurants,\nmarkets and neighbors in {{city}} look for local growers.\nClaim it to keep your hours, products and contact right.\n\nSee it: {{source_url}}\n\nWe'll give you a quick call in a few days.\n— {{your_name}}, {{your_email}}"
+    },
+    "phone_00_mailer_followup": {
+      "key": "phone_farm_outreach_mailer_followup",
+      "stage": "contacted",
+      "channel": "phone",
+      "title": "Farm Mailer Follow-Up — Did the postcard arrive?",
+      "goal": "Confirm the right contact and get permission to email the claim link",
+      "duration": "2-4 minutes",
+      "body": "── BEFORE YOU DIAL ──────────────────────────────────────\n\n[Contact: {{contact_name}}, {{contact_title}}]\n[Their u9itus page: {{source_url}}]\n[Farmers are often in the field midday: try early morning or late afternoon.]\n[Ask the Call Coach agent on the prospect page for a one-paragraph prep.]\n\n── OPENING ──────────────────────────────────────────────\n\n\"Hi, is this {{contact_name}}? This is {{your_name}} with u9itus. We mailed\n{{org_name}} a postcard last week about your farm's page on u9itus. Did it\nmake it to you?\"\n\n[If no: \"No problem. It's the page buyers near {{city}} see when they look for\nlocal growers. Could I email you the link instead? What's the best address?\"]\n\n── IF THEY'RE INTERESTED ───────────────────────────────\n\n\"Great. I'll email you the link to claim it today. You can list what you grow,\nwhen it's in season and how buyers reach you.\"\n[Log: interest high or medium, next step \"send claim link\".]\n\n── IF IT'S A BAD TIME ──────────────────────────────────\n\n\"Totally understand, I'll keep it short. Can I just email you the link?\"\n\n── IF NOT ───────────────────────────────────────────────\n\n\"Understood, thanks for your time.\"\n[If they ask not to be called: log \"Asked not to be called again\".]"
+    },
+    "01_after_call": {
+      "key": "farm_outreach_after_call",
+      "stage": "contacted",
+      "subject": "{{org_name}}'s page on u9itus",
+      "body": "Hi {{contact_first}},\n\nFollowing up on the postcard we sent {{org_name}}. Here is your farm's page\non u9itus:\n\n{{source_url}}\n\nClaim it to list what you grow, when it's in season and how buyers near\n{{city}} can reach you. Happy to answer questions, just reply to this email.\n\n{{your_name}}"
+    },
+    "02_last_note": {
+      "key": "farm_outreach_last_note",
+      "stage": "contacted",
+      "subject": "Last note about {{org_name}} on u9itus",
+      "body": "Hi {{contact_first}},\n\nI won't keep filling your inbox. If you'd like to claim {{org_name}}'s\npage on u9itus later, say before the next season starts, it's here:\n\n{{source_url}}\n\n{{your_name}}"
+    }
+  }
+}
