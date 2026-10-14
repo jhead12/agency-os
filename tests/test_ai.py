@@ -169,6 +169,43 @@ def test_read_tools(db, no_model, monkeypatch):
     assert not tools.run_tool(db, user, "get_campaign", {"campaign": "nope"}, source="test")["ok"]
 
 
+def test_lead_import_and_campaign_tools_follow_their_own_permissions(db, no_model, monkeypatch):
+    monkeypatch.setattr(tools, "campaign_source", lambda: [SimpleNamespace(
+        db_name="mail-test", name="Mail test", product="none", channels=["mail"], config_dir="x")])
+    caller = {t.name for t in tools.available(rep(db, "caller@x.com", "Caller"))}
+    assert "import_leads" not in caller and "campaigns_from_template" not in caller
+    importer_id = make_user(db, "lists@x.com", "Caller")
+    role_id = db.conn.execute("INSERT INTO roles (name, description) VALUES ('List Builder', '') RETURNING id").fetchone()["id"]
+    db.conn.execute("INSERT INTO role_permissions (role_id, permission) VALUES (?, 'prospects.import')", (role_id,))
+    db.conn.execute("INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)", (importer_id, role_id))
+    importer = db.load_current_user(importer_id)
+    assert "import_leads" in {t.name for t in tools.available(importer)}
+
+    csv = "name,state,city,contact_name,email\nRiver Farm,CA,Fresno,Ana,ana@river.farm\n,,,,\nHill Grange,CA,Visalia,,\n"
+    args = {"campaign": "mail-test", "csv": csv}
+    assert tools.run_tool(db, importer, "import_leads", args, source="mcp:Desktop").get("needs_confirmation")
+    done = tools.run_tool(db, importer, "import_leads", args, source="mcp:Desktop", confirmed=True)
+    assert (done["ok"], done["imported"], done["skipped"]) == (True, 2, 1)
+    again = tools.run_tool(db, importer, "import_leads", args, source="mcp:Desktop", confirmed=True)
+    assert (again["imported"], again["updated"]) == (0, 2)  # re-importing updates, never duplicates
+    found = tools.run_tool(db, importer, "search_prospects", {"q": "River"}, source="test")["prospects"]
+    assert len(found) == 1
+    bad = tools.run_tool(db, importer, "import_leads", {"campaign": "mail-test", "csv": "city\nFresno\n"},
+                         source="mcp:Desktop", confirmed=True)
+    assert not bad["ok"] and "'name'" in bad["error"]
+    assert not tools.run_tool(db, importer, "import_leads", {"campaign": "nope", "csv": csv},
+                              source="mcp:Desktop", confirmed=True)["ok"]
+
+    owner = db.load_current_user(make_user(db, "owner@x.com", "Owner"))
+    assert {"import_leads", "list_campaigns", "campaigns_from_template"} <= {t.name for t in tools.available(owner)}
+    listed = tools.run_tool(db, owner, "list_campaigns", {}, source="mcp:Desktop")
+    assert [c["name"] for c in listed["campaigns"]] == ["mail-test"]
+    # An Owner's AI can make campaigns now, but still can't administer the team.
+    assert tools.run_tool(db, owner, "campaigns_templates", {}, source="mcp:Desktop")["ok"]
+    assert "can't be run by an AI" in tools.run_tool(db, owner, "users_list", {}, source="mcp:Desktop",
+                                                     surface="console")["error"]
+
+
 # ── Agents and the panel ───────────────────────────────────────────────
 
 
@@ -466,3 +503,20 @@ def test_guarantee_review_uses_the_shared_model(monkeypatch, no_model):
     assert reviewer.review({"organization": "X"}) == {"verdict": "not_real", "reason": "Closed"}
     monkeypatch.setattr(llm, "generate", lambda *a, **kw: llm.Reply(True, "I think it's real"))
     assert reviewer.review({"organization": "X"}) is None  # unparseable answers are ignored
+
+
+def test_campaign_page_csv_upload_uses_the_shared_importer(db, no_model, monkeypatch):
+    from tests.test_access import client_for
+    import web.app as webapp
+
+    monkeypatch.setattr(webapp, "get_campaigns", lambda: [SimpleNamespace(db_name="upload-test", config_dir="x")])
+    make_user(db, "owner@x.com", "Owner")
+    client = client_for("owner@x.com")
+    headers = {"Origin": str(client.base_url)}
+    csv = b"\xef\xbb\xbfOrganization,State,Email\nLake Co-op,CA,hi@lake.coop\n"
+    r = client.post("/admin/campaigns/upload-test/import-csv", headers=headers,
+                    files={"file": ("leads.csv", csv, "text/csv")})
+    assert r.status_code == 303 and "Imported%201%20new" in r.headers["location"], r.headers["location"]
+    r = client.post("/admin/campaigns/upload-test/import-csv", headers=headers,
+                    files={"file": ("bad.csv", b"city\nFresno\n", "text/csv")})
+    assert "error=" in r.headers["location"]

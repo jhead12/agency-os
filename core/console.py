@@ -36,7 +36,8 @@ SHELL_WORDS = {"ls", "cd", "rm", "cat", "sudo", "curl", "wget", "python", "pytho
 # Example values for flags, by name; anything else gets a placeholder.
 SAMPLES = {"campaign": "voter-guide-cbo", "user": "jane@example.com", "email": "jane@example.com", "name": '"Jane Doe"', "prospect_id": "42", "q": '"food bank"',
            "note": '"Left a voicemail"', "notes": '"Asked for a callback"', "role": "Caller",
-           "limit": "10", "decision_maker_name": '"Pat Lee"', "instructions": '"Keep it short"'}
+           "limit": "10", "decision_maker_name": '"Pat Lee"', "instructions": '"Keep it short"',
+           "template": "farm-outreach", "param": "cities=Fresno"}
 # Hints for errors a command returns: (text in the error, command that helps, what it's for).
 HINTS = [
     ("Prospect not found", 'search-prospects --q "<name>"', "find a prospect's id"),

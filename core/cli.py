@@ -31,6 +31,8 @@ Usage:
     agency-os searches run
     agency-os generator run [--id 4]
     agency-os tutorials narrate [--force]
+    agency-os templates list
+    agency-os templates create farm-outreach -p cities=Fresno,Visalia [--dry-run]
     agency-os spend resolve --id 12 --status settled --tx 0x...
     agency-os connect --url https://your-app.up.railway.app --key aos_cli_...
     agency-os remote users invite --email rep@example.com --role Caller
@@ -973,6 +975,67 @@ def generator_run(ctx, run_id):
         click.echo(f"  #{r['id']:<6} {r['status']:<9} found {r['found']}/{r['max_leads']}, "
                    f"{r['enriched']} with a contact, {r['eligible']} sellable"
                    + (f"  ({r['error']})" if r["error"] else ""))
+
+
+@cli.group("templates")
+def templates_group():
+    """Campaign templates: a whole campaign in one JSON file (campaign_templates/, core/campaign_templates.py)."""
+
+
+@templates_group.command("list")
+def templates_list():
+    """List the campaign templates and the params each one takes."""
+    from core.campaign_templates import discover_templates
+
+    found = discover_templates()
+    if not found:
+        click.echo("No campaign templates in campaign_templates/.")
+    for t in found:
+        click.echo(f"\n{t.key}  ({t.status})  {t.label}")
+        for p in t.params:
+            default = p.get("default")
+            default = ",".join(map(str, default)) if isinstance(default, list) else default
+            click.echo(f"    {p['name']:<16} {p.get('type', 'text'):<12}"
+                       + (" required" if p.get("required") else "")
+                       + (f"  default: {default}" if default not in (None, "", []) else ""))
+
+
+@templates_group.command("create")
+@click.argument("key")
+@click.option("--param", "-p", "pairs", multiple=True, metavar="NAME=VALUE",
+              help="A template param; lists are comma-separated. Repeat for each param.")
+@click.option("--dry-run", is_flag=True, help="Print the campaign files instead of saving them")
+@click.pass_context
+def templates_create(ctx, key, pairs, dry_run):
+    """Make a campaign from a template, e.g.
+
+        agency-os templates create farm-outreach -p "campaign_name=Farm Outreach — Fresno" -p cities=Fresno
+
+    Params left out take the template's defaults. The campaign is stored like
+    one made at /admin/campaigns/create; nothing is sent."""
+    from core.campaign_templates import TemplateError, create_campaign, get_template
+
+    params = {}
+    for pair in pairs:
+        name, sep, value = pair.partition("=")
+        if not sep:
+            click.echo(f"Error: --param {pair} must be NAME=VALUE")
+            sys.exit(1)
+        params[name.strip()] = value
+    try:
+        template = get_template(key)
+        if dry_run:
+            slug, files = template.render(params)
+            for path, content in files.items():
+                click.echo(f"\n── {path} ──\n{content}")
+            click.echo(f"Dry run: campaign {slug} not saved.")
+            return
+        registry, db, campaigns = _setup(db_url=ctx.obj["db_url"])
+        slug = create_campaign(db, template, params, taken=[c.db_name for c in campaigns])
+    except TemplateError as exc:
+        click.echo(f"Error: {exc}")
+        sys.exit(1)
+    click.echo(f"Created campaign {slug} from template {key}. Review its copy before the first send.")
 
 
 @cli.group("tutorials")
