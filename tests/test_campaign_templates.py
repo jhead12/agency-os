@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT))
 
 from core import access, console, workflows  # noqa: E402
 from core.campaign import CampaignConfig  # noqa: E402
+from core.models import SendResult  # noqa: E402
 from core.campaign_templates import (  # noqa: E402
     CampaignTemplate, TemplateError, create_campaign, discover_templates,
 )
@@ -194,3 +195,34 @@ def test_the_tutorial_runs_only_lines_that_work_and_save_nothing(db, monkeypatch
         assert not out.get("needs_confirmation"), line
         assert out["ok"] or "two-letter state" in out["output"], (line, out["output"])
     assert db.campaign_files() == {}
+
+
+def test_making_a_campaign_emails_the_creator_a_receipt(db, monkeypatch):
+    owner, _ = console_db(db, monkeypatch)
+    db.set_lob_allowed(owner.id, True, None)
+    sent = []
+    monkeypatch.setattr("core.welcome.smtp_configured", lambda: True)
+    monkeypatch.setattr("core.welcome.send", lambda to, subject, body: sent.append((to, subject, body))
+                        or SendResult(status="sent"))
+    monkeypatch.setattr("core.tools.site_url", lambda: "https://os.example")
+
+    made = console.run_line(db, owner, "campaigns from-template --template farm-outreach --param cities=Fresno",
+                            confirmed=True)
+    assert made["ok"] and "Receipt emailed to owner@x.com" in made["output"]
+    [(to, subject, body)] = sent
+    assert to == "owner@x.com" and subject == "Campaign made: farm-outreach--central-valley"
+    assert "Nothing has been sent yet" in body and "Fresno" in body
+    assert "https://os.example/admin/campaigns/farm-outreach--central-valley" in body
+    assert "Lob direct mail" in body
+
+
+def test_no_receipt_without_smtp_and_the_campaign_is_still_made(db, monkeypatch):
+    owner, _ = console_db(db, monkeypatch)
+    db.set_lob_allowed(owner.id, True, None)
+    monkeypatch.setattr("core.welcome.smtp_configured", lambda: False)
+    monkeypatch.setattr("core.welcome.send", lambda *a: pytest.fail("no SMTP: nothing is sent"))
+
+    made = console.run_line(db, owner, "campaigns from-template --template farm-outreach --param cities=Fresno",
+                            confirmed=True)
+    assert made["ok"] and "Receipt" not in made["output"]
+    assert "farm-outreach--central-valley/campaign.yaml" in db.campaign_files()

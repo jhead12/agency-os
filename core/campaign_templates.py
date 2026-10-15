@@ -236,6 +236,28 @@ def rendered_channels(slug: str, files: dict[str, str]) -> list[str]:
     return list((yaml.safe_load(files[f"{slug}/campaign.yaml"]) or {}).get("channels") or [])
 
 
+def compose_receipt(template: CampaignTemplate, slug: str, values: dict, channels: list[str],
+                    name: str, site_url: str) -> tuple[str, str]:
+    """Return (subject, body) for the email to whoever made a campaign from a template."""
+    settings = "\n".join(f"- {k}: {', '.join(map(str, v)) if isinstance(v, list) else v}"
+                         for k, v in values.items() if v not in (None, "", []))
+    body = f"""Hi {name},
+
+You made the campaign {slug} from the "{template.label}" template.
+
+Channels: {", ".join(channels) or "none"}
+
+Settings:
+{settings or "- (defaults)"}
+
+Nothing has been sent yet. Review its copy before the first send:
+{site_url}/admin/campaigns/{slug}
+"""
+    if "lob_direct_mail" in channels:
+        body += "\nIt includes Lob direct mail, which costs money per piece once the cadence runs.\n"
+    return f"Campaign made: {slug}", body
+
+
 def discover_templates(base_dir: str | Path = TEMPLATES_DIR) -> list[CampaignTemplate]:
     """Every campaign_templates/<key>/template.json that loads; a bad one is skipped with a log line."""
     base = Path(base_dir)
