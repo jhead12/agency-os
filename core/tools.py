@@ -586,8 +586,25 @@ def _campaigns_from_template(db, user, args):
     except TemplateError as exc:
         raise ToolError(str(exc)) from exc
     campaigns_changed()
-    return {"ok": True, "campaign": slug,
-            "result": f"Made from {template.key}. Review its copy at /admin/campaigns before the first send."}
+    result = {"ok": True, "campaign": slug,
+              "result": f"Made from {template.key}. Review its copy at /admin/campaigns before the first send."}
+    receipt = _campaign_receipt(user, template, slug, params, rendered_channels(slug, files))
+    return {**result, "receipt": receipt} if receipt else result
+
+
+def _campaign_receipt(user, template, slug: str, params: dict, channels: list[str]) -> str:
+    """Email the creator what they made. Never fails the tool: the campaign already exists."""
+    from core import welcome
+    from core.campaign_templates import compose_receipt
+
+    if user.is_agent or not welcome.smtp_configured():
+        return ""
+    name = user.name.split()[0] if user.name.strip() else user.email.split("@")[0]
+    subject, body = compose_receipt(template, slug, template.resolve_params(params), channels, name,
+                                    site_url() or welcome.base_url())
+    if welcome.send(user.email, subject, body).status == "sent":
+        return f"Receipt emailed to {user.email}"
+    return ""
 
 
 EMAIL = {"type": "string", "maxLength": 254, "description": "The user's email"}
