@@ -140,10 +140,10 @@ class U9itusClient:
     # ── u9itus's own directory as prospects ───────────────────────────
 
     def prospects(self, **params) -> dict:
-        """GET /api/v1/agency/prospects — one page of businesses or organizations.
+        """GET /api/v1/agency/prospects — one page of businesses, organizations or candidates.
 
-        params: kind (business | organization), state, cities, categories,
-        org_types, after (cursor), limit. Contract: docs/U9ITUS_PROSPECT_SOURCE.md.
+        params: kind (business | organization | candidate), state, cities,
+        categories, org_types, levels, counties, after (cursor), limit. Contract: docs/U9ITUS_PROSPECT_SOURCE.md.
         Returns: {prospects: [...], next_after: str | None}
         """
         return self._request("GET", "/api/v1/agency/prospects",

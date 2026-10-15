@@ -83,6 +83,8 @@ class LobDirectMailChannel:
           - mail_template: dict from a mail_*.yaml script (already rendered)
           - variables: template variables, sent to Lob as merge_variables
           - campaign_id: for tracking
+          - idempotency_key: sent as Lob's Idempotency-Key, so retrying the same
+            touch returns the piece already made instead of mailing another
         """
         if not self.is_configured():
             return SendResult(status="skipped", error="Lob API key or return address not configured")
@@ -189,7 +191,8 @@ class LobDirectMailChannel:
         if metadata.get("campaign_id"):
             payload["metadata"] = {"campaign_id": str(metadata["campaign_id"])}
 
-        resp = self._request("POST", "/postcards", json=payload)
+        resp = self._request("POST", "/postcards", json=payload,
+                             idempotency_key=metadata.get("idempotency_key") or "")
 
         if resp.get("error"):
             return SendResult(
@@ -243,7 +246,8 @@ class LobDirectMailChannel:
         if metadata.get("campaign_id"):
             payload["metadata"] = {"campaign_id": str(metadata["campaign_id"])}
 
-        resp = self._request("POST", "/letters", json=payload)
+        resp = self._request("POST", "/letters", json=payload,
+                             idempotency_key=metadata.get("idempotency_key") or "")
 
         if resp.get("error"):
             return SendResult(
@@ -261,11 +265,11 @@ class LobDirectMailChannel:
             sent_at=datetime.now(),
         )
 
-    def _request(self, method: str, path: str, json: Optional[dict] = None) -> dict:
+    def _request(self, method: str, path: str, json: Optional[dict] = None, idempotency_key: str = "") -> dict:
         """Make an authenticated request to the Lob API.
 
         Lob uses HTTP Basic Auth with the API key as the username
-        and an empty password.
+        and an empty password. Lob remembers an Idempotency-Key for 24 hours.
         """
         url = f"{self.BASE_URL}{path}"
 
@@ -279,6 +283,7 @@ class LobDirectMailChannel:
                     headers={
                         "Content-Type": "application/json",
                         "Accept": "application/json",
+                        **({"Idempotency-Key": idempotency_key} if idempotency_key else {}),
                     },
                 )
 

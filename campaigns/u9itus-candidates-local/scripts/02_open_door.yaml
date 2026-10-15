@@ -1,0 +1,17 @@
+# DRAFT COPY. Last touch; the outreach moves to nurture after it.
+# Ongoing messaging is something the candidate asks for, never pushed here.
+key: u9itus_candidates_open_door
+stage: contacted
+subject: "Last note from u9itus"
+body: |
+  Hi {{contact_first}},
+
+  This is my last note. Your page stays up either way:
+
+  {{source_url}}
+
+  If you'd ever like regular updates to go out to voters in your area,
+  like short videos or a newsletter through u9itus, just reply and we'll
+  set it up.
+
+  {{your_name}}

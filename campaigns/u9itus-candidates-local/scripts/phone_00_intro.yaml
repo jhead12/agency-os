@@ -1,0 +1,53 @@
+# DRAFT COPY. Shown to the caller on Calls due; logging the call moves the sequence on.
+# Without a phone number the email copy at the bottom goes out instead.
+key: phone_u9itus_candidates_intro
+stage: contacted
+channel: phone
+title: "Candidate intro — did you see your page?"
+goal: "Let them know the page exists and offer to email the claim link"
+duration: "1-3 minutes"
+body: |
+  ── BEFORE YOU DIAL ──────────────────────────────────────
+
+  [Candidate: {{org_name}}, running for {{focus_area}}]
+  [Their u9itus page: {{source_url}}]
+  [This is a published campaign number. Keep it short; campaigns are busy.]
+  [Never mention party, opponents, or how anyone should vote.]
+
+  ── OPENING ──────────────────────────────────────────────
+
+  "Hi, is this {{contact_name}}? This is {{your_name}} with u9itus, a
+  nonpartisan voter guide. I'm calling because voters looking up the
+  {{focus_area}} race can see a page for you on our site. Did our note
+  reach you?"
+
+  [If no: "No problem. It's built from the official candidate list, and
+  claiming it is free. Can I email you the link? What's the best address?"]
+
+  ── IF THEY'RE INTERESTED ───────────────────────────────
+
+  "Great. I'll email you the link to claim it today."
+  [Log: interest high or medium, next step "send claim link".]
+
+  ── IF THEY ASK WHAT IT COSTS ───────────────────────────
+
+  "The page is free. If you ever want regular updates to go out to voters
+  in your area, we can set that up, but that's your call, not why I'm
+  calling."
+
+  ── IF NOT ───────────────────────────────────────────────
+
+  "Understood, thanks for your time. Good luck with the race."
+  [If they ask not to be contacted: log "Asked not to be called again".]
+email_subject: "Your page on u9itus"
+email_body: |
+  Hi {{contact_first}},
+
+  A short follow-up to my note about your page on u9itus. Voters looking up
+  the {{focus_area}} race can see it here:
+
+  {{source_url}}
+
+  Claiming it is free. Reply if you'd like a hand.
+
+  {{your_name}}

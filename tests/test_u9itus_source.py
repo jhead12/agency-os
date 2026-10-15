@@ -66,6 +66,25 @@ def test_kinds_max_and_off_without_settings():
     assert list(U9itusSource(FakeClient({}, configured=False)).discover({})) == []
 
 
+def test_candidates_only_when_named_and_contact_defaults_to_the_candidate():
+    candidate = {"id": 41, "name": "Lily Schworm", "office": "Chula Vista School Board, Area 2",
+                 "level": "school_board", "race": "sd-cvesd-2", "election_date": "2026-11-03",
+                 "county": "San Diego County", "state": "CA", "profile_url": "https://www.u9itus.com/p/lily-schworm",
+                 "contact": {"email": "lily@example.org", "phone": "+16195550100"}}
+    client = FakeClient({"business": [[BAKERY]], "organization": [[CBO]], "candidate": [[candidate]]})
+    list(U9itusSource(client).discover({}))
+    assert {c["kind"] for c in client.calls} == {"business", "organization"}
+
+    client.calls.clear()
+    (person,) = U9itusSource(client).discover({"u9itus_kinds": ["candidate"], "counties": ["San Diego County"],
+                                               "u9itus_levels": "city, school_board"})
+    assert client.calls[0]["levels"] == "city,school_board" and client.calls[0]["counties"] == "San Diego County"
+    assert person.metadata["external_ref"] == "candidate:41" and person.focus_area == candidate["office"]
+    assert person.county == "San Diego County" and person.ein is None
+    assert person.metadata["contact"]["name"] == "Lily Schworm"
+    assert person.metadata["u9itus"]["race"] == "sd-cvesd-2"
+
+
 def test_an_error_from_u9itus_stops_the_sync():
     client = FakeClient({"business": [{"error": True, "status": 401, "detail": "bad token"}]})
     with pytest.raises(ValueError, match="401"):

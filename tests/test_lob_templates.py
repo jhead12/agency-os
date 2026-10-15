@@ -33,9 +33,11 @@ def lob(monkeypatch):
         monkeypatch.setenv(key, value)
     channel = LobDirectMailChannel()
     channel.requests = []
+    channel.idempotency_keys = []
 
-    def fake_request(method, path, json=None):
+    def fake_request(method, path, json=None, idempotency_key=""):
         channel.requests.append((path, json))
+        channel.idempotency_keys.append(idempotency_key)
         return {"id": "psc_1"}
 
     channel._request = fake_request

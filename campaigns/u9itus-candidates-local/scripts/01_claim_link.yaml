@@ -1,0 +1,21 @@
+# DRAFT COPY. Sent 3 days after the call is logged, or after the follow-up if there was no phone.
+key: u9itus_candidates_claim_link
+stage: contacted
+subject: "How to claim your u9itus page"
+body: |
+  Hi {{contact_first}},
+
+  Here's your page on u9itus:
+
+  {{source_url}}
+
+  To claim it, open the page and choose "Claim this profile". We confirm
+  it's you with your campaign email, and then you can:
+
+  - add a photo and your candidate statement
+  - link your campaign site and social accounts
+  - correct anything we got wrong from the official list
+
+  It's free, and every candidate in the race has the same option.
+
+  {{your_name}}

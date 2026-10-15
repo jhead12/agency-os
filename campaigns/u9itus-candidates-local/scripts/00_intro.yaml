@@ -1,0 +1,37 @@
+# DRAFT COPY. First touch: an email, or this postcard when there's only an address.
+# Same copy for every candidate in a race.
+key: u9itus_candidates_intro
+stage: cold
+subject: "Your page on u9itus"
+body: |
+  Hi {{contact_first}},
+
+  I'm {{your_name}} with u9itus, a nonpartisan voter guide. Voters who look
+  up the {{focus_area}} race find a page for you there, built from the
+  official candidate list:
+
+  {{source_url}}
+
+  It's free to claim. Once it's yours you can add a photo, your statement
+  and links, so voters see you in your own words.
+
+  We send this same note to every candidate in the race. No need to reply
+  unless you'd like a hand.
+
+  {{your_name}}
+mail_type: postcard
+front: |
+  YOUR RACE IS ON U9ITUS
+  Voters can already find you
+back: |
+  Hi {{contact_first}},
+
+  u9itus is a nonpartisan voter guide. Voters who look up the
+  {{focus_area}} race see a page for you, from the official
+  candidate list. Claiming it is free: add a photo, your
+  statement and links.
+
+  See it: {{source_url}}
+
+  Every candidate in the race gets this card.
+  — {{your_name}}, {{your_email}}
