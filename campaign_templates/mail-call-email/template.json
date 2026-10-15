@@ -221,6 +221,8 @@
       "title": "Mailer Follow-Up — Did the postcard arrive?",
       "goal": "[[call_goal]]",
       "duration": "2-4 minutes",
+      "email_subject": "[[email_subject]]",
+      "email_body": "Hi {{contact_first}},\n\nWe mailed you a postcard last week, \"[[postcard_headline]]\". In case it didn't reach you:\n\n[[email_message]]\n\n[[link]]\n\n{{your_name}}",
       "body": "── BEFORE YOU DIAL ──────────────────────────────────────\n\n[Contact: {{contact_name}}]\n[The postcard said: \"[[postcard_headline]]\"]\n[Link on the postcard: [[link]]]\n\n── OPENING ──────────────────────────────────────────────\n\n\"Hi, is this {{contact_name}}? This is {{your_name}}. We mailed you a postcard\nlast week, \"[[postcard_headline]]\". Did it make it to you?\"\n\n[If no: \"No problem. Could I email you the details instead? What's the best address?\"]\n\n── GOAL ─────────────────────────────────────────────────\n\n[[call_goal]]\n[Log: interest high or medium, and the next step.]\n\n── IF NOT ───────────────────────────────────────────────\n\n\"Understood, thanks for your time.\"\n[If they ask not to be called: log \"Asked not to be called again\".]"
     },
     "01_after_call": {

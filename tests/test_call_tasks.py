@@ -5,6 +5,7 @@ contacts, cadence steps that wait for an event, call tasks and the Calls due pag
 Run: TEST_DATABASE_URL=postgresql://localhost/agency_os_test python -m pytest tests/test_call_tasks.py
 """
 
+import re
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -139,6 +140,66 @@ def test_call_step_without_a_phone_sends_the_email_instead(setup):
     assert pipeline.enqueue_outreach(campaign)["sent"] == 1
 
 
+def test_a_phone_script_falls_back_to_its_email_copy_never_the_callers_notes(setup):
+    database, campaign, campaign_id, pipeline, registry = setup
+    scripts = campaign.config_dir / "scripts"
+    (scripts / "phone_00.yaml").write_text(
+        "key: phone_00\nchannel: phone\nbody: BEFORE YOU DIAL\nemail_subject: Your page\nemail_body: Here it is\n")
+    _, oid = outreach_for(database, campaign_id, phone=None)
+    pipeline.enqueue_outreach(campaign)
+    backdate(database, "UPDATE email_log SET sent_at = ? WHERE outreach_id = ?", 11, oid)
+
+    assert pipeline.enqueue_outreach(campaign)["sent"] == 1
+    recipient, body, _ = registry.channels["email_smtp"].sent[-1]
+    assert body.startswith("Here it is") and "BEFORE YOU DIAL" not in body
+
+
+def test_a_phone_script_without_email_copy_only_makes_calls(setup):
+    database, campaign, campaign_id, pipeline, registry = setup
+    (campaign.config_dir / "scripts" / "phone_00.yaml").write_text(
+        "key: phone_00\nchannel: phone\nbody: BEFORE YOU DIAL\n")
+    _, oid = outreach_for(database, campaign_id, phone=None)
+    database.update_outreach(oid, {"touch_count": 1})
+    make_due(database, oid)
+
+    pipeline.enqueue_outreach(campaign)
+    assert registry.channels["email_smtp"].sent == []
+    assert database.get_outreach(oid).touch_count == 1
+
+
+def test_a_send_cut_off_before_it_was_counted_is_not_sent_again(setup):
+    database, campaign, campaign_id, pipeline, registry = setup
+    _, oid = outreach_for(database, campaign_id, email=None, phone=None)
+    # The last run called Lob, then stopped before counting the touch
+    database.begin_send(oid, campaign_id, "mail_00", "", "")
+
+    stats = pipeline.enqueue_outreach(campaign)
+    assert stats["already_sent"] == 1 and stats["sent"] == 0
+    assert registry.channels["lob_direct_mail"].requests == []
+    assert database.get_outreach(oid).touch_count == 1
+    statuses = [r["status"] for r in database.conn.execute("SELECT status FROM email_log WHERE outreach_id = ?", (oid,))]
+    assert statuses == ["unconfirmed"]
+
+
+def test_each_send_leaves_one_record_and_lob_gets_a_key_per_touch(setup):
+    database, campaign, campaign_id, pipeline, registry = setup
+    _, oid = outreach_for(database, campaign_id, email=None, phone=None)
+    assert pipeline.enqueue_outreach(campaign)["sent"] == 1
+    rows = database.conn.execute("SELECT template_key, status FROM email_log WHERE outreach_id = ?", (oid,)).fetchall()
+    assert [tuple(r) for r in rows] == [("mail_00", "sent")]
+    assert registry.channels["lob_direct_mail"].idempotency_keys == [f"agency-os:{campaign_id}:{oid}:0"]
+
+
+def test_a_contact_no_channel_can_reach_leaves_no_record(setup):
+    database, campaign, campaign_id, pipeline, _ = setup
+    _, oid = outreach_for(database, campaign_id, email=None, phone=None, address="1 Main St")
+    database.conn.execute("UPDATE prospects SET zip = NULL")  # Lob skips a piece with no zip
+    for _ in range(2):
+        assert pipeline.enqueue_outreach(campaign)["no_contact"] == 1
+    assert database.conn.execute("SELECT COUNT(*) FROM email_log").fetchone()[0] == 0
+    assert database.get_outreach(oid).touch_count == 0
+
+
 def log(database, pid, oid, campaign_id, campaign, outcome="completed", **extra):
     call = CallLog(outreach_id=oid, campaign_id=campaign_id, prospect_id=pid, outcome=outcome, **extra)
     return calls.complete(database, call, database.log_call(call), campaign)
@@ -190,6 +251,19 @@ def test_the_hybrid_template_campaign_loads_with_every_script():
     assert [s.after for s in campaign.cadence] == ["", "mail_delivered", "call_logged", ""]
     for step in campaign.cadence:
         assert campaign.load_script(step.script)
+    assert campaign.load_script("phone_00_mailer_followup")["email_body"]
+
+
+def test_the_candidate_campaign_loads_with_every_script():
+    campaign = CampaignConfig.load(Path(__file__).resolve().parent.parent / "campaigns" / "u9itus-candidates-local")
+    assert campaign.prospect_sources == ["u9itus"] and campaign.filters["u9itus_kinds"] == ["candidate"]
+    assert [s.after for s in campaign.cadence] == ["", "mail_delivered", "call_logged", ""]
+    scripts = [campaign.load_script(step.script) for step in campaign.cadence]
+    assert scripts[0]["mail_type"] == "postcard" and len(scripts[0]["back"]) <= 500
+    assert scripts[1]["channel"] == "phone" and scripts[1]["email_body"]
+    # Every candidate in a race gets the same copy: nothing is filled in by party
+    for script in scripts:
+        assert not any("party" in name for v in script.values() for name in re.findall(r"\{\{(\w+)\}\}", str(v)))
 
 
 # ── Calls due page ─────────────────────────────────────────────────────

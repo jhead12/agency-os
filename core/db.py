@@ -1329,6 +1329,38 @@ class Database:
         )
         return cur.fetchone()["id"]
 
+    # A send is written down as 'sending' before the channel is called and
+    # finished after, so a run that dies in between leaves a record. The next
+    # run finds it and moves the sequence on instead of sending again: each
+    # script goes to an outreach at most once.
+
+    def begin_send(self, outreach_id: int, campaign_id: int, template_key: str,
+                   subject: str, body: str) -> int:
+        cur = self.conn.execute(
+            """INSERT INTO email_log (outreach_id, campaign_id, template_key, subject, body, status, sent_at)
+               VALUES (?,?,?,?,?,'sending',?) RETURNING id""",
+            (outreach_id, campaign_id, template_key, subject, body, datetime.now().isoformat()),
+        )
+        return cur.fetchone()["id"]
+
+    def finish_send(self, log_id: int, body: str, result: SendResult) -> None:
+        if result.status == "skipped":  # nothing went out; leave no record
+            self.conn.execute("DELETE FROM email_log WHERE id = ?", (log_id,))
+            return
+        self.conn.execute(
+            "UPDATE email_log SET body = ?, status = ?, provider_message_id = ?, sent_at = ? WHERE id = ?",
+            (body, result.status, result.provider_message_id,
+             (result.sent_at or datetime.now()).isoformat(), log_id),
+        )
+
+    def prior_send(self, outreach_id: int, template_key: str) -> Optional[Row]:
+        """This script's send to this outreach that went out, or may have ('sending')."""
+        return self.conn.execute(
+            """SELECT * FROM email_log WHERE outreach_id = ? AND template_key = ?
+               AND status IN ('sent', 'sending') ORDER BY id DESC LIMIT 1""",
+            (outreach_id, template_key),
+        ).fetchone()
+
     def get_pipeline_stats(self, campaign_name: str) -> dict:
         c = self.conn
         stage_counts = self.get_all_outreach_by_stage(campaign_name)

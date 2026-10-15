@@ -65,6 +65,12 @@ def test_only_super_admins_and_people_they_allow_make_lob_campaigns(db):
     made = ask(db, owner, "campaigns_from_template", args)
     assert made["ok"] and made["campaign"] == "albany-fall-mail"
     assert "lob_direct_mail" in stored_channels(db, "albany-fall-mail")
+    # No phone: the call step emails this, filled from the settings, not the caller's notes
+    phone = db.conn.execute("SELECT content FROM campaign_files WHERE path = ?",
+                            ("albany-fall-mail/scripts/phone_00_mailer_followup.yaml",)).fetchone()
+    fallback = yaml.safe_load(phone["content"])
+    assert fallback["email_subject"] == SETTINGS["email_subject"]
+    assert SETTINGS["email_message"] in fallback["email_body"] and "[[" not in fallback["email_body"]
 
     tools.run_tool(db, boss, "lob_allow", {"email": "owner@x.com", "allow": False},
                    source="console", confirmed=True, surface="console")

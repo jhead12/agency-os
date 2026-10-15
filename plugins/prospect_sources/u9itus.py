@@ -1,5 +1,6 @@
 """
-u9itus source: businesses and organizations from u9itus's own directory.
+u9itus source: businesses, organizations and local candidates from u9itus's
+own directory.
 
 Reads GET /api/v1/agency/prospects on u9itus with the agency token the portal
 integration already uses (U9ITUS_BASE_URL, U9ITUS_AGENCY_TOKEN). Off until both
@@ -10,15 +11,19 @@ is never prospected and agency-os never prospects its own demos.
 Filters in campaign.yaml:
 
     filters:
-      u9itus_kinds: [business, organization]   # default: both
+      u9itus_kinds: [business, organization]   # default: both; candidate only when named
       state: CA
       cities: [Pasadena, Glendale]             # optional
+      counties: [San Diego County]             # candidates only, optional
       u9itus_categories: [restaurant, dentist] # businesses only, optional
       u9itus_org_types: [cbo, church]          # organizations only, optional
+      u9itus_levels: [city, school_board]      # candidates only, optional
       u9itus_max: 2000                         # most records per kind per sync (default 2000)
 
 Each record becomes a Prospect keyed by "<kind>:<u9itus id>"
 (metadata.external_ref), with the record's contact seeded onto the outreach row.
+A candidate's contact is only what they published (on the registrar's list or
+their campaign site); with no contact name the candidate's own name is used.
 """
 
 from __future__ import annotations
@@ -28,7 +33,9 @@ from typing import Iterator, Optional
 from core.models import Prospect
 from plugins.products.u9itus_client import U9itusClient
 
-KINDS = ("business", "organization")
+KINDS = ("business", "organization", "candidate")
+DEFAULT_KINDS = ("business", "organization")
+FOCUS = {"business": "category", "organization": "org_type", "candidate": "office"}
 PAGE_SIZE = 200
 DEFAULT_MAX = 2000
 MAX_PAGES = 100  # a cursor that never ends can't loop forever
@@ -67,6 +74,8 @@ class U9itusSource:
         contact = record.get("contact") if isinstance(record.get("contact"), dict) else {}
         contact = {k: _text(contact, k) for k in ("name", "email", "phone", "title")}
         contact["phone"] = contact["phone"] or _text(record, "phone", 40)
+        if kind == "candidate":
+            contact["name"] = contact["name"] or name
         profile_url = _text(record, "profile_url", 500) or ""
         return Prospect(
             name=name,
@@ -78,10 +87,13 @@ class U9itusSource:
             city=_text(record, "city"),
             state=(_text(record, "state", 2) or "").upper() or None,
             zip=_text(record, "zip", 10),
-            focus_area=_text(record, "category" if kind == "business" else "org_type", 100),
+            county=_text(record, "county", 100),
+            focus_area=_text(record, FOCUS[kind], 100),
             metadata={
                 "external_ref": f"{kind}:{rid}",
-                "u9itus": {"kind": kind, "id": rid, "slug": _text(record, "slug", 200), "profile_url": profile_url},
+                "u9itus": {"kind": kind, "id": rid, "slug": _text(record, "slug", 200), "profile_url": profile_url,
+                           **({k: _text(record, k, 200) for k in ("office", "level", "race", "election_date")}
+                              if kind == "candidate" else {})},
                 **({"contact": contact} if any(contact.values()) else {}),
             },
         )
@@ -89,7 +101,7 @@ class U9itusSource:
     def discover(self, filters: dict) -> Iterator[Prospect]:
         if not self.is_configured():
             return
-        kinds = [k for k in _list(filters.get("u9itus_kinds")) or list(KINDS) if k in KINDS]
+        kinds = [k for k in _list(filters.get("u9itus_kinds")) or list(DEFAULT_KINDS) if k in KINDS]
         most = int(filters.get("u9itus_max") or DEFAULT_MAX)
         for kind in kinds:
             params = {
@@ -98,6 +110,8 @@ class U9itusSource:
                 "cities": ",".join(_list(filters.get("cities"))),
                 "categories": ",".join(_list(filters.get("u9itus_categories"))) if kind == "business" else "",
                 "org_types": ",".join(_list(filters.get("u9itus_org_types"))) if kind == "organization" else "",
+                "levels": ",".join(_list(filters.get("u9itus_levels"))) if kind == "candidate" else "",
+                "counties": ",".join(_list(filters.get("counties"))) if kind == "candidate" else "",
                 "limit": PAGE_SIZE,
             }
             found, after = 0, None

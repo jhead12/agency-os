@@ -1,0 +1,77 @@
+# Let local candidates know u9itus exists. Down-ballot candidates (city
+# council, school board, county and district seats) with little exposure
+# already have a page on u9itus, built from the registrar's candidate list.
+# This tells them it's there and that claiming it is free. It is not a sales
+# sequence: the last touch leaves the door open, and a candidate who wants
+# regular messaging to voters in their area asks for it.
+#
+# Prospects come from u9itus (plugins/prospect_sources/u9itus.py,
+# kind: candidate), with only the contact details a candidate published.
+# Most have none; those with only an address get the postcard and stop there.
+#
+# Rules (docs/U9ITUS_PROSPECT_SOURCE.md, "Candidates"):
+#   - Every candidate in a race gets the same copy. Never mention party,
+#     opponents or how anyone should vote.
+#   - Calls are dialed by a person, to published business numbers only.
+#   - Anyone who asks not to be contacted is dropped from every campaign.
+#
+# DRAFT COPY: settle the wording before the first real send.
+#
+# Timeline:
+#   touch 0  email, or a postcard if there's no email   day 0
+#   touch 1  call 2 days after the postcard lands, or 3 days after the email
+#            (no phone: a short email instead)
+#   touch 2  claim link 3 days after the call is logged
+#   touch 3  last note a week later, then nurture
+name: "u9itus Candidates — Local Races"
+product: u9itus_directory   # no product plugin: scripts link to the candidate's u9itus page ({{source_url}})
+prospect_sources:
+- u9itus
+enrichers:
+- local_scraper    # finds published contact details on a campaign website
+channels:
+- email_smtp
+- email_smartlead
+- lob_direct_mail
+filters:
+  u9itus_kinds: [candidate]
+  state: CA
+  counties:
+  - San Diego County
+  - Los Angeles County
+  u9itus_levels: [city, county, school_board, local]
+  u9itus_max: 500
+stages:
+- cold
+- contacted
+- engaged
+- closed_won
+- closed_lost
+- nurture
+cadence:
+- touch: 0
+  delay_days: 3
+  script: 00_intro
+  next_stage: contacted
+  channels: [email_smtp, email_smartlead, lob_direct_mail]
+- touch: 1
+  after: mail_delivered
+  delay_days: 2
+  fallback_days: 10
+  script: phone_00_intro
+  next_stage: contacted
+  channels: [call, email_smtp, email_smartlead]
+- touch: 2
+  after: call_logged
+  delay_days: 3
+  script: 01_claim_link
+  next_stage: contacted
+  channels: [email_smtp, email_smartlead]
+- touch: 3
+  delay_days: 7
+  script: 02_open_door
+  next_stage: nurture
+  channels: [email_smtp, email_smartlead]
+stale_threshold_days: 21
+sender_name: Joshua
+sender_email: joshua@u9itus.com

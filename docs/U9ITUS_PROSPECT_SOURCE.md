@@ -7,7 +7,7 @@ email, with AI drafting along the way. Written in the same format as
 [U9ITUS_PORTAL_INTEGRATION.md](U9ITUS_PORTAL_INTEGRATION.md): the contract is
 YAML, and tasks have file paths and acceptance checks.
 
-Status (2026-10-11):
+Status (2026-10-15; candidates added, see "Candidates"):
 - **agency-os side built** on `feat/u9itus-hybrid-campaign`: the source
   (`plugins/prospect_sources/u9itus.py`), `U9itusClient.prospects()`, the
   template campaign (`campaigns/u9itus-hybrid-local/`), the Call Coach agent
@@ -115,6 +115,66 @@ filters:
   u9itus_max: 500                    # most records per kind per sync
 ```
 
+## Candidates (kind: candidate)
+
+Added 2026-10-15. Down-ballot candidates (city council, school board, county
+and district seats) with little exposure already have a page on u9itus, built
+from the registrar's candidate list. `campaigns/u9itus-candidates-local/` tells
+them it's there and that claiming it is free. It is awareness, not a sales
+sequence: the last touch says that if they want regular messaging to voters in
+their area they can ask, and that request becomes the order.
+
+A campaign gets candidates only when it names the kind; the default stays
+`[business, organization]`.
+
+```yaml
+query (kind: candidate):
+  state: CA
+  counties: "San Diego County,Los Angeles County"   # optional, exact match
+  cities: "Chula Vista"                              # optional
+  levels: "city,county,school_board,local"           # optional; u9itus maps its governance_level values to these
+
+always_excluded:
+  candidate:
+    - user_id IS NOT NULL OR claim_verified_at IS NOT NULL   # claimed page
+    - is_running_candidate = false
+    - candidates not on the current ballot (official_guide on_ballot = false)
+
+response_200 (candidate):
+  prospects:
+    - id: 41
+      kind: candidate
+      name: "Lily Schworm"
+      slug: "lily-schworm"
+      profile_url: "https://www.u9itus.com/…"
+      office: "Chula Vista Elementary School District, Trustee Area 2"
+      level: school_board
+      race: "<stable id of the contest>"             # every candidate in a race gets the same copy
+      election_date: "2026-11-03"
+      county: "San Diego County"
+      city: "Chula Vista"                            # null for county-wide seats
+      state: "CA"
+      street: "…"                                    # only a published campaign mailing address
+      zip: "…"
+      website_url: "https://…"
+      contact:                                       # only what the candidate published
+        email: "…"                                   # e.g. the registrar's candidate list
+        phone: "+1…"                                 # "Business" numbers only, never "Residence"
+```
+
+Contact rules on the u9itus side: never return `claim_email`,
+`verification_email` or `receipt_email`, and never a number the registrar
+labels as a residence. Most candidates have no published contact (in October
+2026 only San Diego's list carried any), so most get the postcard or nothing.
+
+Rules the campaign keeps:
+- Same copy for every candidate in a race. Nothing mentions party, opponents
+  or how anyone should vote (`tests/test_call_tasks.py` checks no script fills
+  in a party).
+- Calls are dialed by a person, to published business numbers only.
+- Anyone who asks not to be contacted goes on the do-not-call list, which
+  every campaign honors.
+
 ## Tasks (u9itus)
 
 | ID | Task | Files | Acceptance check |
@@ -122,6 +182,8 @@ filters:
 | P1 | `prospects` action: validate the query, apply the exclusions above, keyset page by id, map both models to the response shape | `app/Http/Controllers/Api/AgencyApiController.php` | Feature tests: an `agency_os` demo org, a claimed org and an owned business are never returned; `kind` is required; `next_after` is null on the last page; `claim_email` never appears in the body. |
 | P2 | Route in the existing `/agency` group | `routes/api.php` (`Route::get('/prospects', …)->name('prospects')`) | Without the token: 401. With it: 200. |
 | P3 | Copy this contract into u9itus's docs next to the portal contract | `doc/AGENCY_OS_INTEGRATION.md` | — |
+| P4 | `kind: candidate` in the `prospects` action: unclaimed, running, on the current ballot; `levels`/`counties` filters; `race` key | `app/Http/Controllers/Api/AgencyApiController.php` | Feature tests: a claimed candidate is never returned; `claim_email`, `verification_email` and `receipt_email` never appear; `levels=school_board` returns only school board seats. |
+| P5 | Keep the contact a candidate published on the registrar list (business phone, email), not residence numbers | the San Diego candidate-list import | A "Residence:" number is never stored; a "Business:" number and email are. |
 
 ## Setup (agency-os)
 

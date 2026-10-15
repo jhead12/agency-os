@@ -126,7 +126,7 @@ class Pipeline:
         (scripts, personalization, sending) without emailing real prospects.
         """
         stats = {"sent": 0, "skipped": 0, "failed": 0, "no_contact": 0, "royalty_blocked": 0, "suppressed": 0,
-                 "waiting": 0, "call_tasks": 0}
+                 "waiting": 0, "call_tasks": 0, "already_sent": 0}
         campaign_id = self.db.get_campaign_id(campaign.db_name)
         if not campaign_id:
             return {**stats, "error": "campaign not found"}
@@ -208,9 +208,32 @@ class Pipeline:
                 stats["sent"] += 1
                 continue
 
+            # Sent before but the run stopped before the touch was counted:
+            # count it now rather than send it twice.
+            template_key = script.get("key", step.script)
+            prior = self.db.prior_send(outreach.id, template_key)
+            if prior:
+                if prior["status"] == "sending":
+                    self.db.finish_send(prior["id"], prior["body"], SendResult(status="unconfirmed"))
+                print(f"  · {prospect.name}: {template_key} already went out; moving on")
+                self._advance(outreach, step)
+                stats["already_sent"] += 1
+                continue
+
+            # A call step that falls back to email sends the script's email copy,
+            # never the caller's notes. Without email copy it only makes calls.
+            if script.get("channel") == "phone":
+                email_copy = (self._render(script.get("email_subject", ""), variables),
+                              self._render(script.get("email_body", ""), variables))
+                if not email_copy[1]:
+                    channels = [ch for ch in channels if ch == "call"]
+            else:
+                email_copy = (subject, body)
+
             # Send via the first configured channel that can reach them
             # (a channel returns "skipped" when e.g. there's no phone number)
             result = None
+            log_id = None
             suppressed = False
             call_task = False
             sent_body = body
@@ -231,7 +254,7 @@ class Pipeline:
                 if not channel or not channel.is_configured():
                     continue
                 extra = {}
-                sent_body = body
+                sent_subject, sent_body = email_copy
                 if ch_key.startswith("email"):
                     if email_blocked:
                         continue
@@ -239,8 +262,10 @@ class Pipeline:
                     if self.db.email_suppressed(send_email) or self.db.email_suppressed(outreach.contact_email):
                         suppressed = True
                         continue
-                    sent_body = compliance.with_footer(body, send_email)
+                    sent_body = compliance.with_footer(sent_body, send_email)
                     extra = {"unsubscribe_url": compliance.unsubscribe_url(send_email)}
+                if log_id is None:
+                    log_id = self.db.begin_send(outreach.id, campaign_id, template_key, sent_subject, sent_body)
                 try:
                     result = channel.send(
                         recipient={
@@ -257,14 +282,17 @@ class Pipeline:
                                 "zip": prospect.zip,
                             }),
                         },
-                        subject=subject,
+                        subject=sent_subject,
                         body=sent_body,
                         metadata={
                             **extra,
                             "campaign": campaign.db_name,
                             "outreach_id": outreach.id,
-                            "template_key": script.get("key", step.script),
+                            "template_key": template_key,
                             "campaign_id": campaign_id,
+                            # Same key for the same touch, so a provider that
+                            # takes one (Lob) won't send a retried request twice
+                            "idempotency_key": f"agency-os:{campaign_id}:{outreach.id}:{step.touch}",
                             "variables": variables,
                             # mail_*.yaml scripts: front/back etc. with variables filled in
                             **({"mail_template": {
@@ -278,6 +306,8 @@ class Pipeline:
                 if result.status != "skipped":
                     break
 
+            if log_id is not None:
+                self.db.finish_send(log_id, sent_body, result)
             if call_task:
                 continue
             if suppressed and (result is None or result.status == "skipped"):
@@ -293,35 +323,7 @@ class Pipeline:
                 stats["no_contact"] += 1
                 continue
 
-            # Log the email
-            self.db.log_email(
-                outreach_id=outreach.id,
-                campaign_id=campaign_id,
-                template_key=script.get("key", step.script),
-                subject=subject,
-                body=sent_body,
-                result=result,
-            )
-
-            # Update outreach row — stage only moves forward, never backward
-            now = datetime.now()
-            stage_order = {
-                "cold": 0, "contacted": 1, "engaged": 2,
-                "demo_scheduled": 3, "proposal_sent": 4,
-                "closed_won": 5, "closed_lost": 5, "nurture": 5,
-            }
-            current_stage_rank = stage_order.get(outreach.stage, 0)
-            next_stage_rank = stage_order.get(step.next_stage, 0)
-            # Keep the higher stage (never move backward)
-            final_stage = step.next_stage if next_stage_rank > current_stage_rank else outreach.stage
-
-            self.db.update_outreach(outreach.id, {
-                "touch_count": outreach.touch_count + 1,
-                "last_contacted_at": now.isoformat(),
-                "next_follow_up_at": (now + timedelta(days=step.delay_days)).isoformat(),
-                "stage": final_stage,
-                "script_variant": step.script,
-            })
+            self._advance(outreach, step)
 
             if result.status == "sent":
                 stats["sent"] += 1
@@ -418,6 +420,26 @@ class Pipeline:
         return stats
 
     # ── Helpers ────────────────────────────────────────────────────────
+
+    def _advance(self, outreach, step: CadenceStep) -> None:
+        """Count the touch and schedule the next one. The stage only moves forward."""
+        now = datetime.now()
+        stage_order = {
+            "cold": 0, "contacted": 1, "engaged": 2,
+            "demo_scheduled": 3, "proposal_sent": 4,
+            "closed_won": 5, "closed_lost": 5, "nurture": 5,
+        }
+        current_stage_rank = stage_order.get(outreach.stage, 0)
+        next_stage_rank = stage_order.get(step.next_stage, 0)
+        final_stage = step.next_stage if next_stage_rank > current_stage_rank else outreach.stage
+
+        self.db.update_outreach(outreach.id, {
+            "touch_count": outreach.touch_count + 1,
+            "last_contacted_at": now.isoformat(),
+            "next_follow_up_at": (now + timedelta(days=step.delay_days)).isoformat(),
+            "stage": final_stage,
+            "script_variant": step.script,
+        })
 
     def _get_cadence_step(self, campaign: CampaignConfig, touch_count: int) -> Optional[CadenceStep]:
         """Find the cadence step matching the current touch_count."""

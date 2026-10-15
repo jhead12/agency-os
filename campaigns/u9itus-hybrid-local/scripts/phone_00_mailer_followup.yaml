@@ -30,3 +30,16 @@ body: |
 
   "Understood, thanks for your time."
   [If they ask not to be called: log "Asked not to be called again".]
+# Sent instead of a call when there's no phone number (never the caller's notes above).
+email_subject: "{{org_name}}'s page on u9itus"
+email_body: |
+  Hi {{contact_first}},
+
+  We mailed {{org_name}} a postcard about your page on u9itus. In case it
+  didn't reach you, here it is:
+
+  {{source_url}}
+
+  You can claim it there to keep your details right.
+
+  {{your_name}}
