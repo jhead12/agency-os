@@ -401,6 +401,14 @@ templates.env.globals["plugin_pages_for"] = plugin_pages.visible_to
 templates.env.globals["super_admin_channels"] = access.SUPER_ADMIN_CHANNELS
 
 
+def _lob_allowed(user) -> bool:
+    """The user's own Lob setting; a Super Admin needs none."""
+    return bool(user) and not user.is_super_admin and get_db().lob_allowed(user.id)
+
+
+templates.env.globals["may_mail"] = lambda user: bool(user) and access.may_mail(user, _lob_allowed(user))
+
+
 # ── Routes ──────────────────────────────────────────────────────────
 
 
@@ -3742,7 +3750,7 @@ async def admin_create_campaign(
         return _back("/admin/campaigns", error="Select at least one prospect source.")
     if not channels:
         return _back("/admin/campaigns", error="Select at least one channel.")
-    problem = access.channel_change_problem(current_user(request), [], channels)
+    problem = access.channel_change_problem(current_user(request), [], channels, _lob_allowed(current_user(request)))
     if problem:
         return _back("/admin/campaigns", error=problem)
 
@@ -4108,7 +4116,8 @@ async def admin_campaign_update(
     if product:
         raw["product"] = product
     new_channels = channels if channels else raw.get("channels", [])
-    problem = access.channel_change_problem(current_user(request), raw.get("channels", []), new_channels)
+    problem = access.channel_change_problem(current_user(request), raw.get("channels", []), new_channels,
+                                           _lob_allowed(current_user(request)))
     if problem:
         return _back("/admin/campaigns", error=problem)
     raw["channels"] = new_channels

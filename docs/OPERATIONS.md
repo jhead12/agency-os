@@ -227,7 +227,7 @@ send day.
 | **Calls (TCPA)** | No calls before 8 am or after 9 pm in the recipient's time zone. Honor every request to stop calling. No prerecorded or AI voice. | Do-not-call tag built (commit `286b685`). Calling hours are a process rule; nothing enforces them. |
 | **Do Not Call registry** | Most CBO numbers are business lines, but a director's mobile number may be on the national registry. | Process only. Counsel to confirm whether to scrub against the registry. |
 | **Call recording** | A disclosure on every recorded call, in every state; California and several other states require every party's consent. | Planned with browser calling. No recording until then. |
-| **Direct mail** | Lob postcards reach real addresses and cost money. | Only a Super Admin can turn Lob on for a campaign (`access.SUPER_ADMIN_CHANNELS`). |
+| **Direct mail** | Lob postcards reach real addresses and cost money. | Only a Super Admin, or someone a Super Admin allowed (`lob allow`), can turn Lob on for a campaign or make one from a Lob template. |
 | **Selling to 501(c)(3)s** | Don't suggest a guide can endorse candidates. Ballot-measure positions only. | u9itus enforces this per organization type. |
 | **Access** | Least privilege; audit log on every change. | Built: roles, campaign members, audit log. |
 

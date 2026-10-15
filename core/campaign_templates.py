@@ -231,6 +231,11 @@ class CampaignTemplate:
         return slug, {f"{slug}/{rel}": content for rel, content in body.items()}
 
 
+def rendered_channels(slug: str, files: dict[str, str]) -> list[str]:
+    """The channels of a campaign render() made."""
+    return list((yaml.safe_load(files[f"{slug}/campaign.yaml"]) or {}).get("channels") or [])
+
+
 def discover_templates(base_dir: str | Path = TEMPLATES_DIR) -> list[CampaignTemplate]:
     """Every campaign_templates/<key>/template.json that loads; a bad one is skipped with a log line."""
     base = Path(base_dir)

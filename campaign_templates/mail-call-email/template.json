@@ -1,0 +1,239 @@
+{
+  "template": {
+    "key": "mail-call-email",
+    "version": 1,
+    "status": "ready",
+    "label": "Mail, then call, then email",
+    "description": "A postcard through Lob, a call from your team once it lands, then a follow-up email and a last note. Works with a list you scanned or imported, or with u9itus's directory. You write the postcard and email; nothing is sent until the cadence runs.",
+    "notes": [
+      "Same timing as campaigns/u9itus-hybrid-local (docs/MAILER_FOLLOWUP_CALLS.md): postcard, a call 2 days after Lob reports delivery (10 days after sending if it doesn't), an email 3 days after the call is logged, a last note 5 days later.",
+      "Uses Lob direct mail, which costs money per piece: only a Super Admin, or someone a Super Admin allowed (console: lob allow --email … --allow true), can make a campaign from this template.",
+      "Lists from Scan a mailing list (/p/list-scan) or the import_scanned_list tool go in after the campaign is made. People with no phone get the follow-up email instead of a call."
+    ],
+    "placeholders": {
+      "[[name]]": "Filled once, when a campaign is made from this template, from params below.",
+      "{{name}}": "Filled per person at send time (core/pipeline.py _build_variables): contact_first, contact_name, org_name, your_name, your_email."
+    },
+    "params": [
+      {
+        "name": "campaign_name",
+        "label": "Campaign name",
+        "type": "text",
+        "required": true,
+        "max": 120
+      },
+      {
+        "name": "lead_source",
+        "label": "Who to reach",
+        "type": "choice",
+        "required": true,
+        "choices": [
+          "my_list",
+          "u9itus_directory"
+        ],
+        "default": "my_list"
+      },
+      {
+        "name": "state",
+        "label": "State (u9itus directory only)",
+        "type": "state",
+        "required": true,
+        "default": "CA"
+      },
+      {
+        "name": "cities",
+        "label": "Cities (u9itus directory only, optional)",
+        "type": "list",
+        "required": false,
+        "default": []
+      },
+      {
+        "name": "max_prospects",
+        "label": "Most people to mail",
+        "type": "number",
+        "required": true,
+        "default": 250,
+        "max": 2000
+      },
+      {
+        "name": "postcard_headline",
+        "label": "Postcard headline (front)",
+        "type": "text",
+        "required": true,
+        "max": 80
+      },
+      {
+        "name": "postcard_message",
+        "label": "Postcard message (back, after \"Hi <first name>,\")",
+        "type": "textarea",
+        "required": true,
+        "max": 450
+      },
+      {
+        "name": "link",
+        "label": "Link to include",
+        "type": "text",
+        "required": true,
+        "max": 200,
+        "default": "https://u9itus.com"
+      },
+      {
+        "name": "call_goal",
+        "label": "What the follow-up call should get",
+        "type": "text",
+        "required": true,
+        "max": 160,
+        "default": "Confirm the postcard arrived and get permission to email the details"
+      },
+      {
+        "name": "email_subject",
+        "label": "Follow-up email subject",
+        "type": "text",
+        "required": true,
+        "max": 120
+      },
+      {
+        "name": "email_message",
+        "label": "Follow-up email message (after \"Hi <first name>,\")",
+        "type": "textarea",
+        "required": true,
+        "max": 1500
+      },
+      {
+        "name": "sender_name",
+        "label": "Sender name",
+        "type": "text",
+        "required": true,
+        "max": 80
+      },
+      {
+        "name": "sender_email",
+        "label": "Sender email",
+        "type": "email",
+        "required": true
+      }
+    ],
+    "lead_sources": {
+      "my_list": {
+        "prospect_sources": []
+      },
+      "u9itus_directory": {
+        "prospect_sources": [
+          "u9itus"
+        ]
+      }
+    }
+  },
+  "order": {
+    "price_cents": null,
+    "max_prospects": "[[max_prospects]]",
+    "guarantee": "pieces_mailed"
+  },
+  "campaign": {
+    "name": "[[campaign_name]]",
+    "product": "u9itus_directory",
+    "prospect_sources": "[[lead_source -> lead_sources.prospect_sources]]",
+    "enrichers": [],
+    "channels": [
+      "email_smtp",
+      "email_smartlead",
+      "lob_direct_mail"
+    ],
+    "filters": {
+      "u9itus_kinds": [
+        "business",
+        "organization"
+      ],
+      "state": "[[state]]",
+      "cities": "[[cities]]",
+      "u9itus_max": "[[max_prospects]]"
+    },
+    "stages": [
+      "cold",
+      "contacted",
+      "engaged",
+      "demo_scheduled",
+      "closed_won",
+      "closed_lost",
+      "nurture"
+    ],
+    "cadence": [
+      {
+        "touch": 0,
+        "delay_days": 0,
+        "script": "mail_00_postcard",
+        "next_stage": "contacted",
+        "channels": [
+          "lob_direct_mail"
+        ]
+      },
+      {
+        "touch": 1,
+        "after": "mail_delivered",
+        "delay_days": 2,
+        "fallback_days": 10,
+        "script": "phone_00_mailer_followup",
+        "next_stage": "contacted",
+        "channels": [
+          "call",
+          "email_smtp",
+          "email_smartlead"
+        ]
+      },
+      {
+        "touch": 2,
+        "after": "call_logged",
+        "delay_days": 3,
+        "script": "01_after_call",
+        "next_stage": "contacted",
+        "channels": [
+          "email_smtp",
+          "email_smartlead"
+        ]
+      },
+      {
+        "touch": 3,
+        "delay_days": 5,
+        "script": "02_last_note",
+        "next_stage": "nurture",
+        "channels": [
+          "email_smtp",
+          "email_smartlead"
+        ]
+      }
+    ],
+    "stale_threshold_days": 14,
+    "sender_name": "[[sender_name]]",
+    "sender_email": "[[sender_email]]"
+  },
+  "scripts": {
+    "mail_00_postcard": {
+      "key": "mail_call_email_postcard",
+      "stage": "cold",
+      "mail_type": "postcard",
+      "front": "[[postcard_headline]]",
+      "back": "Hi {{contact_first}},\n\n[[postcard_message]]\n\n[[link]]\n\nWe'll give you a quick call in a few days.\n— {{your_name}}, {{your_email}}"
+    },
+    "phone_00_mailer_followup": {
+      "key": "phone_mail_call_email_followup",
+      "stage": "contacted",
+      "channel": "phone",
+      "title": "Mailer Follow-Up — Did the postcard arrive?",
+      "goal": "[[call_goal]]",
+      "duration": "2-4 minutes",
+      "body": "── BEFORE YOU DIAL ──────────────────────────────────────\n\n[Contact: {{contact_name}}]\n[The postcard said: \"[[postcard_headline]]\"]\n[Link on the postcard: [[link]]]\n\n── OPENING ──────────────────────────────────────────────\n\n\"Hi, is this {{contact_name}}? This is {{your_name}}. We mailed you a postcard\nlast week, \"[[postcard_headline]]\". Did it make it to you?\"\n\n[If no: \"No problem. Could I email you the details instead? What's the best address?\"]\n\n── GOAL ─────────────────────────────────────────────────\n\n[[call_goal]]\n[Log: interest high or medium, and the next step.]\n\n── IF NOT ───────────────────────────────────────────────\n\n\"Understood, thanks for your time.\"\n[If they ask not to be called: log \"Asked not to be called again\".]"
+    },
+    "01_after_call": {
+      "key": "mail_call_email_after_call",
+      "stage": "contacted",
+      "subject": "[[email_subject]]",
+      "body": "Hi {{contact_first}},\n\n[[email_message]]\n\n[[link]]\n\n{{your_name}}"
+    },
+    "02_last_note": {
+      "key": "mail_call_email_last_note",
+      "stage": "contacted",
+      "subject": "Re: [[email_subject]]",
+      "body": "Hi {{contact_first}},\n\nOne last note so this doesn't get lost: [[link]]\n\nIf it's not for you, no need to reply. I won't follow up again.\n\n{{your_name}}"
+    }
+  }
+}

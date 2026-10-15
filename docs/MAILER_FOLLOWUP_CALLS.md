@@ -60,7 +60,7 @@ but it isn't the engine.
 | `core/jobs.py` only automates actions that are safe to repeat; sending stays manual. | Creating call tasks is idempotent, so it can run as a job. **Lob and email sends stay a deliberate `enqueue` run**, because they cost money and reach real people. |
 | The cadence advances by `touch_count` and `next_follow_up_at`. | Waiting on an event is a check before a due step runs: if the event hasn't happened yet, the step is skipped without advancing, the same way an unreachable contact is treated today. |
 | `enqueue_outreach` skips anyone with no email **and** no phone, before choosing a channel. | Lob-only contacts (an address but no email or phone) are never mailed today. M2 fixes this. |
-| Each Lob piece costs money, on one shared Lob account. | **Decided (Q1):** only a Super Admin can turn `lob_direct_mail` on or off for a campaign (`access.SUPER_ADMIN_CHANNELS`), until the costs and liabilities are understood. |
+| Each Lob piece costs money, on one shared Lob account. | **Decided (Q1, widened 2026-10-14):** only a Super Admin, or someone a Super Admin allowed, can turn `lob_direct_mail` on or off for a campaign or make one from a template that uses it (`access.SUPER_ADMIN_CHANNELS`, `user_prefs.lob_allowed`, console `lob allow --email … --allow true`). Being an Owner doesn't include it, so it can't be granted through a role. |
 
 ## 1. System map
 

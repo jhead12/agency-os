@@ -75,18 +75,28 @@ def describe_channel(source: str) -> str:
 # ── Outreach channels ──────────────────────────────────────────────────
 
 # Channels that spend money on the one shared provider account (Lob: physical
-# mail). Only a Super Admin turns them on or off for a campaign, until the
-# costs and liabilities are worked out for anyone else.
+# mail). Only a Super Admin, or someone a Super Admin allowed (user_prefs.
+# lob_allowed, set with the console command `lob allow`), turns them on or off for a campaign. Being
+# an Owner doesn't include it, so it can't be granted through a role.
 SUPER_ADMIN_CHANNELS = frozenset({"lob_direct_mail"})
 
 
-def channel_change_problem(user: "CurrentUser", before, after) -> str | None:
-    """Why `user` can't change a campaign's channels from `before` to `after`, or None."""
-    if user.is_super_admin:
+def may_mail(user: "CurrentUser", lob_allowed: bool) -> bool:
+    """Whether `user` may turn the paid mail channels on or off. Never an AI agent account."""
+    return user.is_super_admin or (lob_allowed and not user.is_agent)
+
+
+def channel_change_problem(user: "CurrentUser", before, after, lob_allowed: bool = False) -> str | None:
+    """Why `user` can't change a campaign's channels from `before` to `after`, or None.
+
+    `lob_allowed` is the user's own setting (Database.lob_allowed).
+    """
+    if may_mail(user, lob_allowed):
         return None
     changed = sorted((set(before) ^ set(after)) & SUPER_ADMIN_CHANNELS)
     if changed:
-        return f"Only a Super Admin can turn {', '.join(changed)} on or off for a campaign."
+        return (f"Only a Super Admin, or someone a Super Admin allowed to send mail, can turn "
+                f"{', '.join(changed)} on or off for a campaign.")
     return None
 
 # ── Permission catalog ─────────────────────────────────────────────────
