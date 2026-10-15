@@ -67,8 +67,24 @@ class ToolError(ValueError):
 
 
 def _check(value: Any, schema: dict, path: str) -> Any:
+    if "anyOf" in schema:
+        for option in schema["anyOf"]:
+            try:
+                return _check(value, option, path)
+            except ToolError:
+                continue
+        raise ToolError(f"{path} must be {schema.get('description') or 'text, a number or a list'}")
     kind = schema.get("type")
-    if kind == "integer":
+    if kind == "number":
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ToolError(f"{path} must be a number")
+    elif kind == "object":
+        if not isinstance(value, dict) or len(value) > schema.get("maxProperties", 50):
+            raise ToolError(f"{path} must be an object with at most {schema.get('maxProperties', 50)} entries")
+        extra = schema.get("additionalProperties")
+        return {str(k)[:64]: _check(v, extra, f"{path}.{k}") if isinstance(extra, dict) else v
+                for k, v in value.items()}
+    elif kind == "integer":
         if isinstance(value, bool) or not isinstance(value, int):
             if isinstance(value, str) and value.strip().lstrip("-").isdigit():
                 value = int(value)
@@ -280,6 +296,36 @@ def _import_leads(db, user, args):
     return {"ok": True, "campaign": campaign.db_name, **result, "errors": result["errors"][:10]}
 
 
+def _scanned_entries(text: str):
+    from plugins.pages import list_scan
+
+    if len(text) > list_scan.MAX_TEXT:
+        raise ToolError(f"That's more than {list_scan.MAX_TEXT:,} characters. Split the list.")
+    entries, problems = list_scan.parse_entries(text)
+    if not entries:
+        raise ToolError("No names and addresses found. Each entry needs a line like \"Springfield, IL 62701\" "
+                        "after its name and street." + (f" First unreadable part: {problems[0][:120]}" if problems else ""))
+    if len(entries) > list_scan.MAX_ENTRIES:
+        raise ToolError(f"Found {len(entries):,} entries; import at most {list_scan.MAX_ENTRIES:,} at a time.")
+    return list_scan, entries, problems
+
+
+def _preview_scanned_list(db, user, args):
+    _, entries, problems = _scanned_entries(args["text"])
+    return {"ok": True, "found": len(entries), "first": entries[:5],
+            "unreadable": len(problems), "unreadable_examples": [p[:160] for p in problems[:5]],
+            "with_phone": sum(1 for e in entries if e["phone"]), "with_email": sum(1 for e in entries if e["email"])}
+
+
+def _import_scanned_list(db, user, args):
+    list_scan, entries, problems = _scanned_entries(args["text"])
+    campaign = _campaign_named(args["campaign"], user)
+    added, updated, errors = list_scan.import_entries(db, campaign, entries)
+    return {"ok": True, "campaign": campaign.db_name, "added": added, "updated": updated,
+            "unreadable": len(problems), "errors": errors[:10],
+            "result": "Nothing is sent until the campaign's cadence runs."}
+
+
 # ── Team administration (console only) ─────────────────────────────────
 # The database enforces who may grant Owner/Super Admin (Database._guard_protected);
 # these tools only add the permission gate and the invite email.
@@ -292,6 +338,17 @@ def _role_ids(db, names: list[str]) -> list[int]:
         raise ToolError(f"Unknown role(s): {', '.join(unknown)}. "
                         f"Choose from: {', '.join(r['name'] for r in db.list_roles())}")
     return [by_name[n.lower()] for n in names]
+
+
+def _lob_allow(db, user, args):
+    row = db.get_user_by_email(args["email"].strip().lower())
+    if row is None:
+        raise ToolError(f"No user with email {args['email']}.")
+    if row["is_agent"]:
+        raise ToolError("AI agent accounts can't be allowed to send mail.")
+    db.set_lob_allowed(row["id"], args["allow"], user)
+    return {"ok": True, "result": f"{row['email']} {'may now' if args['allow'] else 'may no longer'} "
+                                  "turn Lob direct mail on or off for campaigns."}
 
 
 def _users_list(db, user, args):
@@ -473,6 +530,8 @@ def _template_args(args) -> tuple:
         if not sep or not name.strip():
             raise ToolError(f"--param {pair} must be NAME=VALUE, e.g. --param cities=Fresno,Visalia")
         params[name.strip()] = value.strip()
+    # Typed settings (what AI assistants send) win over NAME=VALUE pairs.
+    params.update(args.get("settings") or {})
     try:
         return get_template(args["template"]), params
     except TemplateError as exc:
@@ -487,8 +546,14 @@ def _campaigns_templates(db, user, args):
          "params": ", ".join(p["name"] for p in t.params)} for t in discover_templates()]}
 
 
+def _mail_problem(db, user, channels: list[str]) -> str | None:
+    """Why `user` can't make a campaign with these channels (Lob costs money), or None."""
+    lob_allowed = not user.is_super_admin and db.lob_allowed(user.id)
+    return access.channel_change_problem(user, [], channels, lob_allowed)
+
+
 def _campaigns_preview_template(db, user, args):
-    from core.campaign_templates import TemplateError
+    from core.campaign_templates import TemplateError, rendered_channels
 
     template, params = _template_args(args)
     try:
@@ -496,16 +561,27 @@ def _campaigns_preview_template(db, user, args):
         slug, files = template.render(params)
     except TemplateError as exc:
         raise ToolError(str(exc)) from exc
+    channels = rendered_channels(slug, files)
+    mail = None
+    if set(channels) & access.SUPER_ADMIN_CHANNELS:
+        problem = _mail_problem(db, user, channels)
+        mail = (f"Includes Lob direct mail, which costs money per piece. {problem} Ask a Super Admin."
+                if problem else "Includes Lob direct mail, which costs money per piece; you're allowed to set it up.")
     return {"ok": True, "campaign": slug, "status": f"{template.status}: nothing is saved or sent",
+            **({"mail": mail} if mail else {}),
             "settings": {k: ", ".join(map(str, v)) if isinstance(v, list) else v for k, v in values.items()},
             "files": "\n".join(f"── {path} ──\n{content}" for path, content in files.items())}
 
 
 def _campaigns_from_template(db, user, args):
-    from core.campaign_templates import TemplateError, create_campaign
+    from core.campaign_templates import TemplateError, create_campaign, rendered_channels
 
     template, params = _template_args(args)
     try:
+        slug, files = template.render(params)
+        problem = _mail_problem(db, user, rendered_channels(slug, files))
+        if problem:
+            raise ToolError(problem)
         slug = create_campaign(db, template, params, taken=[c.db_name for c in campaign_source()])
     except TemplateError as exc:
         raise ToolError(str(exc)) from exc
@@ -527,6 +603,16 @@ CAMPAIGN = {"type": "string", "maxLength": 200, "description": "Campaign name; d
 TEMPLATE = {"type": "string", "maxLength": 64, "description": "Template key, from campaigns templates"}
 PARAMS = {"type": "array", "items": {"type": "string", "maxLength": 500}, "maxItems": 20,
           "description": "NAME=VALUE; repeat for each setting, lists are comma-separated"}
+SETTINGS = {"type": "object", "maxProperties": 30,
+            "description": "The template's settings by name (see campaigns_templates), e.g. "
+                           "{\"campaign_name\": \"Albany fall mail\", \"cities\": [\"Albany\"], \"max_prospects\": 200}",
+            "additionalProperties": {"anyOf": [
+                {"type": "string", "maxLength": 2000}, {"type": "number"},
+                {"type": "array", "items": {"type": "string", "maxLength": 500}, "maxItems": 50}],
+                "description": "text, a number or a list of text"}}
+SCANNED_TEXT = {"type": "string", "maxLength": 500_000,
+                "description": "The list's text: from a PDF's text layer or OCR of a scan or photo. Entries are a "
+                               "name, street line(s) and a \"City, ST 12345\" line, or JSON [{name, address, city, state, zip}]"}
 
 TOOLS: dict[str, Tool] = {t.name: t for t in [
     Tool("search_prospects", "Search prospects by name, city, EIN or focus area, optionally by stage or campaign.",
@@ -572,6 +658,18 @@ TOOLS: dict[str, Tool] = {t.name: t for t in [
          _obj({"campaign": CAMPAIGN_NAME, "csv": {"type": "string", "maxLength": MAX_IMPORT_CHARS,
                                                   "description": "The list as CSV, header row first"}},
               ["campaign", "csv"]), "prospects.import", "write", _import_leads),
+    Tool("preview_scanned_list", "Read names and mailing addresses out of a scanned or typed list's text and show "
+         "what would be imported. Nothing is saved.",
+         _obj({"text": SCANNED_TEXT}, ["text"]), "prospects.import", "read", _preview_scanned_list),
+    Tool("import_scanned_list", "Add the names and mailing addresses in a scanned or typed list's text to a "
+         "campaign. The same person at the same address is updated, not duplicated. Nothing is sent until the "
+         "campaign's cadence runs.",
+         _obj({"campaign": CAMPAIGN_NAME, "text": SCANNED_TEXT}, ["campaign", "text"]),
+         "prospects.import", "write", _import_scanned_list),
+    Tool("lob_allow", "Allow (or stop) one person to turn Lob direct mail on or off for campaigns. "
+         "Each piece costs money on the shared Lob account.",
+         _obj({"email": EMAIL, "allow": {"type": "boolean", "description": "true to allow, false to stop"}},
+              ["email", "allow"]), access.SUPER_ADMIN, "write", _lob_allow, CONSOLE),
     Tool("users_list", "List team members, their roles and whether they're active.",
          _obj({}), access.OWNER, "read", _users_list, CONSOLE),
     Tool("users_invite", "Add a team member and send them a one-time set-password link. "
@@ -606,12 +704,13 @@ TOOLS: dict[str, Tool] = {t.name: t for t in [
          access.SUPER_ADMIN, "write", lambda db, user, args: _owner_change(db, user, args, False), CONSOLE),
     Tool("campaigns_templates", "Campaign templates: a whole campaign in one JSON file, with the settings each takes.",
          _obj({}), "campaigns.create", "read", _campaigns_templates),
-    Tool("campaigns_preview_template", "Fill a template with your settings and show the campaign and copy it makes. "
-         "Nothing is saved.",
-         _obj({"template": TEMPLATE, "param": PARAMS}, ["template"]),
+    Tool("campaigns_preview_template", "Fill a template with your settings and show the campaign and copy it makes, "
+         "and whether you may set up its Lob mail. Nothing is saved. Preview before campaigns_from_template.",
+         _obj({"template": TEMPLATE, "settings": SETTINGS, "param": PARAMS}, ["template"]),
          "campaigns.create", "read", _campaigns_preview_template),
-    Tool("campaigns_from_template", "Make a campaign from a template. Nothing is sent until its cadence runs.",
-         _obj({"template": TEMPLATE, "param": PARAMS}, ["template"]),
+    Tool("campaigns_from_template", "Make a campaign from a template. A template with Lob mail needs a Super Admin, "
+         "or someone a Super Admin allowed. Nothing is sent until its cadence runs.",
+         _obj({"template": TEMPLATE, "settings": SETTINGS, "param": PARAMS}, ["template"]),
          "campaigns.create", "write", _campaigns_from_template),
     Tool("workflows_list", "Tutorials and your own workflows (play one with workflows play --name ...).",
          _obj({}), access.ANY_USER, "read", _workflows_list, CONSOLE),

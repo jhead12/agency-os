@@ -196,6 +196,37 @@ def _summary(problems: list[str]) -> str:
     return f" {len(problems)} part(s) couldn't be read, first: \"{problems[0][:120]}\"."
 
 
+def import_entries(db, campaign, entries: list[dict]) -> tuple[int, int, list[str]]:
+    """Add parsed entries to a campaign as leads. Returns (added, updated, errors).
+
+    Re-importing the same person at the same address updates them (entry_ref).
+    Used by the page below and the import_scanned_list tool (core/tools.py).
+    """
+    campaign_id = db.get_campaign_id(campaign.db_name) or db.upsert_campaign(
+        campaign.db_name, str(campaign.config_dir))
+    added = updated = 0
+    errors = []
+    for e in entries:
+        prospect = Prospect(
+            name=e["name"], address=e["address"] or None, city=e["city"] or None,
+            state=e["state"] or None, zip=e["zip"] or None, source=SOURCE,
+            metadata={"external_ref": entry_ref(e)},
+        )
+        try:
+            existed = db.find_prospect(prospect) is not None
+            outreach_id = db.upsert_outreach(db.upsert_prospect(prospect), campaign_id)
+            db.update_outreach(outreach_id, {"contact_name": e["name"],
+                                             **{f"contact_{k}": e[k] for k in ("phone", "email") if e[k]}})
+        except Exception as exc:
+            errors.append(f"{e['name']}: {exc}")
+            continue
+        if existed:
+            updated += 1
+        else:
+            added += 1
+    return added, updated, errors
+
+
 class ListScanPage:
     key = "list-scan"
     title = "Scan a mailing list"
@@ -231,28 +262,7 @@ class ListScanPage:
             raise ValueError("Pick a campaign.")
 
         db = page.db
-        campaign_id = db.get_campaign_id(campaign.db_name) or db.upsert_campaign(
-            campaign.db_name, str(campaign.config_dir))
-        added = updated = 0
-        errors = []
-        for e in entries:
-            prospect = Prospect(
-                name=e["name"], address=e["address"] or None, city=e["city"] or None,
-                state=e["state"] or None, zip=e["zip"] or None, source=SOURCE,
-                metadata={"external_ref": entry_ref(e)},
-            )
-            try:
-                existed = db.find_prospect(prospect) is not None
-                outreach_id = db.upsert_outreach(db.upsert_prospect(prospect), campaign_id)
-                db.update_outreach(outreach_id, {"contact_name": e["name"],
-                                                 **{f"contact_{k}": e[k] for k in ("phone", "email") if e[k]}})
-            except Exception as exc:
-                errors.append(f"{e['name']}: {exc}")
-                continue
-            if existed:
-                updated += 1
-            else:
-                added += 1
+        added, updated, errors = import_entries(db, campaign, entries)
 
         db.audit(page.user, "list_scan.import", "campaign", campaign.db_name, {
             "file": (form.get("filename") or "")[:200], "added": added, "updated": updated,

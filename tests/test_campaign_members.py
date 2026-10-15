@@ -242,6 +242,14 @@ def test_only_super_admins_turn_lob_on_or_off(db, leads):
     assert "Only%20a%20Super%20Admin" in r.headers["location"]
     assert "lob_direct_mail" in pasadena_channels(db)
 
+    # An Owner a Super Admin allowed to send mail can turn it off and on again
+    db.set_lob_allowed(db.get_user_by_email("a@x.com")["id"], True, None)
+    assert 'value="lob_direct_mail" disabled' not in owner.get(page).text.replace("  ", " ")
+    owner.post(page, data={"channels": ["manual"]}, headers=ORIGIN)
+    assert pasadena_channels(db) == ["manual"]
+    owner.post(page, data={"channels": ["manual", "lob_direct_mail"]}, headers=ORIGIN)
+    assert pasadena_channels(db) == ["manual", "lob_direct_mail"]
+
 
 def test_owners_cannot_reach_campaigns_assigned_to_other_owners(db, leads):
     a = make_user(db, "a@x.com", access.OWNER_ROLE)

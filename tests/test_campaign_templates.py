@@ -172,6 +172,10 @@ def test_console_lists_previews_and_makes_a_campaign_from_a_template(db, monkeyp
 
     line = "campaigns from-template --template farm-outreach --param cities=Fresno"
     assert console.run_line(db, owner, line).get("needs_confirmation")
+    # The template mails through Lob: an Owner needs a Super Admin's go-ahead first.
+    refused = console.run_line(db, owner, line, confirmed=True)
+    assert not refused["ok"] and "Only a Super Admin" in refused["output"] and db.campaign_files() == {}
+    db.set_lob_allowed(owner.id, True, None)
     made = console.run_line(db, owner, line, confirmed=True)
     assert made["ok"] and "farm-outreach--central-valley" in made["output"] and changed == [1]
     assert "farm-outreach--central-valley/scripts/mail_00_postcard.yaml" in db.campaign_files()
